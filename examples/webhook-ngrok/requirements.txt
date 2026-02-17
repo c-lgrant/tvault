@@ -1,0 +1,7 @@
+gunicorn==23.0.0
+uvicorn
+pyshamir==1.0.0
+cryptography==44.0.0
+fastapi
+cachetools
+httpx
