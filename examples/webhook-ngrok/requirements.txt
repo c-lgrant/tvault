@@ -1,7 +1,7 @@
 gunicorn==23.0.0
 uvicorn
 pyshamir==1.0.0
-cryptography==44.0.0
+cryptography==46.0.5
 fastapi
 cachetools
 httpx
