@@ -2,6 +2,12 @@
 set -eu
 
 : "${NGROK_AUTHTOKEN:?NGROK_AUTHTOKEN is required}"
+: "${NGROK_URL:?NGROK_URL is required}"
+
+# Always use the ngrok public URL as the external URL so that
+# /bind and /v1/register-url generate correct registration links,
+# even when accessed via local IP.
+export WEBHOOK_EXTERNAL_URL="${WEBHOOK_EXTERNAL_URL:-https://${NGROK_URL#https://}}"
 
 gunicorn -k uvicorn.workers.UvicornWorker \
   --bind "0.0.0.0:${PORT}" \
