@@ -63,14 +63,17 @@ async def storage_http(request: Request):
     request_id = data.get("requestId", req_id or rid)
     operation = data.get("operation")
     collection = data.get("collection")
+    collections = data.get("collections")
     key = data.get("key")
     payload = data.get("data")
 
-    if not operation or not collection:
-        return error_response(400, "invalid_request", "Missing 'operation' or 'collection'")
+    if not operation:
+        return error_response(400, "invalid_request", "Missing 'operation'")
+    if operation != "list_batch" and not collection:
+        return error_response(400, "invalid_request", "Missing 'collection'")
 
     try:
-        result = kv_execute(operation, collection, key, payload, rid)
+        result = kv_execute(operation, collection, key, payload, rid, collections=collections)
     except ValueError as e:
         return error_response(400, "invalid_request", str(e))
 

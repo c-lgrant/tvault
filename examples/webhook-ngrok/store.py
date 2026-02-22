@@ -2,6 +2,7 @@ import base64
 import hashlib
 import json
 import os
+import time
 import uuid
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -134,18 +135,76 @@ def load_kv_store() -> None:
         log.warning("kv_store_load_error path=%s err=%s", str(KV_STORE_PATH), e)
 
 
-def save_kv_store() -> None:
+import atexit
+import threading
+
+_kv_dirty = False
+_kv_save_lock = threading.Lock()
+
+
+def _flush_kv_store() -> None:
+    """Write kv_store to disk (must hold _kv_save_lock)."""
     ensure_parent_dir(KV_STORE_PATH)
     tmp = KV_STORE_PATH.with_suffix(KV_STORE_PATH.suffix + ".tmp")
     tmp.write_text(json.dumps(kv_store, separators=(",", ":")), encoding="utf-8")
     tmp.replace(KV_STORE_PATH)
 
 
+def save_kv_store() -> None:
+    with _kv_save_lock:
+        _flush_kv_store()
+
+
+def _mark_kv_dirty() -> None:
+    global _kv_dirty
+    _kv_dirty = True
+
+
+def _background_kv_saver() -> None:
+    """Flush kv_store to disk every 1s if dirty."""
+    global _kv_dirty
+    while True:
+        time.sleep(1)
+        if _kv_dirty:
+            with _kv_save_lock:
+                if _kv_dirty:
+                    _flush_kv_store()
+                    _kv_dirty = False
+
+
+_saver_thread = threading.Thread(target=_background_kv_saver, daemon=True)
+_saver_thread.start()
+
+
+def _flush_on_exit() -> None:
+    global _kv_dirty
+    with _kv_save_lock:
+        if _kv_dirty:
+            _flush_kv_store()
+            _kv_dirty = False
+
+
+atexit.register(_flush_on_exit)
+
+
 load_kv_store()
 
 
-def kv_execute(operation: str, collection: str, key: Optional[str], data: Optional[Any], rid: str) -> dict:
+def kv_execute(operation: str, collection: str, key: Optional[str], data: Optional[Any], rid: str,
+               collections: Optional[list] = None) -> dict:
     """Execute a KV storage operation. Returns the response dict (without requestId — caller adds it)."""
+    if operation == "list_batch":
+        if not collections:
+            raise ValueError("'collections' required for list_batch")
+        results = {}
+        for col in collections:
+            if col not in kv_store:
+                continue
+            # Re-use the existing list logic by recursing with operation="list"
+            results[col] = kv_execute("list", col, None, None, rid)
+        log.info("kv_list_batch rid=%s collections=%s", rid, list(results.keys()))
+        return {"results": results}
+
     if collection not in kv_store:
         raise ValueError(f"Unknown collection: {collection}")
 
@@ -209,7 +268,7 @@ def kv_execute(operation: str, collection: str, key: Optional[str], data: Option
         if not key:
             raise ValueError("'key' required for set")
         kv_store[collection][key] = data
-        save_kv_store()
+        _mark_kv_dirty()
         log.info("kv_set rid=%s col=%s key=%s", rid, collection, key)
         return {"status": "ok"}
 
@@ -217,7 +276,7 @@ def kv_execute(operation: str, collection: str, key: Optional[str], data: Option
         if not key:
             raise ValueError("'key' required for delete")
         kv_store[collection].pop(key, None)
-        save_kv_store()
+        _mark_kv_dirty()
         log.info("kv_delete rid=%s col=%s key=%s", rid, collection, key)
         return {"status": "ok"}
 

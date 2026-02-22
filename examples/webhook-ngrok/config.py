@@ -32,10 +32,14 @@ except Exception as _log_err:
     log.warning("file_logging_failed path=%s err=%s", LOG_FILE, _log_err)
 
 WEBHOOK_VERSION = "2.0.0"
-CAPABILITIES = ["store", "credential", "proxy", "refresh", "storage"]
+CAPABILITIES = ["store", "credential", "proxy", "refresh", "tv-refresh", "storage"]
 
 TIMESTAMP_TOLERANCE = 300  # 5 minutes
 OAUTH_TIMEOUT = 10  # seconds
+
+# Shared httpx client for outbound HTTP connection reuse (keep-alive).
+import httpx as _httpx
+http_client = _httpx.AsyncClient()
 STORE_PATH = Path(os.environ.get("TOKENVAULT_STORE_PATH", "/data/tokenvault_store.json"))
 KV_STORE_PATH = Path(os.environ.get("TOKENVAULT_KV_STORE_PATH", "/data/tokenvault_kv_store.json"))
 

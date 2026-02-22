@@ -4,7 +4,7 @@ import httpx
 from fastapi import APIRouter, Request, Response
 
 from auth import extract_auth_headers, verify_hmac, verify_ticket
-from config import error_response, log
+from config import error_response, http_client, log
 from crypto import decrypt_token_field, get_encryption_key
 from middleware import safe_json_loads
 from store import kv_store
@@ -92,13 +92,13 @@ async def proxy(request: Request):
 
     # Make upstream request
     try:
-        async with httpx.AsyncClient(timeout=30) as client:
-            upstream_resp = await client.request(
-                method=upstream_method,
-                url=upstream_url,
-                headers=upstream_headers,
-                content=upstream_body,
-            )
+        upstream_resp = await http_client.request(
+            method=upstream_method,
+            url=upstream_url,
+            headers=upstream_headers,
+            content=upstream_body,
+            timeout=30,
+        )
 
         # Return upstream response
         resp_headers = {
