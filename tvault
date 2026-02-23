@@ -54,7 +54,7 @@
 
 set -euo pipefail
 
-TV_VERSION="0.4.0"
+TV_VERSION="0.4.1"
 TV_DEFAULT_API_URL="https://api.tokenvault.uk"
 TV_CONFIG_DIR="${TV_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/tv}"
 TV_CONFIG_FILE="${TV_CONFIG_DIR}/config"
@@ -180,15 +180,10 @@ do_update() {
   # Fetch remote version line
   local remote_version
   remote_version=$(curl -fsSL "${TV_RELEASE_URL}" 2>/dev/null \
-    | grep -m1 '^TV_VERSION=' | cut -d'"' -f2) || {
-    echo "failed"
-    echo "tvault: error: could not reach update server" >&2
-    exit 1
-  }
-
+    | grep -m1 '^TV_VERSION=' | cut -d'"' -f2 || true)
   if [[ -z "$remote_version" ]]; then
     echo "failed"
-    echo "tvault: error: could not parse remote version" >&2
+    echo "tvault: error: could not reach update server" >&2
     exit 1
   fi
 
