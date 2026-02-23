@@ -4,22 +4,17 @@ Reference [Token Vault](https://tokenvault.uk) webhook implementation that runs 
 
 Full documentation: [docs.tokenvault.uk/webhook-protocol](https://docs.tokenvault.uk/webhook-protocol)
 
-## Architecture
+## Installation & Setup
 
-Your webhook owns its own AES-256-GCM encryption key. Token Vault is a metadata, policy, and authorization layer only — it never holds key material or plaintext credentials.
+### 1. Prerequisites
 
-- **Storing tokens** — the browser sends credentials directly to `/v1/store` with a signed ticket. Token Vault issues the ticket but never sees the credential.
-- **Agent access** — Token Vault validates the agent's API key and policies, then returns a **307 redirect** to `/v1/credential`. The agent follows the redirect and gets the credential directly from your webhook.
-- **MCP proxy** — Token Vault forwards the request to `/v1/proxy` with a signed ticket. Your webhook decrypts the credential, injects it into the upstream request, and returns the response.
-- **Token refresh** — Token Vault notifies your webhook via `/v1/refresh-notify` with provider hints. Your webhook handles the OAuth refresh independently.
+- **ngrok account**: You need a [static domain](https://dashboard.ngrok.com/cloud-edge/domains) and an `NGROK_AUTHTOKEN`.
+- **Docker**: (Recommended) Installed and running.
+- **Python 3.10+**: (If running without Docker).
 
-## Prerequisites
+### 2. Deploy the Webhook
 
-- Docker
-- [ngrok](https://ngrok.com) account with a static domain
-- `NGROK_AUTHTOKEN` from your ngrok dashboard
-
-## Quick start
+#### Using Docker (Recommended)
 
 ```bash
 docker build -t tv-webhook .
@@ -28,30 +23,46 @@ docker run -d \
   -e NGROK_AUTHTOKEN=your_ngrok_token \
   -e NGROK_URL=your-domain.ngrok-free.app \
   -v tv-webhook-data:/data \
+  -p 8080:8080 \
   tv-webhook
 ```
 
-The container starts the webhook server on port 8080 and an ngrok tunnel that exposes it at your static domain.
+The container automatically starts the webhook server and an ngrok tunnel.
 
-### Connect to Token Vault
+#### Running Locally (Manual)
 
-1. Open `https://your-domain.ngrok-free.app/bind` in your browser
-2. Click **Connect to TokenVault** — this redirects you to the Token Vault dashboard
-3. Token Vault exchanges a one-time code with your webhook to establish the HMAC secret
-4. Your vault is now connected — add tokens from the dashboard
+1. Install dependencies:
+   ```bash
+   pip install -r requirements.txt
+   ```
+2. Start the webhook:
+   ```bash
+   PORT=8080 python main.py
+   ```
+3. In a separate terminal, start ngrok:
+   ```bash
+   ngrok http 8080 --url=your-domain.ngrok-free.app
+   ```
 
-## Run locally (without Docker)
+### 3. Bind to Token Vault
 
-```bash
-pip install -r requirements.txt
-PORT=8080 python main.py
-```
+Once the webhook is running:
 
-Then run ngrok separately:
+1. Check the logs. If the webhook is not configured, it will print a bind URL:
+   `Please open https://your-domain.ngrok-free.app/bind in your browser`
+2. Open that URL in your browser.
+3. Click **Connect to TokenVault**. You will be redirected to the Token Vault dashboard.
+4. Token Vault will establish a secure HMAC secret with your webhook.
+5. Your vault is now connected! You can now add and manage tokens from the dashboard.
 
-```bash
-ngrok http 8080 --url=your-domain.ngrok-free.app
-```
+## Architecture
+
+Your webhook owns its own AES-256-GCM encryption key. Token Vault is a metadata, policy, and authorization layer only — it never holds key material or plaintext credentials.
+
+- **Storing tokens** — the browser sends credentials directly to `/v1/store` with a signed ticket. Token Vault issues the ticket but never sees the credential.
+- **Agent access** — Token Vault validates the agent's API key and policies, then returns a **307 redirect** to `/v1/credential`. The agent follows the redirect and gets the credential directly from your webhook.
+- **MCP proxy** — Token Vault forwards the request to `/v1/proxy` with a signed ticket. Your webhook decrypts the credential, injects it into the upstream request, and returns the response.
+- **Token refresh** — Token Vault notifies your webhook via `/v1/refresh-notify` with provider hints. Your webhook handles the OAuth refresh independently.
 
 ## Environment variables
 
@@ -82,8 +93,16 @@ ngrok http 8080 --url=your-domain.ngrok-free.app
 
 | Endpoint | Method | Auth | Purpose |
 |----------|--------|------|---------|
-| `/v1/credential` | GET/POST | Signed ticket | Agent 307 redirect — decrypt and return credential |
+| `/v1/credential` | GET/POST | Signed ticket | Decrypt and return credential (used for both viewing and agent access) |
 | `/v1/store` | POST | Signed ticket | Browser-direct — encrypt and store credential |
+
+#### Credential vs. Viewer
+
+The `/v1/credential` endpoint serves two distinct purposes based on the `pur` field in the signed ticket:
+- **Viewer**: When you click "View" in the Token Vault dashboard, your browser is given a ticket with `pur=view`. This can be disabled with `VIEWER_ENABLED=false`.
+- **Credential**: When an agent (like a CLI or MCP) requests a token, it receives a ticket with `pur=credential`. This can be disabled with `CREDENTIAL_ENABLED=false`.
+
+If you only want your webhook to be used for background agents and not for manual viewing in a browser, set `VIEWER_ENABLED=false`.
 
 ### Registration
 

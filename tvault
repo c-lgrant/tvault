@@ -54,7 +54,7 @@
 
 set -euo pipefail
 
-TV_VERSION="0.3.0"
+TV_VERSION="0.4.0"
 TV_DEFAULT_API_URL="https://api.tokenvault.uk"
 TV_CONFIG_DIR="${TV_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/tv}"
 TV_CONFIG_FILE="${TV_CONFIG_DIR}/config"
@@ -359,7 +359,7 @@ else
   url="${TV_API_URL}/api/agents/credentials"
 fi
 
-response=$(curl -sS -w "\n%{http_code}" \
+response=$(curl -LsS -w "\n%{http_code}" \
   -H "Authorization: Bearer ${TV_AGENT_KEY}" \
   -H "Accept: application/json" \
   "$url" 2>&1) || {
@@ -375,8 +375,8 @@ body=$(echo "$response" | sed '$d')
 if [[ "$http_code" -ge 200 && "$http_code" -lt 300 ]]; then
   if [[ -n "$service" ]]; then
     # Single token — print just the access token (clean for piping)
-    echo "$body" | python3 -c "import sys,json; print(json.load(sys.stdin)['accessToken'])" 2>/dev/null \
-      || echo "$body" | jq -r '.accessToken' 2>/dev/null \
+    echo "$body" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('accessToken') or d['token']['accessToken'])" 2>/dev/null \
+      || echo "$body" | jq -r '.accessToken // .token.accessToken' 2>/dev/null \
       || { echo "tvault: error: unexpected response format" >&2; echo "$body" >&2; exit 1; }
   else
     # List mode — print service names, one per line

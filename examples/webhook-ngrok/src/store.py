@@ -1,13 +1,15 @@
+import atexit
 import base64
 import hashlib
 import json
 import os
+import threading
 import time
 import uuid
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from config import KV_STORE_PATH, STORE_PATH, log
+from config import KV_STORE_PATH, SENSITIVE_FIELDS, STORE_PATH, log
 
 
 def ensure_parent_dir(path: Path) -> None:
@@ -135,9 +137,6 @@ def load_kv_store() -> None:
         log.warning("kv_store_load_error path=%s err=%s", str(KV_STORE_PATH), e)
 
 
-import atexit
-import threading
-
 _kv_dirty = False
 _kv_save_lock = threading.Lock()
 
@@ -216,12 +215,6 @@ def kv_execute(operation: str, collection: str, key: Optional[str], data: Option
         return {"data": result}
 
     elif operation == "list":
-        # Sensitive fields that should never appear in list responses
-        _SENSITIVE_FIELDS = {
-            "accessToken", "refreshToken",
-            "certificateData", "privateKeyData", "certificateChain",
-            "sshPrivateKey",
-        }
         items = []
         for k, v in kv_store[collection].items():
             meta = {}
@@ -238,7 +231,7 @@ def kv_execute(operation: str, collection: str, key: Optional[str], data: Option
                 # all metadata lives at the top level. Extract everything except
                 # sensitive credential fields and internal encryption fields.
                 for mkey, mval in v.items():
-                    if mkey not in meta and mkey not in _SENSITIVE_FIELDS and mkey not in ("v", "alg", "fields", "meta"):
+                    if mkey not in meta and mkey not in SENSITIVE_FIELDS and mkey not in ("v", "alg", "fields", "meta"):
                         meta[mkey] = mval
                 # Ensure hasRefreshToken is set for plaintext tokens
                 if "hasRefreshToken" not in meta and "refreshToken" in v:

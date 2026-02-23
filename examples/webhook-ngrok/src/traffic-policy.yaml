@@ -1,0 +1,39 @@
+# ngrok Traffic Policy  IP restrictions per endpoint path
+#
+# Token Vault static outbound IP: set via TOKENVAULT_IP env var.
+# Free tier supports up to 5 traffic policy rules per policy.
+# Uses 2 of 5 rule slots.
+#
+# Deny TV IP on:
+#   /v1/credential, /v1/store  agents reach these via 307 redirect,
+#   Token Vault should never call them directly.
+#
+# All other paths (/v1/health, /v1/storage, /v1/refresh, /bind, etc.)
+# are allowed by default  no rule needed.
+
+on_http_request:
+  # ── Deny Token Vault IP on credential endpoint ──────────────────
+  - name: "Deny TV IP on /v1/credential"
+    expressions:
+      - "req.url.path.startsWith('/v1/credential')"
+      - "conn.client_ip == '${TOKENVAULT_IP}'"
+    actions:
+      - type: custom-response
+        config:
+          status_code: 403
+          headers:
+            content-type: application/json
+          body: '{"error":"ip_denied","message":"Token Vault server IP is not allowed on /v1/credential"}'
+
+  # ── Deny Token Vault IP on store endpoint ───────────────────────
+  - name: "Deny TV IP on /v1/store"
+    expressions:
+      - "req.url.path.startsWith('/v1/store')"
+      - "conn.client_ip == '${TOKENVAULT_IP}'"
+    actions:
+      - type: custom-response
+        config:
+          status_code: 403
+          headers:
+            content-type: application/json
+          body: '{"error":"ip_denied","message":"Token Vault server IP is not allowed on /v1/store"}'

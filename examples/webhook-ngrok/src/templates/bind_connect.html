@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>TokenVault Webhook — Connect</title>
+<style>
+  *{{margin:0;padding:0;box-sizing:border-box}}
+  body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#0a0a0a;color:#e5e5e5;display:flex;align-items:center;justify-content:center;min-height:100vh}}
+  .card{{background:#171717;border:1px solid #262626;border-radius:12px;padding:2.5rem;max-width:460px;width:100%;text-align:center}}
+  h1{{font-size:1.25rem;margin-bottom:.25rem}}
+  .subtitle{{color:#a3a3a3;font-size:.875rem;margin-bottom:1.5rem}}
+  .url-box{{background:#0a0a0a;border:1px solid #262626;border-radius:8px;padding:.75rem 1rem;margin-bottom:1.5rem;font-family:monospace;font-size:.75rem;color:#a3a3a3;word-break:break-all;text-align:left}}
+  .btn{{display:inline-block;background:#2563eb;color:#fff;font-size:.9rem;font-weight:500;padding:.75rem 2rem;border-radius:8px;text-decoration:none;transition:background .15s}}
+  .btn:hover{{background:#1d4ed8}}
+  .info{{font-size:.75rem;color:#525252;margin-top:1rem}}
+</style></head><body>
+<div class="card">
+  <h1>Connect to TokenVault</h1>
+  <p class="subtitle">Bind this webhook to your TokenVault account.</p>
+  <div class="url-box">{external_url}</div>
+  <a class="btn" href="{reg_url}">Connect to TokenVault</a>
+  <p class="info">Code expires in 5 minutes.</p>
+</div></body></html>

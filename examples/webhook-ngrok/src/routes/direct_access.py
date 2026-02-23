@@ -2,12 +2,18 @@ from fastapi import APIRouter, Request, Response
 from fastapi.responses import JSONResponse
 
 from auth import cors_headers, verify_ticket
-from config import error_response, log, now_iso
+from config import SENSITIVE_FIELDS, error_response, log, now_iso
 from crypto import build_encrypted_token_document, decrypt, get_encryption_key
 from middleware import safe_json_loads
 from store import kv_store, save_kv_store
 
 router = APIRouter()
+
+
+def _cors_response(resp: Response, cors: dict) -> Response:
+    for k, v in cors.items():
+        resp.headers[k] = v
+    return resp
 
 
 # ── Token Storage (browser-direct) ───────────────────────────────────────────
@@ -38,66 +44,39 @@ async def store_token(request: Request):
 
     data, err = safe_json_loads(body_bytes)
     if data is None:
-        resp = error_response(400, "invalid_request", f"Invalid JSON: {err}")
-        for k, v in cors.items():
-            resp.headers[k] = v
-        return resp
+        return _cors_response(error_response(400, "invalid_request", f"Invalid JSON: {err}"), cors)
 
     ticket = data.get("ticket", "")
     service = data.get("service", "")
     token_data = data.get("tokenData", {})
 
     if not ticket:
-        resp = error_response(400, "invalid_request", "Missing 'ticket'")
-        for k, v in cors.items():
-            resp.headers[k] = v
-        return resp
+        return _cors_response(error_response(400, "invalid_request", "Missing 'ticket'"), cors)
 
     if not service:
-        resp = error_response(400, "invalid_request", "Missing 'service'")
-        for k, v in cors.items():
-            resp.headers[k] = v
-        return resp
+        return _cors_response(error_response(400, "invalid_request", "Missing 'service'"), cors)
 
     if not token_data:
-        resp = error_response(400, "invalid_request", "Missing 'tokenData'")
-        for k, v in cors.items():
-            resp.headers[k] = v
-        return resp
+        return _cors_response(error_response(400, "invalid_request", "Missing 'tokenData'"), cors)
 
     # Verify ticket
     payload, ticket_err = verify_ticket(ticket, rid)
     if ticket_err is not None:
-        for k, v in cors.items():
-            ticket_err.headers[k] = v
-        return ticket_err
+        return _cors_response(ticket_err, cors)
 
     # Verify ticket purpose is "store"
     if payload.get("pur") != "store":
         log.warning("store_wrong_purpose rid=%s purpose=%s", rid, payload.get("pur"))
-        resp = error_response(401, "ticket_invalid", "Ticket purpose must be 'store'")
-        for k, v in cors.items():
-            resp.headers[k] = v
-        return resp
+        return _cors_response(error_response(401, "ticket_invalid", "Ticket purpose must be 'store'"), cors)
 
     # Verify service matches ticket
     if payload.get("svc") != service:
         log.warning("store_service_mismatch rid=%s ticket=%s requested=%s", rid, payload.get("svc"), service)
-        resp = error_response(401, "ticket_invalid", f"Ticket is for service '{payload.get('svc')}', not '{service}'")
-        for k, v in cors.items():
-            resp.headers[k] = v
-        return resp
+        return _cors_response(error_response(401, "ticket_invalid", f"Ticket is for service '{payload.get('svc')}', not '{service}'"), cors)
 
     # Encrypt and store
     key = get_encryption_key()
     try:
-        # Sensitive fields that get encrypted (mirrors Token Vault's _SENSITIVE_FIELDS)
-        _SENSITIVE_FIELDS = {
-            "accessToken", "refreshToken",
-            "certificateData", "privateKeyData", "certificateChain",
-            "sshPrivateKey",
-        }
-
         access_token = token_data.get("accessToken")
         refresh_token = token_data.get("refreshToken")
 
@@ -106,7 +85,7 @@ async def store_token(request: Request):
         # are preserved for the list endpoint.
         meta = {}
         for k, v in token_data.items():
-            if k not in _SENSITIVE_FIELDS and v is not None:
+            if k not in SENSITIVE_FIELDS and v is not None:
                 meta[k] = v
 
         # Ensure required fields
@@ -153,10 +132,7 @@ async def store_token(request: Request):
 
     except Exception as e:
         log.exception("store_failed rid=%s", rid)
-        resp = error_response(500, "internal_error", f"Token storage failed: {e}")
-        for k, v in cors.items():
-            resp.headers[k] = v
-        return resp
+        return _cors_response(error_response(500, "internal_error", f"Token storage failed: {e}"), cors)
 
 
 # ── Credential Retrieval (zero-knowledge) ────────────────────────────────────
@@ -194,40 +170,32 @@ async def credential(request: Request):
             body_bytes = await request.body()
         data, err = safe_json_loads(body_bytes)
         if data is None:
-            resp = error_response(400, "invalid_request", f"Invalid JSON: {err}")
-            for k, v in cors.items():
-                resp.headers[k] = v
-            return resp
+            return _cors_response(error_response(400, "invalid_request", f"Invalid JSON: {err}"), cors)
         ticket = data.get("ticket", "")
         service = data.get("service", "")
 
     if not ticket:
-        resp = error_response(400, "invalid_request", "Missing 'ticket' parameter")
-        for k, v in cors.items():
-            resp.headers[k] = v
-        return resp
+        return _cors_response(error_response(400, "invalid_request", "Missing 'ticket' parameter"), cors)
 
     if not service:
-        resp = error_response(400, "invalid_request", "Missing 'service' parameter")
-        for k, v in cors.items():
-            resp.headers[k] = v
-        return resp
+        return _cors_response(error_response(400, "invalid_request", "Missing 'service' parameter"), cors)
 
     # Verify ticket
     payload, ticket_err = verify_ticket(ticket, rid)
     if ticket_err is not None:
-        for k, v in cors.items():
-            ticket_err.headers[k] = v
-        return ticket_err
+        return _cors_response(ticket_err, cors)
+
+    # Verify ticket purpose is valid for credential retrieval
+    purpose = payload.get("pur")
+    if purpose not in ("agent_credential", "user_reveal", "browser_credential"):
+        log.warning("credential_invalid_purpose rid=%s purpose=%s", rid, purpose)
+        return _cors_response(error_response(401, "ticket_invalid", f"Invalid ticket purpose for this endpoint: '{purpose}'"), cors)
 
     # Verify service matches ticket
     ticket_svc = payload.get("svc", "")
     if ticket_svc != service:
         log.warning("credential_service_mismatch rid=%s ticket_svc=%s requested=%s", rid, ticket_svc, service)
-        resp = error_response(401, "ticket_invalid", f"Ticket is for service '{ticket_svc}', not '{service}'")
-        for k, v in cors.items():
-            resp.headers[k] = v
-        return resp
+        return _cors_response(error_response(401, "ticket_invalid", f"Ticket is for service '{ticket_svc}', not '{service}'"), cors)
 
     # Decrypt with our own encryption key
     key = get_encryption_key()
@@ -236,10 +204,7 @@ async def credential(request: Request):
         stored_doc = kv_store["tokens"].get(service)
         if not stored_doc:
             log.warning("credential_token_not_found rid=%s service=%s", rid, service)
-            resp = error_response(404, "token_not_found", f"No token stored for service '{service}'")
-            for k_h, v_h in cors.items():
-                resp.headers[k_h] = v_h
-            return resp
+            return _cors_response(error_response(404, "token_not_found", f"No token stored for service '{service}'"), cors)
 
         # Two storage formats:
         #   Encrypted (via browser-direct /v1/store):
@@ -269,10 +234,7 @@ async def credential(request: Request):
 
     except Exception as e:
         log.exception("credential_failed rid=%s", rid)
-        resp = error_response(500, "internal_error", f"Credential retrieval failed: {e}")
-        for k_h, v_h in cors.items():
-            resp.headers[k_h] = v_h
-        return resp
+        return _cors_response(error_response(500, "internal_error", f"Credential retrieval failed: {e}"), cors)
 
     log.info(
         "credential_exit rid=%s service=%s purpose=%s sub=%s aid=%s",

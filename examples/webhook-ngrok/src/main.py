@@ -3,13 +3,20 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from config import WEBHOOK_VERSION, http_client
+from config import WEBHOOK_EXTERNAL_URL, WEBHOOK_VERSION, http_client, log
 from middleware import RequestLoggingMiddleware
 from routes import all_routers
+from store import store
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    if not store.get("is_configured"):
+        url = WEBHOOK_EXTERNAL_URL or f"http://localhost:{os.environ.get('PORT', '8080')}"
+        log.info("------------------------------------------------------------")
+        log.info("WEBHOOK NOT CONFIGURED")
+        log.info("Please open %s/bind in your browser to connect to Token Vault", url)
+        log.info("------------------------------------------------------------")
     yield
     await http_client.aclose()
 

@@ -4,6 +4,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+import httpx as _httpx
 from cachetools import TTLCache
 from fastapi.responses import JSONResponse
 
@@ -38,7 +39,6 @@ TIMESTAMP_TOLERANCE = 300  # 5 minutes
 OAUTH_TIMEOUT = 10  # seconds
 
 # Shared httpx client for outbound HTTP connection reuse (keep-alive).
-import httpx as _httpx
 http_client = _httpx.AsyncClient()
 STORE_PATH = Path(os.environ.get("TOKENVAULT_STORE_PATH", "/data/tokenvault_store.json"))
 KV_STORE_PATH = Path(os.environ.get("TOKENVAULT_KV_STORE_PATH", "/data/tokenvault_kv_store.json"))
@@ -55,6 +55,13 @@ seen_ticket_nonces: TTLCache = TTLCache(maxsize=10_000, ttl=120)
 
 # One-time registration codes (TTL = 5 min, max 100 entries)
 registration_codes: TTLCache = TTLCache(maxsize=100, ttl=300)
+
+# Sensitive credential fields that must never appear in list responses
+SENSITIVE_FIELDS = {
+    "accessToken", "refreshToken",
+    "certificateData", "privateKeyData", "certificateChain",
+    "sshPrivateKey",
+}
 
 # Track server start time for uptime reporting
 start_time = time.time()
