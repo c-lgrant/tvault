@@ -6,6 +6,7 @@ from fastapi import APIRouter, Request, Response
 from auth import extract_auth_headers, verify_hmac, verify_ticket
 from config import error_response, http_client, log
 from crypto import decrypt_token_field, get_encryption_key
+from gcp import is_gcp_service_account, mint_access_token
 from middleware import safe_json_loads
 from store import kv_store
 
@@ -73,6 +74,19 @@ async def proxy(request: Request):
     except Exception as e:
         log.exception("proxy_decrypt_failed rid=%s", rid)
         return error_response(500, "internal_error", f"Credential decryption failed: {e}")
+
+    # ── GCP Service Account interception ─────────────────────────
+    # If the credential is a GCP SA JSON key, mint a short-lived
+    # access token and use that for upstream injection instead.
+    if is_gcp_service_account(access_token):
+        log.info("proxy_gcp_sa_detected rid=%s service=%s", rid, service)
+        try:
+            minted = mint_access_token(access_token, service, rid=rid)
+            access_token = minted["accessToken"]
+        except Exception as gcp_err:
+            log.exception("proxy_gcp_mint_failed rid=%s", rid)
+            return error_response(500, "gcp_mint_failed", f"Failed to mint GCP access token: {gcp_err}")
+    # ─────────────────────────────────────────────────────────────
 
     # Build upstream request with credential injected
     upstream_url = upstream["url"]

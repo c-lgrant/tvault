@@ -4,3 +4,5 @@ cryptography==44.0.0
 fastapi
 cachetools
 httpx
+google-auth
+requests
