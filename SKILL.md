@@ -14,7 +14,8 @@ Retrieve credentials from the user's Token Vault using the `tvault` CLI.
 The `tvault` CLI must be installed and configured:
 ```bash
 # Install
-curl -fsSL https://raw.githubusercontent.com/c-lgrant/tvault/main/tvault -o /usr/local/bin/tvault && chmod +x /usr/local/bin/tvault
+curl -fsSL https://raw.githubusercontent.com/c-lgrant/tvault/main/tvault \
+  -o /usr/local/bin/tvault && chmod +x /usr/local/bin/tvault
 
 # Configure (one-time)
 tvault init
@@ -32,14 +33,21 @@ tvault init
    tvault
    ```
 
-3. **Never print raw tokens to the user.** Instead:
-   - Set them as environment variables: `export GITHUB_TOKEN=$(tvault github)`
-   - Use them inline in commands: `curl -H "Authorization: token $(tvault github)" ...`
-   - Store in a variable for the session: `TOKEN=$(tvault github)`
+3. **Never print, write to disk, or expose raw tokens.** Instead:
+   - Always use inline subshell substitution: `$(tvault <service>)`
+   - Never write credentials to temp files, env files, or disk
+   - Never run `tvault <service>` alone — always wrap in a command that consumes it
 
-4. If `tvault` is not installed or not configured, show the install/init commands above.
+4. **Never inspect or validate credentials.** Assume the credential is always correct and pass it directly to the target API. Do not peek at, truncate, or display any part of the token value.
 
-5. If the user asks to use a token with a specific API, construct the appropriate curl or SDK call with the token injected via `$(tvault <service>)` subshell — never paste the raw value.
+5. **Never log or display credentials in API responses.** When testing connectivity or verifying access:
+   - Displaying JSON response bodies is fine — just ensure no raw tokens or secrets appear in the output
+   - Use `curl -s -o /dev/null -w '%{http_code}' ...` if only a status check is needed
+
+6. If `tvault` is not installed or not configured, show the install/init commands above.
+
+7. If the user asks to use a token with a specific API, construct the appropriate curl or SDK call with the token injected via `$(tvault <service>)` subshell — never paste the raw value.
+
 
 ## Common patterns
 
@@ -60,7 +68,7 @@ curl https://api.openai.com/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{"model":"gpt-4o","messages":[{"role":"user","content":"Hello"}]}'
 
-# Export for SDK use
+# Export for SDK use (inline, never write to disk)
 export GITHUB_TOKEN=$(tvault github)
 export ANTHROPIC_API_KEY=$(tvault anthropic)
 export OPENAI_API_KEY=$(tvault openai)
