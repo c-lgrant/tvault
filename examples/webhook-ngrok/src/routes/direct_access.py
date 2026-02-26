@@ -4,6 +4,7 @@ from fastapi.responses import JSONResponse
 from auth import cors_headers, verify_ticket
 from config import SENSITIVE_FIELDS, error_response, log, now_iso
 from crypto import build_encrypted_token_document, decrypt, get_encryption_key
+from gcp import is_gcp_service_account, mint_access_token
 from middleware import safe_json_loads
 from store import kv_store, save_kv_store
 
@@ -226,6 +227,34 @@ async def credential(request: Request):
             # Plaintext format — return as-is (strip internal fields)
             token = {k: v for k, v in stored_doc.items() if k != "id"}
             log.info("credential_plaintext rid=%s service=%s", rid, service)
+
+        # ── GCP Service Account interception ─────────────────────────
+        # If the stored credential is a GCP SA JSON key, mint a
+        # short-lived access token instead of returning the raw key.
+        raw_access = token.get("accessToken", "")
+        if raw_access and is_gcp_service_account(raw_access):
+            log.info("credential_gcp_sa_detected rid=%s service=%s", rid, service)
+            try:
+                # Parse scopes from query param or token metadata
+                scopes_param = request.query_params.get("scopes", "")
+                scopes = [s.strip() for s in scopes_param.split(",") if s.strip()] or None
+
+                minted = mint_access_token(raw_access, service, scopes=scopes, rid=rid)
+                token = {
+                    "accessToken": minted["accessToken"],
+                    "tokenType": minted["tokenType"],
+                    "expiresAt": minted["expiresAt"],
+                    "serviceName": service,
+                    "serviceAccount": minted["serviceAccount"],
+                    "gcpMinted": True,
+                }
+            except Exception as gcp_err:
+                log.exception("credential_gcp_mint_failed rid=%s", rid)
+                return _cors_response(
+                    error_response(500, "gcp_mint_failed", f"Failed to mint GCP access token: {gcp_err}"),
+                    cors,
+                )
+        # ─────────────────────────────────────────────────────────────
 
         resp = JSONResponse(
             content={"token": token},
