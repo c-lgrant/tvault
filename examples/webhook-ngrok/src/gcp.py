@@ -27,7 +27,10 @@ from config import log
 _token_cache: TTLCache = TTLCache(maxsize=100, ttl=3000)
 
 # Default scopes when none specified
-DEFAULT_SCOPES = ["https://www.googleapis.com/auth/cloud-platform"]
+DEFAULT_SCOPES = [
+    "https://www.googleapis.com/auth/cloud-platform",
+    "https://www.googleapis.com/auth/cloud-billing.readonly",
+]
 
 
 def is_gcp_service_account(credential_value: str) -> bool:
