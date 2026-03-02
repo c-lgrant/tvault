@@ -264,6 +264,7 @@ def kv_execute(operation: str, collection: str, key: Optional[str], data: Option
         if options and isinstance(options, dict):
             opt_filters = options.get("filters")
             opt_after = options.get("after")
+            opt_since = options.get("since")
             opt_limit = options.get("limit")
 
             # Apply filters: match each filter key against item data fields (AND logic)
@@ -275,6 +276,16 @@ def kv_execute(operation: str, collection: str, key: Optional[str], data: Option
                     if all(match_src.get(fk) == fv for fk, fv in opt_filters.items()):
                         filtered.append(item)
                 items = filtered
+
+            # Apply date range: only items newer than `since` (audit: timestamp >= since)
+            if opt_since:
+                if collection == "audit":
+                    items = [
+                        item for item in items
+                        if (item.get("data", {}).get("timestamp", "") if isinstance(item.get("data"), dict) else item.get("key", "")) >= opt_since
+                    ]
+                else:
+                    items = [item for item in items if item.get("key", "") >= opt_since]
 
             total_count = len(items)
 
