@@ -66,6 +66,7 @@ async def storage_http(request: Request):
     collections = data.get("collections")
     key = data.get("key")
     payload = data.get("data")
+    options = data.get("options")
 
     if not operation:
         return error_response(400, "invalid_request", "Missing 'operation'")
@@ -73,7 +74,7 @@ async def storage_http(request: Request):
         return error_response(400, "invalid_request", "Missing 'collection'")
 
     try:
-        result = kv_execute(operation, collection, key, payload, rid, collections=collections)
+        result = kv_execute(operation, collection, key, payload, rid, collections=collections, options=options)
     except ValueError as e:
         return error_response(400, "invalid_request", str(e))
 

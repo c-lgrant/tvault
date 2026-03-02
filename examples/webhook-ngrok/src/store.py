@@ -190,8 +190,13 @@ load_kv_store()
 
 
 def kv_execute(operation: str, collection: str, key: Optional[str], data: Optional[Any], rid: str,
-               collections: Optional[list] = None) -> dict:
-    """Execute a KV storage operation. Returns the response dict (without requestId — caller adds it)."""
+               collections: Optional[list] = None, options: Optional[dict] = None) -> dict:
+    """Execute a KV storage operation. Returns the response dict (without requestId — caller adds it).
+
+    Args:
+        options: Optional dict with pagination/filter options for list operations.
+            Keys: limit (int), after (str cursor), filters (dict of field=value).
+    """
     if operation == "list_batch":
         if not collections:
             raise ValueError("'collections' required for list_batch")
@@ -200,7 +205,7 @@ def kv_execute(operation: str, collection: str, key: Optional[str], data: Option
             if col not in kv_store:
                 continue
             # Re-use the existing list logic by recursing with operation="list"
-            results[col] = kv_execute("list", col, None, None, rid)
+            results[col] = kv_execute("list", col, None, None, rid, options=options)
         log.info("kv_list_batch rid=%s collections=%s", rid, list(results.keys()))
         return {"results": results}
 
@@ -254,8 +259,56 @@ def kv_execute(operation: str, collection: str, key: Optional[str], data: Option
                 reverse=True,
             )
 
+        # Apply options (pagination + filters) if provided
+        pagination = None
+        if options and isinstance(options, dict):
+            opt_filters = options.get("filters")
+            opt_after = options.get("after")
+            opt_limit = options.get("limit")
+
+            # Apply filters: match each filter key against item data fields (AND logic)
+            if opt_filters and isinstance(opt_filters, dict):
+                filtered = []
+                for item in items:
+                    # Match against data (audit) or meta (other collections)
+                    match_src = item.get("data") if isinstance(item.get("data"), dict) else item.get("meta", {})
+                    if all(match_src.get(fk) == fv for fk, fv in opt_filters.items()):
+                        filtered.append(item)
+                items = filtered
+
+            total_count = len(items)
+
+            # Apply cursor: for audit, skip items with timestamp >= after;
+            # for other collections, skip items with key >= after
+            if opt_after:
+                if collection == "audit":
+                    items = [
+                        item for item in items
+                        if (item.get("data", {}).get("timestamp", "") if isinstance(item.get("data"), dict) else item.get("key", "")) < opt_after
+                    ]
+                else:
+                    items = [item for item in items if item.get("key", "") > opt_after]
+
+            # Apply limit and compute pagination
+            if opt_limit and isinstance(opt_limit, int) and opt_limit > 0:
+                has_more = len(items) > opt_limit
+                items = items[:opt_limit]
+                if collection == "audit" and items:
+                    last_ts = items[-1].get("data", {}).get("timestamp", "") if isinstance(items[-1].get("data"), dict) else items[-1].get("key", "")
+                    next_cursor = last_ts if has_more else None
+                else:
+                    next_cursor = items[-1].get("key", "") if has_more and items else None
+                pagination = {
+                    "hasMore": has_more,
+                    "nextCursor": next_cursor,
+                    "totalCount": total_count,
+                }
+
         log.info("kv_list rid=%s col=%s count=%d", rid, collection, len(items))
-        return {"items": items}
+        result = {"items": items}
+        if pagination is not None:
+            result["pagination"] = pagination
+        return result
 
     elif operation == "set":
         if not key:
