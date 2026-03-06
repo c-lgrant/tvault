@@ -114,10 +114,13 @@ async def proxy(request: Request):
             timeout=30,
         )
 
-        # Return upstream response
+        # Forward upstream response headers (skip hop-by-hop)
+        _hop_by_hop = {"content-encoding", "content-length", "transfer-encoding", "connection"}
         resp_headers = {
-            "X-Upstream-Status": str(upstream_resp.status_code),
+            k: v for k, v in upstream_resp.headers.items()
+            if k.lower() not in _hop_by_hop
         }
+        resp_headers["X-Upstream-Status"] = str(upstream_resp.status_code)
 
         log.info(
             "proxy_exit rid=%s upstream_status=%s",
@@ -128,7 +131,6 @@ async def proxy(request: Request):
             content=upstream_resp.content,
             status_code=upstream_resp.status_code,
             headers=resp_headers,
-            media_type=upstream_resp.headers.get("content-type", "application/json"),
         )
 
     except httpx.TimeoutException:
