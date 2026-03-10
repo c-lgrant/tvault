@@ -11,6 +11,7 @@
 # Usage:
 #   tvault github                      Print the access token for "github"
 #   tvault <service>                   Print the access token for any granted service
+#   tvault My Service                  Multi-word names work without quotes
 #   tvault                             List all granted services
 #   tvault init                        Save your agent key (interactive)
 #   tvault init --key <key>            Save your agent key (non-interactive)
@@ -54,7 +55,7 @@
 
 set -euo pipefail
 
-TV_VERSION="0.4.1"
+TV_VERSION="0.4.8"
 TV_DEFAULT_API_URL="https://api.tokenvault.uk"
 TV_CONFIG_DIR="${TV_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/tv}"
 TV_CONFIG_FILE="${TV_CONFIG_DIR}/config"
@@ -346,10 +347,13 @@ fi
 
 # ── API call ─────────────────────────────────────────────────────────────────
 
-service="${1:-}"
+# Join all remaining positional args into a single service name
+service="$*"
 
 if [[ -n "$service" ]]; then
-  url="${TV_API_URL}/api/agents/credentials?service=${service}"
+  encoded_service=$(python3 -c "import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1]))" "$service" 2>/dev/null \
+    || printf '%s' "$service" | curl -Gso /dev/null -w '%{url_effective}' --data-urlencode @- '' 2>/dev/null | cut -c3-)
+  url="${TV_API_URL}/api/agents/credentials?service=${encoded_service}"
 else
   url="${TV_API_URL}/api/agents/credentials"
 fi
