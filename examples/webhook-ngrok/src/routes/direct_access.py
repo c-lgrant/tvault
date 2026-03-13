@@ -104,9 +104,9 @@ async def store_token(request: Request):
             except (ValueError, AttributeError):
                 pass
 
-        # Collect additional sensitive fields (cert/SSH data)
+        # Collect additional sensitive fields (cert/SSH/TOTP data)
         extra_sensitive = {}
-        for sf in ("certificateData", "privateKeyData", "certificateChain", "sshPrivateKey"):
+        for sf in ("certificateData", "privateKeyData", "certificateChain", "sshPrivateKey", "totpSecret"):
             val = token_data.get(sf)
             if val:
                 extra_sensitive[sf] = val
@@ -227,6 +227,33 @@ async def credential(request: Request):
             # Plaintext format — return as-is (strip internal fields)
             token = {k: v for k, v in stored_doc.items() if k != "id"}
             log.info("credential_plaintext rid=%s service=%s", rid, service)
+
+        # ── TOTP interception ──────────────────────────────────────
+        # If the token is a TOTP secret, generate the current code
+        # instead of returning the raw secret.  The agent receives
+        # a ready-to-use OTP code in the accessToken field.
+        token_type = token.get("tokenType", stored_doc.get("meta", {}).get("tokenType", ""))
+        if token_type == "TOTP" and token.get("totpSecret"):
+            log.info("credential_totp_detected rid=%s service=%s", rid, service)
+            try:
+                from routes.totp import _generate_totp_code
+                result = _generate_totp_code(token["totpSecret"], stored_doc)
+                token = {
+                    "accessToken": result["code"],
+                    "tokenType": "TOTP",
+                    "serviceName": service,
+                    "remainingSeconds": result["remainingSeconds"],
+                    "period": result["period"],
+                    "digits": result["digits"],
+                    "totpGenerated": True,
+                }
+            except Exception as totp_err:
+                log.exception("credential_totp_failed rid=%s", rid)
+                return _cors_response(
+                    error_response(500, "totp_failed", f"Failed to generate TOTP code: {totp_err}"),
+                    cors,
+                )
+        # ─────────────────────────────────────────────────────────────
 
         # ── GCP Service Account interception ─────────────────────────
         # If the stored credential is a GCP SA JSON key, mint a

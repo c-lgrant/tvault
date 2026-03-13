@@ -102,6 +102,7 @@ def build_encrypted_token_document(
     meta["hasCertificate"] = "certificateData" in fields
     meta["hasPrivateKey"] = "privateKeyData" in fields
     meta["hasSSHKey"] = "sshPrivateKey" in fields
+    meta["hasTotpSecret"] = "totpSecret" in fields
 
     return {
         "v": 1,

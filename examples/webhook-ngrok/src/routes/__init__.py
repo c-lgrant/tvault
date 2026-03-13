@@ -3,6 +3,7 @@ from .direct_access import router as direct_access_router
 from .proxy import router as proxy_router
 from .refresh import router as refresh_router
 from .metadata import router as metadata_router
+from .totp import router as totp_router
 
 all_routers = [
     registration_router,
@@ -10,4 +11,5 @@ all_routers = [
     proxy_router,
     refresh_router,
     metadata_router,
+    totp_router,
 ]

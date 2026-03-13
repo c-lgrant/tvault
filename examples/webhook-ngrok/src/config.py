@@ -33,7 +33,7 @@ except Exception as _log_err:
     log.warning("file_logging_failed path=%s err=%s", LOG_FILE, _log_err)
 
 WEBHOOK_VERSION = "2.0.0"
-CAPABILITIES = ["store", "credential", "proxy", "refresh", "tv-refresh", "storage"]
+CAPABILITIES = ["store", "credential", "proxy", "refresh", "tv-refresh", "storage", "totp"]
 
 TIMESTAMP_TOLERANCE = 300  # 5 minutes
 OAUTH_TIMEOUT = 10  # seconds
@@ -61,6 +61,7 @@ SENSITIVE_FIELDS = {
     "accessToken", "refreshToken",
     "certificateData", "privateKeyData", "certificateChain",
     "sshPrivateKey",
+    "totpSecret",
 }
 
 # Track server start time for uptime reporting
