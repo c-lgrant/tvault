@@ -190,6 +190,19 @@ func Generate(m Method, values map[string]string, image string) ([]GeneratedFile
 	return files, nil
 }
 
+// Conflicts returns the names of files in dir that WriteProject would
+// overwrite. dir does not need to exist (a missing dir means no conflicts).
+// Caller decides whether to prompt, --force, or abort.
+func Conflicts(dir string, files []GeneratedFile) []string {
+	var out []string
+	for _, f := range files {
+		if _, err := os.Stat(filepath.Join(dir, f.Name)); err == nil {
+			out = append(out, f.Name)
+		}
+	}
+	return out
+}
+
 // WriteProject writes the generated files into dir, creating it if needed. It
 // refuses to overwrite an existing docker-compose.yml unless force is true.
 func WriteProject(dir string, files []GeneratedFile, force bool) error {

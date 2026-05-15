@@ -82,6 +82,9 @@ func (w *Wizard) Run() (Method, map[string]string, error) {
 		if err != nil {
 			return Method{}, nil, err
 		}
+		if p.Normalize != nil {
+			v = p.Normalize(v)
+		}
 		if v == "" {
 			return Method{}, nil, fmt.Errorf("%s is required", p.Key)
 		}

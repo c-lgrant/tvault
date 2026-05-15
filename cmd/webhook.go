@@ -1,15 +1,39 @@
 package cmd
 
 import (
+	"bufio"
 	"fmt"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
 	"github.com/c-lgrant/tvault/internal/clierr"
 	"github.com/c-lgrant/tvault/internal/webhook"
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 )
+
+// confirmOverwrite is a package var so tests can stub it out without a TTY.
+// Returns true to proceed with overwrite, false to abort. On non-interactive
+// stdin it never prompts and returns false — preserving script-safety.
+var confirmOverwrite = func(cmd *cobra.Command, dir string, conflicts []string) bool {
+	in, ok := cmd.InOrStdin().(*os.File)
+	if !ok || !term.IsTerminal(int(in.Fd())) {
+		return false
+	}
+	cmd.PrintErrf("These files in %s would be overwritten:\n", dir)
+	for _, n := range conflicts {
+		cmd.PrintErrf("  - %s\n", n)
+	}
+	cmd.PrintErr("Overwrite? [y/N]: ")
+	line, err := bufio.NewReader(in).ReadString('\n')
+	if err != nil {
+		return false
+	}
+	answer := strings.ToLower(strings.TrimSpace(line))
+	return answer == "y" || answer == "yes"
+}
 
 var webhookCmd = &cobra.Command{
 	Use:     "webhook",
@@ -56,6 +80,9 @@ func runWebhookInit(cmd *cobra.Command, _ []string) error {
 			values[k] = strings.TrimSpace(v)
 		}
 		for _, p := range m.Params {
+			if p.Normalize != nil {
+				values[p.Key] = p.Normalize(values[p.Key])
+			}
 			if values[p.Key] == "" {
 				return &clierr.CLIError{Kind: clierr.KindUser, Command: cmd.CommandPath(),
 					Message: fmt.Sprintf("method %q needs --set %s=...", m.ID, p.Key)}
@@ -75,7 +102,22 @@ func runWebhookInit(cmd *cobra.Command, _ []string) error {
 		return &clierr.CLIError{Kind: clierr.KindUser, Command: cmd.CommandPath(), Message: err.Error()}
 	}
 	if dir == "" {
-		dir = "./tvault-webhook"
+		cwd, err := os.Getwd()
+		if err != nil {
+			return &clierr.CLIError{Kind: clierr.KindUser, Command: cmd.CommandPath(),
+				Message: "could not determine current directory: " + err.Error()}
+		}
+		dir = cwd
+	}
+	if !force {
+		if conflicts := webhook.Conflicts(dir, files); len(conflicts) > 0 {
+			if !confirmOverwrite(cmd, dir, conflicts) {
+				return &clierr.CLIError{Kind: clierr.KindUser, Command: cmd.CommandPath(),
+					Message: fmt.Sprintf("would overwrite existing files in %s: %s — re-run with --force or pick a different --dir",
+						dir, strings.Join(conflicts, ", "))}
+			}
+			force = true
+		}
 	}
 	if err := webhook.WriteProject(dir, files, force); err != nil {
 		return &clierr.CLIError{Kind: clierr.KindUser, Command: cmd.CommandPath(), Message: err.Error()}
@@ -226,7 +268,7 @@ func runWebhookStatus(cmd *cobra.Command, _ []string) error {
 }
 
 func init() {
-	webhookInitCmd.Flags().String("dir", "", "target directory (default ./tvault-webhook)")
+	webhookInitCmd.Flags().String("dir", "", "target directory (default: current working directory)")
 	webhookInitCmd.Flags().String("image", "", "override the webhook container image")
 	webhookInitCmd.Flags().Bool("force", false, "overwrite an existing docker-compose.yml")
 	webhookInitCmd.Flags().String("method", "", "non-interactive: ngrok|cloudflare|tailscale|custom")

@@ -142,6 +142,44 @@ func TestGenerateCustomHasNoServeJSON(t *testing.T) {
 	}
 }
 
+func TestConflicts(t *testing.T) {
+	dir := t.TempDir()
+	files := []GeneratedFile{
+		{Name: "docker-compose.yml", Data: []byte("x")},
+		{Name: ".env", Data: []byte("y")},
+		{Name: "README.md", Data: []byte("z")},
+	}
+	if got := Conflicts(dir, files); len(got) != 0 {
+		t.Errorf("empty dir Conflicts = %v, want []", got)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "docker-compose.yml"), []byte("existing"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".env"), []byte("existing"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got := Conflicts(dir, files)
+	if len(got) != 2 {
+		t.Fatalf("Conflicts = %v, want 2 entries", got)
+	}
+	// Order matches files slice — assert membership not position to keep
+	// the test resilient to reordering.
+	seen := map[string]bool{}
+	for _, n := range got {
+		seen[n] = true
+	}
+	if !seen["docker-compose.yml"] || !seen[".env"] {
+		t.Errorf("Conflicts = %v, want both docker-compose.yml and .env", got)
+	}
+	if seen["README.md"] {
+		t.Errorf("Conflicts incorrectly flagged README.md (does not exist on disk)")
+	}
+	// Missing dir is not an error — should return no conflicts.
+	if got := Conflicts(filepath.Join(dir, "nonexistent"), files); len(got) != 0 {
+		t.Errorf("missing-dir Conflicts = %v, want []", got)
+	}
+}
+
 func TestWriteProjectRefusesOverwrite(t *testing.T) {
 	dir := t.TempDir()
 	files := []GeneratedFile{

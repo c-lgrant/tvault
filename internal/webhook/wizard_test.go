@@ -76,6 +76,35 @@ func TestWizardTailscaleThreeParams(t *testing.T) {
 	}
 }
 
+// User pastes the ngrok domain WITH https:// even though the prompt accepts
+// it bare — Normalize must strip the scheme so downstream config (the ngrok
+// container's --url= flag) gets a hostname.
+func TestWizardNgrokStripsScheme(t *testing.T) {
+	in := strings.NewReader("1\ntok\nhttps://foo.ngrok-free.app/\n")
+	w := &Wizard{In: in, Out: io.Discard}
+	_, vals, err := w.Run()
+	if err != nil {
+		t.Fatalf("wizard errored: %v", err)
+	}
+	if vals["NGROK_URL"] != "foo.ngrok-free.app" {
+		t.Errorf("NGROK_URL = %q, want foo.ngrok-free.app", vals["NGROK_URL"])
+	}
+}
+
+// Inverse: WEBHOOK_EXTERNAL_URL prompts get https:// added when the user
+// pastes a bare hostname. Backend wants the full URL it can call.
+func TestWizardCustomAddsHTTPS(t *testing.T) {
+	in := strings.NewReader("4\nfoo.example.com\n")
+	w := &Wizard{In: in, Out: io.Discard}
+	_, vals, err := w.Run()
+	if err != nil {
+		t.Fatalf("wizard errored: %v", err)
+	}
+	if vals["WEBHOOK_EXTERNAL_URL"] != "https://foo.example.com" {
+		t.Errorf("WEBHOOK_EXTERNAL_URL = %q, want https://foo.example.com", vals["WEBHOOK_EXTERNAL_URL"])
+	}
+}
+
 func TestWizardMissingParam(t *testing.T) {
 	// Method 4 (custom) then an empty required URL line.
 	w := &Wizard{In: strings.NewReader("4\n\n"), Out: io.Discard}
