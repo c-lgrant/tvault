@@ -1,267 +1,155 @@
-# tvault — Token Vault CLI
+# tvault
 
-A single-file CLI for [Token Vault](https://tokenvault.uk). Retrieve API keys, access tokens, and secrets from your vault in scripts, pipelines, and AI agents.
-
-```
-tvault github          # prints your GitHub token to stdout
-tvault anthropic       # prints your Anthropic key
-tvault                 # lists all granted services
-```
-
-Zero dependencies. Single bash script. Works anywhere `curl` and `bash` are available.
+The Token Vault command-line interface. Manage credentials, agents, grants, and
+the vault lock from your terminal — with a browser-based login and
+kubectl-style contexts for switching between admin and agent personas.
 
 ## Install
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/c-lgrant/tvault/main/tvault \
-  -o /usr/local/bin/tvault && chmod +x /usr/local/bin/tvault
-```
-
-Or with Homebrew-style local install:
+With the Go toolchain:
 
 ```bash
-mkdir -p ~/.local/bin
-curl -fsSL https://raw.githubusercontent.com/c-lgrant/tvault/main/tvault \
-  -o ~/.local/bin/tvault && chmod +x ~/.local/bin/tvault
+go install github.com/c-lgrant/tvault@latest
 ```
 
-Make sure `~/.local/bin` is in your `PATH`.
-
-## Setup
+Or grab a prebuilt binary (Linux/macOS, amd64/arm64) — the installer detects
+your OS/arch, downloads the matching release, and verifies its SHA256:
 
 ```bash
-tvault init
+curl -fsSL https://raw.githubusercontent.com/c-lgrant/tvault/main/install.sh | bash
 ```
 
-You'll need an agent API key (`tvagent_...`) from the [Token Vault dashboard](https://tokenvault.uk). Create an agent, grant it access to the tokens it needs, then copy the key.
-
-```
-$ tvault init
-Token Vault CLI Setup
-
-Agent key (tvagent_...): tvagent_abc123...
-Verifying key... ok
-
-Saved to /home/you/.config/tv/config
-
-Available tokens:
-  github
-  anthropic
-  openai
-
-Usage: tvault github
-```
-
-The key is saved to `~/.config/tv/config` (chmod 600). You can also set it via the `TV_AGENT_KEY` environment variable instead of running `tvault init`.
-
-## Usage
+## Quick start
 
 ```bash
-tvault <service>                   # print the access token for a service
-tvault                             # list all granted services
-tvault init                        # configure your agent key
-tvault install-skill               # install Claude Code /tvault skill
-tvault update                      # self-update to the latest version
-tvault version                     # print version
-tvault --help                      # show help
+tvault login              # browser-based admin login
+tvault tk ls              # list tokens
+tvault tk get github      # print a credential (stdout only — safe for $(...))
 ```
 
-### Flags
+## Contexts: admin vs. agent
+
+`tvault` stores one or more *contexts*, each holding either an admin login
+(Firebase identity, full console access) or an agent login (a `tvagent_*` key,
+scoped to its grants). Commands resolve the active context automatically;
+override it per-invocation with `--context <name>`.
+
+| Command | Purpose |
+|---------|---------|
+| `tvault login` | Browser-based admin login. `--as <name>` names the context; `--key <tvagent_*>` does a non-interactive agent login; `--no-launch-browser` uses the manual code-paste flow for SSH/headless sessions. |
+| `tvault logout` | Remove the stored credentials for a context. |
+| `tvault whoami` (`who`) | Show the active context's identity. |
+| `tvault context` (`ctx`) | `list`/`ls`, `use <name>`, `current`, `rm <name>` — manage stored contexts. |
+
+## Commands
+
+Most groups have a short alias (shown in parentheses). Admin-only commands
+require an admin context.
+
+### Tokens — `tvault tokens` (`tk`)
+
+| Command | Purpose |
+|---------|---------|
+| `tk list` (`ls`) | List tokens. |
+| `tk get <service>` | Print a credential value to stdout — safe for `$(...)`. |
+| `tk show <service>` (`info`) | Show token metadata (no secret). |
+| `tk create` (`new`) | Create a token — interactive type-picker wizard, or fully flag-driven with `--type`/`--service`/`--value`. |
+| `tk set <service>` (`up`) | Rotate a credential value (`--value`). Admin only. |
+| `tk edit <service>` | Edit metadata: `--name`, `--notes`, `--tags`. Admin only. |
+| `tk rm <service>...` (`del`, `d`) | Delete one or more tokens. Admin only. |
+| `tk refresh <service>` (`ref`) | Force an OAuth token refresh. Admin only. |
+| `tk history <service>` (`hist`) | Show a token's usage history. |
+
+Token types offered by the `tk new` type picker map to the real backend
+`tokenType` values: **JWT** (OAuth · JWT), **PlainText** (API key / PAT),
+**Certificate** (X.509), **SSHKey**, **RawCredential** (raw blob), and
+**TOTP** (2FA).
+
+### Agents — `tvault agents` (`ag`)
+
+| Command | Purpose |
+|---------|---------|
+| `ag list` (`ls`) | List agents. |
+| `ag show <name-or-id>` (`info`) | Show agent details and grants. |
+| `ag create` (`new`) | Create an agent — interactive name + grants wizard, or `--name`/`--grants`. The API key is shown once. |
+| `ag rm <name-or-id>...` (`del`, `d`) | Delete one or more agents. |
+| `ag suspend <name-or-id>` (`off`) | Suspend an agent. |
+| `ag resume <name-or-id>` (`on`) | Resume a suspended agent. |
+
+### Grants — `tvault grants` (`gr`)
+
+| Command | Purpose |
+|---------|---------|
+| `gr list <agent>` (`ls`) | List an agent's grants. |
+| `gr add <agent> <service>...` | Grant services to an agent. |
+| `gr rm <agent> <service>...` | Revoke grants from an agent. |
+
+### Vault — `tvault vault`
+
+| Command | Purpose |
+|---------|---------|
+| `vault status` (`stat`) | Show the vault lock state. |
+| `vault lock` | Lock the vault — blocks all mutating operations. |
+| `vault unlock` | Unlock the vault. Admin only. |
+
+### Webhook — `tvault webhook` (`wh`)
+
+Deploy and connect your own [Webhook Mode](https://docs.tokenvault.uk/vault-modes/webhook)
+vault. The CLI generates the Docker Compose project and binds the webhook to your
+vault **without a browser**, reusing your admin context's session.
+
+| Command | Purpose |
+|---------|---------|
+| `wh init` | Generate a `docker-compose.yml` + `.env` for a webhook deployment. Interactive method picker, or `--method` + `--set KEY=VALUE`. Methods: `ngrok`, `cloudflare`, `tailscale`, `custom`. `--dir` sets the target (default `./tvault-webhook`); `--image` overrides the webhook image. |
+| `wh up` | `docker compose up -d`, then wait for the webhook to report healthy. |
+| `wh bind` | Fetch the one-time code from the running webhook and bind it to your vault — no browser. Admin only. |
+| `wh status` (`stat`) | Show local container state next to the backend's view of the webhook. Admin only. |
+| `wh down` | `docker compose down`. |
+
+Typical first run:
 
 ```bash
-tvault --key <key> <service>       # override agent key for one call
+tvault webhook init          # pick a method, answer the prompts
+cd tvault-webhook
+tvault webhook up            # start it
+tvault webhook bind          # connect it to your vault
 ```
 
-### Environment variables
+`up`/`down`/`bind`/`status` look for the project in the current directory, or
+`--dir <path>`.
 
-These override the config file:
+## Back-compat shim
 
-| Variable | Purpose |
-|----------|---------|
-| `TV_AGENT_KEY` | Agent key (overrides config file) |
-| `TV_CONFIG_DIR` | Config directory (default: `~/.config/tv`) |
-
-## Examples
-
-### Use tokens in API calls
+For drop-in compatibility with the legacy bash script, a bare invocation works:
 
 ```bash
-# GitHub
-curl -H "Authorization: token $(tvault github)" https://api.github.com/user
-
-# GitHub CLI
-gh auth login --with-token <<< "$(tvault github)"
-
-# Anthropic Claude
-curl https://api.anthropic.com/v1/messages \
-  -H "x-api-key: $(tvault anthropic)" \
-  -H "anthropic-version: 2023-06-01" \
-  -H "content-type: application/json" \
-  -d '{"model":"claude-sonnet-4-20250514","max_tokens":1024,"messages":[{"role":"user","content":"Hello"}]}'
-
-# OpenAI
-curl https://api.openai.com/v1/chat/completions \
-  -H "Authorization: Bearer $(tvault openai)" \
-  -H "Content-Type: application/json" \
-  -d '{"model":"gpt-4o","messages":[{"role":"user","content":"Hello"}]}'
-
-# Google Gemini
-curl "https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=$(tvault gemini)" \
-  -H "Content-Type: application/json" \
-  -d '{"contents":[{"parts":[{"text":"Hello"}]}]}'
+$(tvault github)    # print the github credential inline
+tvault              # with no args, lists tokens (or nudges you to log in)
 ```
 
-### Export as environment variables
+`tvault <service> [more words]` joins its args into a service name and prints
+that credential — equivalent to `tvault tk get <service>`.
 
-```bash
-export GITHUB_TOKEN=$(tvault github)
-export ANTHROPIC_API_KEY=$(tvault anthropic)
-export OPENAI_API_KEY=$(tvault openai)
-```
+## Global flags
 
-### Pipe to clipboard
+| Flag | Effect |
+|------|--------|
+| `--context <name>` | Override the active context for this command. |
+| `--format json\|table\|wide\|name` | Output format. |
+| `--no-color` | Disable colored output. |
+| `--debug` | Print HTTP request/response diagnostics to stderr. |
+| `--dry-run` | On write commands, print the request that would be sent without sending it. |
 
-```bash
-tvault github | pbcopy          # macOS
-tvault github | xclip -sel c    # Linux
-```
+## Other commands
 
-### Use in CI/CD
-
-```yaml
-# GitHub Actions
-- name: Deploy
-  env:
-    API_KEY: ${{ secrets.TV_AGENT_KEY }}
-  run: |
-    export DEPLOY_TOKEN=$(TV_AGENT_KEY=$API_KEY tvault deploy-service)
-    ./deploy.sh
-```
-
-### Use in Docker
-
-```dockerfile
-RUN curl -fsSL https://raw.githubusercontent.com/c-lgrant/tvault/main/tvault \
-    -o /usr/local/bin/tvault && chmod +x /usr/local/bin/tvault
-```
-
-```bash
-docker run -e TV_AGENT_KEY=tvagent_... myimage tvault github
-```
-
-## Claude Code Integration
-
-The CLI includes built-in support for [Claude Code](https://docs.anthropic.com/en/docs/claude-code) via a `/tvault` slash command.
-
-### Quick setup
-
-```bash
-tvault install-skill
-```
-
-This prompts for install location and fetches the skill definition from GitHub:
-
-```
-Token Vault — Claude Code Integration
-
-Where should the /tvault skill be installed?
-
-  1) user   ~/.claude/skills/tvault/       (available in all projects)
-  2) repo   .claude/skills/tvault/          (committed to this repo)
-
-Choice [1]: 1
-
-Installing to user: ~/.claude/
-Fetching skill definition... ok
-
-Installed:
-  Skill: /home/you/.claude/skills/tvault/SKILL.md
-
-Available in Claude Code:
-  /tvault github    Retrieve a token via slash command
-  /tvault           List available grants
-```
-
-Skip the prompt with flags:
-
-```bash
-tvault install-skill --user    # install to ~/.claude/
-tvault install-skill --repo    # install to .claude/ in current repo
-```
-
-### What gets installed
-
-| File | Purpose |
-|------|---------|
-| `skills/tvault/SKILL.md` | `/tvault` slash command definition |
-
-### /tvault slash command
-
-Once installed, use `/tvault` in any Claude Code session:
-
-```
-> /tvault github          # retrieves your GitHub token
-> /tvault anthropic       # retrieves your Anthropic key
-> /tvault                 # lists available grants
-```
-
-The skill invokes the `tvault` CLI under the hood. Claude uses safe patterns (env vars, subshells) and never prints raw tokens.
-
-## Updating
-
-Self-update to the latest version:
-
-```bash
-tvault update
-```
-
-```
-Checking for updates... v0.2.0 -> v0.3.0
-Updated to v0.3.0
-```
-
-If the CLI is installed in a system directory:
-
-```bash
-sudo tvault update
-```
-
-## Repository Structure
-
-```
-tvault              Bash CLI (single file, no dependencies)
-SKILL.md            Claude Code /tvault slash command definition
-README.md           This file
-```
-
-The `tvault install-skill` command fetches `SKILL.md` from this repo and installs it into the user's `~/.claude/skills/tvault/` or the current repo's `.claude/skills/tvault/` directory.
-
-## How it works
-
-1. You create an agent in the [Token Vault dashboard](https://tokenvault.uk) and get an API key (`tvagent_...`)
-2. You grant specific vault tokens to the agent (GitHub, Anthropic, etc.)
-3. The CLI calls `GET /api/agents/credentials?service=<name>` with the agent key
-4. Token Vault returns the access token; the CLI prints it to stdout
-5. Grants expire automatically or can be revoked from the dashboard
-
-The agent key only has access to tokens you explicitly grant. Grants are time-limited and revocable. Every access is logged in your vault's audit trail.
-
-## Config file format
-
-`~/.config/tv/config`:
-
-```bash
-# Token Vault CLI config — generated by tvault init
-tv_agent_key="tvagent_abc123..."
-tv_api_url="https://api.tokenvault.uk"
-```
-
-## Requirements
-
-- `bash` (4.0+)
-- `curl`
-- `python3` or `jq` (for JSON parsing — tries python3 first, falls back to jq)
-
-## License
-
-MIT
+- `tvault explain <error-code>` — explain a Token Vault error code (e.g.
+  `VAULT_LOCKED`, `POLICY_DENIED`, `GRANT_EXPIRED`) and how to fix it.
+- `tvault completion <shell>` — generate a shell completion script. Service,
+  agent, and context names complete dynamically.
+- `tvault completion install <shell>` — write the script to a tvault-managed
+  file under XDG paths (e.g. `~/.local/share/bash-completion/completions/tvault`,
+  `~/.config/fish/completions/tvault.fish`). Bash and fish auto-discover it on
+  next shell start; for zsh the command prints the exact `fpath=` line you can
+  paste into `~/.zshrc`. Never edits any rc file. `--print-only` shows the path
+  without writing. `tvault completion uninstall <shell>` removes the file.
+- `tvault version` — print version, commit, and build date.

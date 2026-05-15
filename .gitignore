@@ -32,3 +32,9 @@ Thumbs.db
 
 # Firebase
 firebase-debug.log
+
+# Go
+/tvault
+*.test
+coverage.out
+/dist/

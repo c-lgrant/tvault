@@ -1,0 +1,33 @@
+version: 2
+project_name: tvault
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: tvault
+    main: .
+    binary: tvault
+    env: [CGO_ENABLED=0]
+    ldflags:
+      - -s -w
+      - -X github.com/c-lgrant/tvault/cmd.version={{.Version}}
+      - -X github.com/c-lgrant/tvault/cmd.commit={{.Commit}}
+      - -X github.com/c-lgrant/tvault/cmd.date={{.Date}}
+    goos: [linux, darwin]
+    goarch: [amd64, arm64]
+
+archives:
+  - id: tvault
+    name_template: "{{ .ProjectName }}_{{ .Tag }}_{{ .Os }}_{{ .Arch }}"
+    files: [README.md, LICENSE]
+
+checksum:
+  name_template: checksums.txt
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-snapshot"
+
+release:
+  prerelease: auto

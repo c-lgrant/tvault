@@ -1,13 +1,12 @@
 name: Build webhook image
 
 on:
-  push:
-    tags:
-      - 'v*'
+  release:
+    types: [published]
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository_owner }}/tokenvault-webhook
+  IMAGE_NAME: ${{ github.repository_owner }}/tvault-webhook
 
 jobs:
   build:
@@ -39,6 +38,7 @@ jobs:
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=semver,pattern={{major}}
+            type=raw,value=latest,enable=${{ !github.event.release.prerelease }}
 
       - name: Build and push
         uses: docker/build-push-action@v6

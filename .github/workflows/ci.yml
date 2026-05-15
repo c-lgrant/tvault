@@ -1,0 +1,122 @@
+name: ci
+on:
+  push:
+    branches: [main, preview]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: test -z "$(gofmt -l .)" || (gofmt -l . && exit 1)
+      - run: go vet ./...
+      - run: go build ./...
+      - run: go test ./... -race
+
+  preview-build:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/preview'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { goos: linux,  goarch: amd64 }
+          - { goos: linux,  goarch: arm64 }
+          - { goos: darwin, goarch: amd64 }
+          - { goos: darwin, goarch: arm64 }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Build preview binary
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: "0"
+        run: |
+          version="preview-${GITHUB_SHA::7}"
+          date="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          out_bin="dist/tvault-${GOOS}-${GOARCH}"
+          mkdir -p dist
+          go build \
+            -trimpath \
+            -ldflags "-s -w \
+              -X github.com/c-lgrant/tvault/cmd.version=${version} \
+              -X github.com/c-lgrant/tvault/cmd.commit=${GITHUB_SHA} \
+              -X github.com/c-lgrant/tvault/cmd.date=${date}" \
+            -o "${out_bin}" \
+            .
+          echo "OUT_BIN=${out_bin}" >> "$GITHUB_ENV"
+      - name: Smoke-test version output (linux/amd64 only)
+        if: matrix.goos == 'linux' && matrix.goarch == 'amd64'
+        run: |
+          out="$("./${OUT_BIN}" version)"
+          echo "$out"
+          echo "$out" | grep -q "preview-" || (echo "version output does not contain preview marker" >&2; exit 1)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tvault-preview-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/tvault-${{ matrix.goos }}-${{ matrix.goarch }}
+          retention-days: 14
+
+  goreleaser-dry-run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          args: build --snapshot --clean
+
+  install-sh-smoke:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Decide whether smoke test can run
+        id: gate
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          visibility=$(gh repo view ${{ github.repository }} --json visibility --jq .visibility)
+          if [ "$visibility" != "PUBLIC" ]; then
+            echo "Repo visibility is ${visibility}; install.sh requires anonymous downloads. Skipping."
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if ! gh release list --repo ${{ github.repository }} --limit 1 | grep -q .; then
+            echo "No releases yet. Skipping install.sh smoke test."
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "run=true" >> "$GITHUB_OUTPUT"
+      - name: Run install.sh and assert non-dev version
+        if: steps.gate.outputs.run == 'true'
+        env:
+          TVAULT_INSTALL_DIR: ${{ runner.temp }}/tvault-bin
+        run: |
+          bash install.sh
+          out="$("${TVAULT_INSTALL_DIR}/tvault" version)"
+          echo "$out"
+          if echo "$out" | grep -q "tvault dev"; then
+            echo "install.sh produced a 'dev' build — expected a real version" >&2
+            exit 1
+          fi
