@@ -51,6 +51,12 @@ var webhookInitCmd = &cobra.Command{
 func runWebhookInit(cmd *cobra.Command, _ []string) error {
 	dir, _ := cmd.Flags().GetString("dir")
 	image, _ := cmd.Flags().GetString("image")
+	if image == "" {
+		// Pick the webhook image tag that matches the running CLI's lineage
+		// so 'tvault webhook init' on a preview binary picks :preview, on a
+		// release binary picks the matching :semver. Falls back to :latest.
+		image = webhook.DefaultImageFor(version)
+	}
 	force, _ := cmd.Flags().GetBool("force")
 	methodID, _ := cmd.Flags().GetString("method")
 	sets, _ := cmd.Flags().GetStringArray("set")

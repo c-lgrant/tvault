@@ -10,9 +10,103 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// DefaultImage is the published webhook image the generated Compose references.
-// Override with `tvault webhook init --image`.
-const DefaultImage = "ghcr.io/c-lgrant/tvault-webhook:latest"
+// imageRepo is the GHCR repository the webhook image is published to. The tag
+// is chosen by DefaultImageFor so it tracks the running CLI's lineage.
+const imageRepo = "ghcr.io/c-lgrant/tvault-webhook"
+
+// DefaultImage is the fallback when the caller has no version to pin against.
+// Production code uses DefaultImageFor; tests and other callers reach for this.
+const DefaultImage = imageRepo + ":latest"
+
+// DefaultImageFor returns the default webhook image for a CLI of the given
+// version. It picks a tag built from the same source line as the CLI:
+//
+//   - "preview-<sha>" (CI-built preview binary)        -> :preview
+//   - "v0.5.0" / "0.5.0" (a real release tag)          -> :0.5.0
+//   - Go pseudo-version (go install ...@preview/main)  -> :preview
+//   - anything else — "dev", "(devel)", "", "unknown"  -> :latest
+//
+// Pseudo-versions are treated as preview because they only exist for
+// `go install` builds against an unreleased commit — a real release would
+// produce a clean semver. :latest is the last-resort fallback for genuinely
+// unknown situations; once a real release exists, :latest will point at it.
+func DefaultImageFor(version string) string {
+	v := strings.TrimSpace(version)
+	switch {
+	case strings.HasPrefix(v, "preview-"):
+		return imageRepo + ":preview"
+	case isReleaseSemver(v):
+		return imageRepo + ":" + strings.TrimPrefix(v, "v")
+	case isPseudoVersion(v):
+		return imageRepo + ":preview"
+	default:
+		return DefaultImage
+	}
+}
+
+// isReleaseSemver returns true for X.Y.Z or vX.Y.Z (with no extra suffix).
+// Pseudo-versions like v0.4.10-0.20260515140135-... contain a '-' and are
+// rejected here — see isPseudoVersion for that path.
+func isReleaseSemver(v string) bool {
+	v = strings.TrimPrefix(v, "v")
+	if v == "" || strings.ContainsAny(v, "-+ ") {
+		return false
+	}
+	parts := strings.Split(v, ".")
+	if len(parts) != 3 {
+		return false
+	}
+	for _, p := range parts {
+		if p == "" {
+			return false
+		}
+		for _, r := range p {
+			if r < '0' || r > '9' {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// isPseudoVersion matches Go module pseudo-versions:
+//
+//	v0.4.10-0.20260515140135-f760cf955e71  (commit after a tag, prerelease counter prefix)
+//	v0.0.0-20260515140135-f760cf955e71      (no tags exist on the module)
+//	v0.5.0-pre.0.20260515140135-f760cf955e71 (commit after an existing prerelease tag)
+//
+// The signature: dash-split into >=3 parts, the LAST is a 12-char hex sha, and
+// the LAST DOT-segment of the second-to-last dash-part is a 14-digit timestamp.
+// The "0." or "pre.0." prerelease prefix lives before the timestamp.
+func isPseudoVersion(v string) bool {
+	parts := strings.Split(v, "-")
+	if len(parts) < 3 {
+		return false
+	}
+	sha := parts[len(parts)-1]
+	if len(sha) != 12 {
+		return false
+	}
+	for _, r := range sha {
+		isHex := (r >= '0' && r <= '9') || (r >= 'a' && r <= 'f')
+		if !isHex {
+			return false
+		}
+	}
+	// Inside the prerelease segment, the timestamp is the last dot-piece —
+	// after any optional "0" or "pre.0" counter.
+	dotPieces := strings.Split(parts[len(parts)-2], ".")
+	ts := dotPieces[len(dotPieces)-1]
+	if len(ts) != 14 {
+		return false
+	}
+	for _, r := range ts {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}
 
 // webhookEntrypoint runs the webhook as a plain HTTP service, bypassing the
 // image's bundled-ngrok entrypoint so the tunnel can live in its own container.

@@ -142,6 +142,40 @@ func TestGenerateCustomHasNoServeJSON(t *testing.T) {
 	}
 }
 
+func TestDefaultImageFor(t *testing.T) {
+	cases := map[string]string{
+		// CI-built preview binary (ldflags-injected version)
+		"preview-9749169":                                 "ghcr.io/c-lgrant/tvault-webhook:preview",
+		"preview-abcdef0":                                 "ghcr.io/c-lgrant/tvault-webhook:preview",
+		// Real release tags
+		"v0.5.0":                                          "ghcr.io/c-lgrant/tvault-webhook:0.5.0",
+		"0.5.0":                                           "ghcr.io/c-lgrant/tvault-webhook:0.5.0",
+		"v1.0.0":                                          "ghcr.io/c-lgrant/tvault-webhook:1.0.0",
+		// Go pseudo-versions (go install ...@<branch>)
+		"v0.4.10-0.20260515140135-f760cf955e71":           "ghcr.io/c-lgrant/tvault-webhook:preview",
+		"v0.0.0-20260515140135-f760cf955e71":              "ghcr.io/c-lgrant/tvault-webhook:preview",
+		"v0.5.0-pre.0.20260515140135-abcdef012345":        "ghcr.io/c-lgrant/tvault-webhook:preview",
+		// Unknown / dev / empty — last-resort :latest
+		"dev":                                             "ghcr.io/c-lgrant/tvault-webhook:latest",
+		"(devel)":                                         "ghcr.io/c-lgrant/tvault-webhook:latest",
+		"":                                                "ghcr.io/c-lgrant/tvault-webhook:latest",
+		"unknown":                                         "ghcr.io/c-lgrant/tvault-webhook:latest",
+		// Things that LOOK like semver but aren't (extra suffixes etc.)
+		"v0.5.0-rc1":                                      "ghcr.io/c-lgrant/tvault-webhook:latest",
+		"0.5":                                             "ghcr.io/c-lgrant/tvault-webhook:latest",
+		"v0.5.0+build.1":                                  "ghcr.io/c-lgrant/tvault-webhook:latest",
+		// Pseudo-version with wrong shapes — must NOT match
+		"v0.5.0-0.2026051514013-f760cf955e71":             "ghcr.io/c-lgrant/tvault-webhook:latest", // 13-digit ts
+		"v0.5.0-0.20260515140135-f760cf955e7":             "ghcr.io/c-lgrant/tvault-webhook:latest", // 11-char sha
+		"v0.5.0-0.20260515140135-zzzzzzzzzzzz":            "ghcr.io/c-lgrant/tvault-webhook:latest", // non-hex sha
+	}
+	for in, want := range cases {
+		if got := DefaultImageFor(in); got != want {
+			t.Errorf("DefaultImageFor(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
 func TestConflicts(t *testing.T) {
 	dir := t.TempDir()
 	files := []GeneratedFile{
