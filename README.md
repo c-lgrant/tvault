@@ -19,6 +19,26 @@ your OS/arch, downloads the matching release, and verifies its SHA256:
 curl -fsSL https://raw.githubusercontent.com/c-lgrant/tvault/main/install.sh | bash
 ```
 
+> **Trying the `preview` branch?** The `install.sh` route does **not** work
+> yet on `preview` — it pulls from GitHub Releases and there are no Go
+> releases on this repo until `preview` is merged to `main`. Use one of:
+>
+> ```bash
+> # Build straight from the branch (requires Go)
+> go install github.com/c-lgrant/tvault@preview
+>
+> # Or download the CI-built preview binary (requires gh CLI, no Go)
+> # Pick the run id from: gh run list --repo c-lgrant/tvault --branch preview --workflow ci.yml
+> gh run download <run-id> --repo c-lgrant/tvault -n tvault-preview-darwin-arm64
+> # asset name: tvault-preview-{linux|darwin}-{amd64|arm64}
+> chmod +x tvault-darwin-arm64
+> xattr -d com.apple.quarantine tvault-darwin-arm64 2>/dev/null  # macOS
+> sudo install -m 0755 tvault-darwin-arm64 /usr/local/bin/tvault
+> ```
+>
+> `tvault version` will print `preview-<sha>` so you can tell preview builds
+> from real releases.
+
 ## Quick start
 
 ```bash
