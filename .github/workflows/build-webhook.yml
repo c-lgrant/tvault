@@ -3,6 +3,12 @@ name: Build webhook image
 on:
   release:
     types: [published]
+  push:
+    branches: [preview]
+    paths:
+      - examples/webhook-ngrok/**
+      - .github/workflows/build-webhook.yml
+  workflow_dispatch:
 
 env:
   REGISTRY: ghcr.io
@@ -35,10 +41,12 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=semver,pattern={{major}}
-            type=raw,value=latest,enable=${{ !github.event.release.prerelease }}
+            type=semver,pattern={{version}},event=release
+            type=semver,pattern={{major}}.{{minor}},event=release
+            type=semver,pattern={{major}},event=release
+            type=raw,value=latest,enable=${{ github.event_name == 'release' && !github.event.release.prerelease }}
+            type=raw,value=preview,enable=${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/preview' }}
+            type=sha,prefix=preview-,enable=${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/preview' }}
 
       - name: Build and push
         uses: docker/build-push-action@v6
