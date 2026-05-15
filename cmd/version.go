@@ -51,7 +51,9 @@ var versionCmd = &cobra.Command{
 	Short: "Print the tvault version, commit, and build date",
 	Args:  cobra.NoArgs,
 	Run: func(cmd *cobra.Command, args []string) {
-		cmd.Println(versionString())
+		// Write to stdout (not Cobra's OutOrStderr default) so `tvault version`
+		// can be captured by scripts: `tvault version > version.txt`.
+		fmt.Fprintln(cmd.OutOrStdout(), versionString())
 	},
 }
 
