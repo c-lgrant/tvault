@@ -57,6 +57,79 @@ func TestLoginFlowReceivesCodeFromCallback(t *testing.T) {
 	}
 }
 
+// Browsers send a CORS preflight before a cross-origin fetch with a non-simple
+// Content-Type (the frontend posts application/json). The loopback listener
+// must answer the OPTIONS with the right Allow-* headers, OR the real POST
+// from the browser is blocked. This regression test stands in for the browser
+// doing exactly what Firefox/Chrome do.
+func TestLoginFlowAnswersCORSPreflight(t *testing.T) {
+	forceLoopbackEnv(t)
+	origOpen := openBrowser
+	defer func() { openBrowser = origOpen }()
+	openBrowser = func(rawURL string) error {
+		go func() {
+			u := mustParseQuery(t, rawURL)
+			callback := "http://localhost:" + u["port"] + "/callback"
+
+			// 1) Preflight — what the browser sends before the real POST.
+			req, _ := http.NewRequest(http.MethodOptions, callback, nil)
+			req.Header.Set("Origin", "https://tokenvault.uk")
+			req.Header.Set("Access-Control-Request-Method", "POST")
+			req.Header.Set("Access-Control-Request-Headers", "content-type")
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Errorf("preflight failed: %v", err)
+				return
+			}
+			resp.Body.Close()
+			if resp.StatusCode >= 300 {
+				t.Errorf("preflight status = %d, want 2xx", resp.StatusCode)
+				return
+			}
+			if got := resp.Header.Get("Access-Control-Allow-Origin"); got == "" {
+				t.Error("preflight missing Access-Control-Allow-Origin")
+				return
+			}
+			if got := resp.Header.Get("Access-Control-Allow-Methods"); !strings.Contains(got, "POST") {
+				t.Errorf("preflight Access-Control-Allow-Methods = %q, want POST", got)
+				return
+			}
+			if got := resp.Header.Get("Access-Control-Allow-Headers"); !strings.Contains(strings.ToLower(got), "content-type") {
+				t.Errorf("preflight Access-Control-Allow-Headers = %q, want Content-Type", got)
+				return
+			}
+
+			// 2) Actual POST — should now also carry CORS headers so the
+			//    browser allows the response to be read.
+			payload, _ := json.Marshal(map[string]string{
+				"code":  "preflighted-code",
+				"state": u["state"],
+			})
+			req2, _ := http.NewRequest(http.MethodPost, callback, bytes.NewReader(payload))
+			req2.Header.Set("Origin", "https://tokenvault.uk")
+			req2.Header.Set("Content-Type", "application/json")
+			resp2, err := http.DefaultClient.Do(req2)
+			if err != nil {
+				t.Errorf("post failed: %v", err)
+				return
+			}
+			resp2.Body.Close()
+			if resp2.Header.Get("Access-Control-Allow-Origin") == "" {
+				t.Error("post response missing Access-Control-Allow-Origin")
+			}
+		}()
+		return nil
+	}
+
+	got, err := runLoginFlow("https://tokenvault.uk", false, 3*time.Second)
+	if err != nil {
+		t.Fatalf("runLoginFlow errored: %v", err)
+	}
+	if got.code != "preflighted-code" {
+		t.Errorf("code = %q, want preflighted-code", got.code)
+	}
+}
+
 func TestLoginFlowTimesOut(t *testing.T) {
 	forceLoopbackEnv(t)
 	origOpen := openBrowser

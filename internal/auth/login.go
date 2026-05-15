@@ -120,6 +120,20 @@ func runLoginFlow(frontendURL string, forceManual bool, timeout time.Duration) (
 	resultCh := make(chan callbackResult, 1)
 	mux := http.NewServeMux()
 	mux.HandleFunc("/callback", func(w http.ResponseWriter, r *http.Request) {
+		// CORS — the browser is on the frontend origin (tokenvault.uk by
+		// default), so its fetch to this loopback listener is cross-origin.
+		// Set headers on every response so both the OPTIONS preflight and
+		// the actual POST are accepted. Allow-Origin: * is safe here because
+		// the host check below + per-flow random state are what authorize
+		// the request — CORS only authorizes the browser.
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+		w.Header().Set("Access-Control-Max-Age", "300")
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
@@ -143,7 +157,6 @@ func runLoginFlow(frontendURL string, forceManual bool, timeout time.Duration) (
 			http.Error(w, "state mismatch", http.StatusBadRequest)
 			return
 		}
-		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("ok"))
 		select {
