@@ -4,11 +4,42 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/c-lgrant/tvault/internal/api"
 	"github.com/c-lgrant/tvault/internal/clierr"
 	"github.com/c-lgrant/tvault/internal/output"
 	"github.com/c-lgrant/tvault/internal/tui"
 	"github.com/spf13/cobra"
 )
+
+// resolveAgentRefs accepts a mix of agent IDs and names and returns the
+// corresponding IDs in input order. The backend's /api/agents/{id} routes
+// expect an ID, so names are looked up via ListAgents. Refs that match a
+// name win; unmatched refs pass through unchanged so real IDs and brand-new
+// agents (created after ListAgents) still work.
+//
+// We always make the round-trip — distinguishing a 20-char Firestore ID from
+// a 20-char human name reliably is hard, and ListAgents is cheap (one GET,
+// admin-only). One extra request is preferable to a 404 on a name that
+// happens to fit the ID shape.
+func resolveAgentRefs(client *api.Client, refs []string) ([]string, error) {
+	agents, err := client.ListAgents()
+	if err != nil {
+		return nil, err
+	}
+	byName := make(map[string]string, len(agents))
+	for _, a := range agents {
+		byName[a.Name] = a.ID
+	}
+	out := make([]string, len(refs))
+	for i, r := range refs {
+		if id, ok := byName[r]; ok {
+			out[i] = id
+		} else {
+			out[i] = r
+		}
+	}
+	return out, nil
+}
 
 var agentsCmd = &cobra.Command{
 	Use:     "agents",
@@ -53,7 +84,11 @@ var agentsShowCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		a, err := cc.Client.GetAgent(args[0])
+		ids, err := resolveAgentRefs(cc.Client, args[:1])
+		if err != nil {
+			return enrich(cmd, cc, err)
+		}
+		a, err := cc.Client.GetAgent(ids[0])
 		if err != nil {
 			return enrich(cmd, cc, err)
 		}
@@ -139,7 +174,11 @@ var agentsRmCmd = &cobra.Command{
 		if !confirmDestructive(cmd, cc, "delete agent(s)", args, force) {
 			return &clierr.CLIError{Kind: clierr.KindUser, Command: "agents rm", Message: "aborted"}
 		}
-		if err := cc.Client.DeleteAgents(args); err != nil {
+		ids, err := resolveAgentRefs(cc.Client, args)
+		if err != nil {
+			return enrich(cmd, cc, err)
+		}
+		if err := cc.Client.DeleteAgents(ids); err != nil {
 			return enrich(cmd, cc, err)
 		}
 		cmd.PrintErrf("Deleted %d agent(s).\n", len(args))
@@ -159,7 +198,11 @@ func agentStatusCmd(use, alias, status, verb string) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := cc.Client.SetAgentStatus(args[0], status); err != nil {
+			ids, err := resolveAgentRefs(cc.Client, args[:1])
+			if err != nil {
+				return enrich(cmd, cc, err)
+			}
+			if err := cc.Client.SetAgentStatus(ids[0], status); err != nil {
 				return enrich(cmd, cc, err)
 			}
 			cmd.PrintErrf("%s agent %q.\n", verb+"d", args[0])

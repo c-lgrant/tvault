@@ -96,6 +96,9 @@ func Execute() {
 
 func init() {
 	rootCmd.PersistentFlags().String("context", "", "override the active context for this command")
+	// --ctx mirrors --context (Cobra has no long-flag aliases, so a parallel
+	// flag is the cleanest path). resolve() prefers whichever was set.
+	rootCmd.PersistentFlags().String("ctx", "", "alias for --context")
 	rootCmd.PersistentFlags().String("format", "", "output format: json|table|wide|name")
 	rootCmd.PersistentFlags().Bool("no-color", false, "disable colored output")
 	rootCmd.PersistentFlags().Bool("debug", false, "print HTTP request/response diagnostics to stderr")

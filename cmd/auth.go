@@ -19,7 +19,7 @@ var authPrintTokenCmd = &cobra.Command{
 	Short: "Print the raw bearer ID token for the active admin context",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		override, _ := cmd.Flags().GetString("context")
+		override := contextOverride(cmd)
 		cfg, err := config.Load()
 		if err != nil {
 			return err

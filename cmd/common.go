@@ -27,8 +27,19 @@ func (cc *cmdContext) label() string {
 
 // resolve loads the active context, builds an authenticated API client, and
 // resolves the output format. adminOnly rejects agent contexts up front.
+// contextOverride reads --context, falling back to its --ctx alias.
+// Both set → --context wins.
+func contextOverride(cmd *cobra.Command) string {
+	v, _ := cmd.Flags().GetString("context")
+	if v != "" {
+		return v
+	}
+	v, _ = cmd.Flags().GetString("ctx")
+	return v
+}
+
 func resolve(cmd *cobra.Command, adminOnly bool) (*cmdContext, error) {
-	override, _ := cmd.Flags().GetString("context")
+	override := contextOverride(cmd)
 	debug, _ := cmd.Flags().GetBool("debug")
 	formatFlag, _ := cmd.Flags().GetString("format")
 

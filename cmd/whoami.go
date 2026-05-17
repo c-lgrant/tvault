@@ -14,7 +14,7 @@ var whoamiCmd = &cobra.Command{
 	Short:   "Show the active context, identity, and token expiry",
 	Args:    cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		override, _ := cmd.Flags().GetString("context")
+		override := contextOverride(cmd)
 		cfg, err := config.Load()
 		if err != nil {
 			return err

@@ -25,7 +25,11 @@ var grantsListCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		grants, err := cc.Client.ListGrants(args[0])
+		ids, err := resolveAgentRefs(cc.Client, args[:1])
+		if err != nil {
+			return enrich(cmd, cc, err)
+		}
+		grants, err := cc.Client.ListGrants(ids[0])
 		if err != nil {
 			return enrich(cmd, cc, err)
 		}
@@ -51,7 +55,11 @@ var grantsAddCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		res := cc.Client.AddGrants(args[0], args[1:])
+		ids, err := resolveAgentRefs(cc.Client, args[:1])
+		if err != nil {
+			return enrich(cmd, cc, err)
+		}
+		res := cc.Client.AddGrants(ids[0], args[1:])
 		if err := res.Err(); err != nil {
 			if len(res.OK) > 0 {
 				cmd.PrintErrf("Granted %d service(s) to %q before the failure.\n", len(res.OK), args[0])
@@ -77,7 +85,11 @@ var grantsRmCmd = &cobra.Command{
 		if !confirmDestructive(cmd, cc, "revoke grant(s)", args[1:], force) {
 			return &clierr.CLIError{Kind: clierr.KindUser, Command: "agents grants rm", Message: "aborted"}
 		}
-		res := cc.Client.RemoveGrants(args[0], args[1:])
+		ids, err := resolveAgentRefs(cc.Client, args[:1])
+		if err != nil {
+			return enrich(cmd, cc, err)
+		}
+		res := cc.Client.RemoveGrants(ids[0], args[1:])
 		if err := res.Err(); err != nil {
 			if len(res.OK) > 0 {
 				cmd.PrintErrf("Revoked %d grant(s) from %q before the failure.\n", len(res.OK), args[0])

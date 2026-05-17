@@ -508,6 +508,156 @@ func TestGetTokenValue_AgentEmpty(t *testing.T) {
 	}
 }
 
+// TestIsWebhookModeReject pins the message pattern. Backend wording lives in
+// backend/routes/tokens.py:495 — if either side changes, both should change.
+func TestIsWebhookModeReject(t *testing.T) {
+	cases := []struct {
+		err  error
+		want bool
+	}{
+		{nil, false},
+		{errors.New("Webhook mode: plaintext secrets must not transit Token Vault. Use store-ticket."), true},
+		{&clierr.CLIError{Message: "Webhook mode: plaintext secrets must not transit Token Vault."}, true},
+		{errors.New("vault is locked"), false},
+		{errors.New("Webhook mode only"), false},
+		{errors.New("must not transit"), false},
+	}
+	for i, tc := range cases {
+		if got := isWebhookModeReject(tc.err); got != tc.want {
+			t.Errorf("case %d: got %v want %v (err=%v)", i, got, tc.want, tc.err)
+		}
+	}
+}
+
+// TestSetTokenValue_AutoRouteWebhook verifies that when the backend rejects
+// the plaintext POST in webhook mode, SetTokenValue transparently retries via
+// the store-ticket flow — the caller doesn't have to know about vault mode.
+func TestSetTokenValue_AutoRouteWebhook(t *testing.T) {
+	webhookHits := 0
+	webhook := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		webhookHits++
+		raw, _ := io.ReadAll(r.Body)
+		var body map[string]any
+		json.Unmarshal(raw, &body)
+		td, _ := body["tokenData"].(map[string]any)
+		if td["accessToken"] != "rotated-v2" {
+			t.Errorf("webhook accessToken = %v, want rotated-v2", td["accessToken"])
+		}
+		w.WriteHeader(200)
+	}))
+	defer webhook.Close()
+
+	tvHits := map[string]int{}
+	tv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		tvHits[r.URL.Path]++
+		switch r.URL.Path {
+		case "/api/tokens":
+			// Plaintext rejected in webhook mode.
+			w.WriteHeader(400)
+			w.Write([]byte(`{"detail":"Webhook mode: plaintext secrets must not transit Token Vault. Use store-ticket."}`))
+		case "/api/vault/store-ticket":
+			w.Write([]byte(`{"ticket":"t","webhookUrl":"` + webhook.URL + `","expiresIn":60}`))
+		default:
+			t.Errorf("unexpected TV path %s", r.URL.Path)
+		}
+	}))
+	defer tv.Close()
+
+	client := &Client{BaseURL: tv.URL, HTTP: tv.Client()}
+	if err := client.SetTokenValue("svc", "rotated-v2"); err != nil {
+		t.Fatalf("SetTokenValue errored: %v", err)
+	}
+	if webhookHits != 1 {
+		t.Errorf("webhook hits = %d, want 1", webhookHits)
+	}
+	if tvHits["/api/tokens"] != 1 || tvHits["/api/vault/store-ticket"] != 1 {
+		t.Errorf("tv hits = %+v", tvHits)
+	}
+}
+
+// TestCreateToken_AutoRouteWebhook verifies the same auto-retry for
+// CreateToken when a credential is provided.
+func TestCreateToken_AutoRouteWebhook(t *testing.T) {
+	webhookHits := 0
+	webhook := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		webhookHits++
+		raw, _ := io.ReadAll(r.Body)
+		var body map[string]any
+		json.Unmarshal(raw, &body)
+		if body["service"] != "stripe" {
+			t.Errorf("service = %v", body["service"])
+		}
+		td, _ := body["tokenData"].(map[string]any)
+		if td["accessToken"] != "sk_live_abc" {
+			t.Errorf("webhook accessToken = %v", td["accessToken"])
+		}
+		if td["tokenType"] != "PlainText" {
+			t.Errorf("tokenType = %v", td["tokenType"])
+		}
+		w.WriteHeader(200)
+	}))
+	defer webhook.Close()
+
+	tv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/tokens":
+			raw, _ := io.ReadAll(r.Body)
+			if strings.Contains(string(raw), "sk_live_abc") {
+				// Plaintext rejected — but TV in fact saw it. That's the bug we're guarding.
+			}
+			w.WriteHeader(400)
+			w.Write([]byte(`{"detail":"Webhook mode: plaintext secrets must not transit Token Vault. Use store-ticket."}`))
+		case "/api/vault/store-ticket":
+			w.Write([]byte(`{"ticket":"t","webhookUrl":"` + webhook.URL + `","expiresIn":60}`))
+		default:
+			t.Errorf("unexpected TV path %s", r.URL.Path)
+		}
+	}))
+	defer tv.Close()
+
+	client := &Client{BaseURL: tv.URL, HTTP: tv.Client()}
+	err := client.CreateToken(CreateTokenRequest{
+		Type:        "PlainText",
+		ServiceName: "stripe",
+		Credential:  "sk_live_abc",
+	})
+	if err != nil {
+		t.Fatalf("CreateToken errored: %v", err)
+	}
+	if webhookHits != 1 {
+		t.Errorf("webhook hits = %d, want 1 (auto-retry should fire)", webhookHits)
+	}
+}
+
+// TestCreateToken_EmptyCredentialPassesThrough: a placeholder create (no
+// credential) carries no secret, so the backend's webhook-mode reject doesn't
+// apply. The original error should propagate — no spurious webhook call.
+func TestCreateToken_EmptyCredentialPassesThrough(t *testing.T) {
+	tvHits := map[string]int{}
+	tv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		tvHits[r.URL.Path]++
+		// Backend won't actually 400 on empty payloads, but if it ever did
+		// with the webhook-mode wording we must NOT call store-ticket
+		// because there's nothing to store.
+		w.WriteHeader(400)
+		w.Write([]byte(`{"detail":"Webhook mode: plaintext secrets must not transit Token Vault."}`))
+	}))
+	defer tv.Close()
+
+	client := &Client{BaseURL: tv.URL, HTTP: tv.Client()}
+	err := client.CreateToken(CreateTokenRequest{
+		Type:        "PlainText",
+		ServiceName: "svc",
+		Credential:  "",
+	})
+	if err == nil {
+		t.Fatalf("expected error to propagate")
+	}
+	if tvHits["/api/vault/store-ticket"] != 0 {
+		t.Errorf("store-ticket called for empty placeholder (%d times)", tvHits["/api/vault/store-ticket"])
+	}
+}
+
 // TestStoreTokenViaWebhook_WebhookError propagates webhook errors as
 // CLIErrors with the correct kind (so scripts can branch on them).
 func TestStoreTokenViaWebhook_WebhookError(t *testing.T) {

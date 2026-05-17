@@ -43,9 +43,15 @@ curl -fsSL https://raw.githubusercontent.com/c-lgrant/tvault/main/install.sh | b
 
 ```bash
 tvault login              # browser-based admin login
-tvault tk ls              # list tokens
-tvault tk get github      # print a credential (stdout only — safe for $(...))
+tvault ls                 # list tokens
+tvault get github         # print a credential (stdout only — safe for $(...))
+tvault add stripe --value sk_test_...   # create a token
+tvault set stripe --value sk_test_new   # rotate it (auto-routes around webhook mode)
 ```
+
+The most common token verbs are also available at the top level: `get`, `set`,
+`show`, `rm`, `add`, `ls`. They're shortcuts for the equivalent `tokens …`
+commands; see [Top-level shortcuts](#top-level-shortcuts) below.
 
 ## Contexts: admin vs. agent
 
@@ -71,14 +77,15 @@ require an admin context.
 | Command | Purpose |
 |---------|---------|
 | `tk list` (`ls`) | List tokens. |
-| `tk get <service>` | Print a credential value to stdout — safe for `$(...)`. |
+| `tk get <service>` | Print a credential value to stdout — safe for `$(...)`. `--check` exits 0/6 without printing (presence probe). |
 | `tk show <service>` (`info`) | Show token metadata (no secret). |
-| `tk create` (`new`) | Create a token — interactive type-picker wizard, or fully flag-driven with `--type`/`--service`/`--value`. |
-| `tk set <service>` (`up`) | Rotate a credential value (`--value`). Admin only. |
+| `tk create` (`new`) | Create a token — interactive type-picker wizard, or fully flag-driven with `--type`/`--service`/`--value`. In webhook-mode vaults the secret auto-routes to the user's webhook (TV never sees it). |
+| `tk set <service>` (`up`) | Rotate a credential value (`--value`). Admin only. Auto-routes through the store-ticket flow in webhook-mode vaults. |
 | `tk edit <service>` | Edit metadata: `--name`, `--notes`, `--tags`. Admin only. |
 | `tk rm <service>...` (`del`, `d`) | Delete one or more tokens. Admin only. |
 | `tk refresh <service>` (`ref`) | Force an OAuth token refresh. Admin only. |
 | `tk history <service>` (`hist`) | Show a token's usage history. |
+| `tk store-ticket <service>` | Webhook-mode escape hatch: store a secret on the user's webhook via a signed ticket. `set`/`create` use this automatically — call directly for power-user scripts or to print the raw ticket envelope. |
 
 Token types offered by the `tk new` type picker map to the real backend
 `tokenType` values: **JWT** (OAuth · JWT), **PlainText** (API key / PAT),
@@ -86,6 +93,9 @@ Token types offered by the `tk new` type picker map to the real backend
 **TOTP** (2FA).
 
 ### Agents — `tvault agents` (`ag`)
+
+Agent references (`<name-or-id>`) accept either the human-readable name *or*
+the backend-assigned ID — the CLI resolves names through `agents list`.
 
 | Command | Purpose |
 |---------|---------|
@@ -103,6 +113,9 @@ Token types offered by the `tk new` type picker map to the real backend
 | `gr list <agent>` (`ls`) | List an agent's grants. |
 | `gr add <agent> <service>...` | Grant services to an agent. |
 | `gr rm <agent> <service>...` | Revoke grants from an agent. |
+
+The top-level `tvault grant <agent> <service>...` is a flat-verb shortcut for
+`gr add`.
 
 ### Vault — `tvault vault`
 
@@ -138,6 +151,24 @@ tvault webhook bind          # connect it to your vault
 `up`/`down`/`bind`/`status` look for the project in the current directory, or
 `--dir <path>`.
 
+## Top-level shortcuts
+
+The most common verbs are also available at the root, so you don't have to
+type `tokens` / `context` / `agents grants` for every operation.
+
+| Shortcut | Equivalent |
+|----------|------------|
+| `tvault ls` | `tvault tokens list` |
+| `tvault get <svc>` | `tvault tokens get <svc>` |
+| `tvault add <svc>` | `tvault tokens create --service <svc>` (defaults `--type PlainText`) |
+| `tvault set <svc>` | `tvault tokens set <svc>` |
+| `tvault show <svc>` | `tvault tokens show <svc>` |
+| `tvault rm <svc>...` | `tvault tokens rm <svc>...` |
+| `tvault use <ctx>` | `tvault ctx use <ctx>` |
+| `tvault grant <agent> <svc>...` | `tvault agents grants add <agent> <svc>...` |
+
+The bare `tvault <service>` form is still the back-compat shim (see below).
+
 ## Back-compat shim
 
 For drop-in compatibility with the legacy bash script, a bare invocation works:
@@ -154,8 +185,8 @@ that credential — equivalent to `tvault tk get <service>`.
 
 | Flag | Effect |
 |------|--------|
-| `--context <name>` | Override the active context for this command. |
-| `--format json\|table\|wide\|name` | Output format. |
+| `--context <name>` (alias: `--ctx`) | Override the active context for this command. |
+| `--format json\|table\|wide\|name` | Output format. `name` prints just the primary key (e.g. service name) — convenient for piping. |
 | `--no-color` | Disable colored output. |
 | `--debug` | Print HTTP request/response diagnostics to stderr. |
 | `--dry-run` | On write commands, print the request that would be sent without sending it. |
