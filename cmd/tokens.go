@@ -43,11 +43,11 @@ func runTokensList(cmd *cobra.Command, _ []string) error {
 	rows := make([]map[string]string, len(toks))
 	for i, t := range toks {
 		rows[i] = map[string]string{
-			"service": t.ServiceName, "type": t.Type, "status": t.Status,
+			"service": t.ServiceName, "type": t.Type,
 		}
 	}
 	return output.Render(os.Stdout, cc.Format,
-		[]string{"service", "type", "status"}, rows)
+		[]string{"service", "type"}, rows)
 }
 
 var tokensGetCmd = &cobra.Command{
@@ -85,12 +85,12 @@ var tokensShowCmd = &cobra.Command{
 			return enrich(cmd, cc, err)
 		}
 		rows := []map[string]string{{
-			"service": t.ServiceName, "type": t.Type, "status": t.Status,
+			"service": t.ServiceName, "type": t.Type,
 			"display_name": t.DisplayName, "notes": t.Notes,
 			"tags": strings.Join(t.Tags, ","),
 		}}
 		return output.Render(os.Stdout, cc.Format,
-			[]string{"service", "type", "status", "display_name", "notes", "tags"}, rows)
+			[]string{"service", "type", "display_name", "notes", "tags"}, rows)
 	},
 }
 

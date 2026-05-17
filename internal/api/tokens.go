@@ -1,6 +1,16 @@
 package api
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"os"
+	"time"
+
+	"github.com/c-lgrant/tvault/internal/clierr"
+)
 
 // Token is the list/show shape returned by the tokens endpoints.
 //
@@ -80,11 +90,26 @@ func credentialFieldForType(typ string) string {
 // GET /api/tokens/{service} returns the full token document; the secret lives
 // in one of several fields depending on token type. We probe the known ones
 // in priority order.
+//
+// In webhook (zero-knowledge) vault mode, the backend strips secret fields
+// before responding — TV never holds plaintext. If no secret is present we
+// fall back to the credential-ticket flow: POST /api/vault/credential-ticket
+// returns a short-lived HMAC ticket and the user's webhook URL; the CLI then
+// fetches the plaintext directly from <webhook>/v1/credential, bypassing TV.
 func (c *Client) GetTokenValue(service string) (string, error) {
 	body, err := c.doRequest("GET", "/api/tokens/"+service, nil, nil)
 	if err != nil {
 		return "", err
 	}
+	if v := firstSecretField(body); v != "" {
+		return v, nil
+	}
+	return c.getTokenValueZK(service)
+}
+
+// firstSecretField returns the first non-empty secret field from a token
+// document, matching the priority used by the backend's get_primary_credential.
+func firstSecretField(body []byte) string {
 	var resp struct {
 		AccessToken     string `json:"accessToken"`
 		SSHPrivateKey   string `json:"sshPrivateKey"`
@@ -92,17 +117,121 @@ func (c *Client) GetTokenValue(service string) (string, error) {
 		TOTPSecret      string `json:"totpSecret"`
 	}
 	if err := json.Unmarshal(body, &resp); err != nil {
-		return "", err
+		return ""
 	}
 	for _, v := range []string{
 		resp.AccessToken, resp.SSHPrivateKey,
 		resp.CertificateData, resp.TOTPSecret,
 	} {
 		if v != "" {
-			return v, nil
+			return v
 		}
 	}
-	return "", nil
+	return ""
+}
+
+// credentialTicketResp matches POST /api/vault/credential-ticket. The ticket
+// is an HMAC over {userId, serviceName, purpose, exp} — no key material, no
+// credential. The webhook verifies the ticket and serves the plaintext.
+type credentialTicketResp struct {
+	Ticket     string `json:"ticket"`
+	WebhookURL string `json:"webhookUrl"`
+	ExpiresIn  int    `json:"expiresIn"`
+}
+
+// getTokenValueZK fetches a credential via the zero-knowledge ticket flow.
+// Used as a fallback when GET /api/tokens/{service} returns no secret (the
+// signal that the user is in webhook mode and TV has stripped secrets).
+func (c *Client) getTokenValueZK(service string) (string, error) {
+	body, err := c.doRequest("POST", "/api/vault/credential-ticket",
+		map[string]string{"serviceName": service, "purpose": "user_reveal"}, nil)
+	if err != nil {
+		return "", err
+	}
+	var ticket credentialTicketResp
+	if err := json.Unmarshal(body, &ticket); err != nil {
+		return "", &clierr.CLIError{
+			Kind: clierr.KindServer, Request: "POST /api/vault/credential-ticket",
+			Message: "could not parse ticket response: " + err.Error(),
+		}
+	}
+	return c.fetchWebhookCredential(ticket.WebhookURL, ticket.Ticket, service)
+}
+
+// fetchWebhookCredential makes the direct CLI → user-webhook call. Per the
+// webhook spec (frontend/public/llm.txt), GET /v1/credential returns
+// {"token": {accessToken, ...}}. We probe the same secret fields as the
+// platform-mode path so output is identical regardless of vault mode.
+func (c *Client) fetchWebhookCredential(webhookURL, ticket, service string) (string, error) {
+	if webhookURL == "" || ticket == "" {
+		return "", &clierr.CLIError{
+			Kind: clierr.KindServer, Request: "GET <webhook>/v1/credential",
+			Message: "backend returned empty webhook URL or ticket",
+		}
+	}
+	u := webhookURL + "/v1/credential?ticket=" + url.QueryEscape(ticket) +
+		"&service=" + url.QueryEscape(service)
+	reqLine := "GET " + webhookURL + "/v1/credential"
+
+	req, err := http.NewRequest("GET", u, nil)
+	if err != nil {
+		return "", &clierr.CLIError{Kind: clierr.KindUser, Request: reqLine, Message: err.Error()}
+	}
+
+	httpClient := c.HTTP
+	if httpClient == nil {
+		httpClient = &http.Client{Timeout: 30 * time.Second}
+	}
+	start := time.Now()
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		if c.Debug {
+			fmt.Fprintf(os.Stderr, "[debug] %s → connection error after %s: %v\n", reqLine, time.Since(start), err)
+		}
+		return "", &clierr.CLIError{
+			Kind: clierr.KindNetwork, Request: reqLine,
+			Message: "could not reach webhook — " + err.Error(),
+		}
+	}
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(resp.Body)
+	if c.Debug {
+		fmt.Fprintf(os.Stderr, "[debug] %s → %d in %s (%d bytes)\n",
+			reqLine, resp.StatusCode, time.Since(start), len(respBody))
+	}
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		er := parseErrorBody(respBody)
+		if er.Message == "" {
+			er.Message = string(respBody)
+		}
+		return "", &clierr.CLIError{
+			Kind: kindForStatus(resp.StatusCode), Request: reqLine,
+			Response: fmt.Sprintf("%d", resp.StatusCode), Message: er.Message,
+		}
+	}
+
+	var out struct {
+		Token json.RawMessage `json:"token"`
+	}
+	if err := json.Unmarshal(respBody, &out); err != nil || len(out.Token) == 0 {
+		// Some webhooks may return the token doc at the top level instead
+		// of nested under "token". Fall through and probe the raw body too.
+		if v := firstSecretField(respBody); v != "" {
+			return v, nil
+		}
+		return "", &clierr.CLIError{
+			Kind: clierr.KindServer, Request: reqLine,
+			Message: "webhook response did not contain a credential",
+		}
+	}
+	if v := firstSecretField(out.Token); v != "" {
+		return v, nil
+	}
+	return "", &clierr.CLIError{
+		Kind: clierr.KindServer, Request: reqLine,
+		Message: "webhook response did not contain a credential",
+	}
 }
 
 // CreateToken stores a token via POST /api/tokens. The backend expects a
