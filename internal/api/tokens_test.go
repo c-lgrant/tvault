@@ -421,6 +421,93 @@ func TestStoreTokenViaWebhook(t *testing.T) {
 	}
 }
 
+// TestGetTokenValue_AgentPath verifies an agent-persona client routes to
+// /api/agents/credentials (not /api/tokens/{svc}, which requires admin auth
+// and returns 422 for agents) and sends X-Agent-Key, not Authorization.
+func TestGetTokenValue_AgentPath(t *testing.T) {
+	var sawAuth, sawAgentKey string
+	var sawPath, sawQuery string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sawAuth = r.Header.Get("Authorization")
+		sawAgentKey = r.Header.Get("X-Agent-Key")
+		sawPath = r.URL.Path
+		sawQuery = r.URL.Query().Get("service")
+		w.Write([]byte(`{"accessToken":"agent-creds","serviceName":"svc","tokenType":"PlainText"}`))
+	}))
+	defer srv.Close()
+
+	client := &Client{BaseURL: srv.URL, HTTP: srv.Client(), AgentKey: "tvagent_abc"}
+	val, err := client.GetTokenValue("svc")
+	if err != nil {
+		t.Fatalf("errored: %v", err)
+	}
+	if val != "agent-creds" {
+		t.Errorf("value = %q, want agent-creds", val)
+	}
+	if sawPath != "/api/agents/credentials" {
+		t.Errorf("path = %q, want /api/agents/credentials (admin path won't work for agents)", sawPath)
+	}
+	if sawQuery != "svc" {
+		t.Errorf("service query = %q", sawQuery)
+	}
+	if sawAgentKey != "tvagent_abc" {
+		t.Errorf("X-Agent-Key = %q, want tvagent_abc", sawAgentKey)
+	}
+	if sawAuth != "" {
+		t.Errorf("Authorization header was set for agent (%q) — must use X-Agent-Key only", sawAuth)
+	}
+}
+
+// TestGetTokenValue_AgentWebhookRedirect: webhook-mode agents 307 from
+// /api/agents/credentials to <webhook>/v1/credential, which returns
+// {"token": {accessToken, ...}} (nested, not top-level). Go's HTTP client
+// follows the redirect transparently; we need to unwrap the nested shape.
+func TestGetTokenValue_AgentWebhookRedirect(t *testing.T) {
+	webhook := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/credential" {
+			t.Errorf("webhook path = %s", r.URL.Path)
+		}
+		w.Write([]byte(`{"token":{"accessToken":"redirected-secret","serviceName":"svc"}}`))
+	}))
+	defer webhook.Close()
+
+	tv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, webhook.URL+"/v1/credential?ticket=t&service=svc", http.StatusTemporaryRedirect)
+	}))
+	defer tv.Close()
+
+	client := &Client{BaseURL: tv.URL, HTTP: tv.Client(), AgentKey: "tvagent_k"}
+	val, err := client.GetTokenValue("svc")
+	if err != nil {
+		t.Fatalf("errored: %v", err)
+	}
+	if val != "redirected-secret" {
+		t.Errorf("value = %q, want redirected-secret", val)
+	}
+}
+
+// TestGetTokenValue_AgentEmpty pins KindEmpty when the agent endpoint
+// returns 200 with no credential (grant exists but token has no value).
+func TestGetTokenValue_AgentEmpty(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"serviceName":"svc","tokenType":"PlainText"}`))
+	}))
+	defer srv.Close()
+
+	client := &Client{BaseURL: srv.URL, HTTP: srv.Client(), AgentKey: "tvagent_x"}
+	_, err := client.GetTokenValue("svc")
+	if err == nil {
+		t.Fatalf("expected error on empty credential")
+	}
+	var ce *clierr.CLIError
+	if !errors.As(err, &ce) {
+		t.Fatalf("not CLIError: %T", err)
+	}
+	if ce.Kind != clierr.KindEmpty {
+		t.Errorf("Kind = %v, want KindEmpty", ce.Kind)
+	}
+}
+
 // TestStoreTokenViaWebhook_WebhookError propagates webhook errors as
 // CLIErrors with the correct kind (so scripts can branch on them).
 func TestStoreTokenViaWebhook_WebhookError(t *testing.T) {

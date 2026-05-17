@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"fmt"
 	"os"
 
 	"github.com/c-lgrant/tvault/internal/clierr"
@@ -117,7 +118,8 @@ var agentsCreateCmd = &cobra.Command{
 			}
 		}
 		cmd.PrintErrln("API key (shown once — store it now):")
-		cmd.Println(res.APIKey)
+		// stdout: scripts capture KEY=$(tvault agents create ... | tail -1).
+		fmt.Println(res.APIKey)
 		return nil
 	},
 }

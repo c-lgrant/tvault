@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"fmt"
 	"sort"
 
 	"github.com/c-lgrant/tvault/internal/clierr"
@@ -79,7 +80,9 @@ var contextCurrentCmd = &cobra.Command{
 		if cfg.Current == "" {
 			return &clierr.CLIError{Kind: clierr.KindAuth, Command: "context current", Message: "no active context"}
 		}
-		cmd.Println(cfg.Current)
+		// stdout, not cmd.Println — scripts pipe $(tvault ctx current) into
+		// other commands. Same Cobra-to-stderr footgun fixed for tokens get.
+		fmt.Println(cfg.Current)
 		return nil
 	},
 }

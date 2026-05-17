@@ -88,16 +88,20 @@ func credentialFieldForType(typ string) string {
 
 // GetTokenValue returns just the credential string for $(tvault tk get …).
 //
-// GET /api/tokens/{service} returns the full token document; the secret lives
-// in one of several fields depending on token type. We probe the known ones
-// in priority order.
-//
-// In webhook (zero-knowledge) vault mode, the backend strips secret fields
-// before responding — TV never holds plaintext. If no secret is present we
-// fall back to the credential-ticket flow: POST /api/vault/credential-ticket
-// returns a short-lived HMAC ticket and the user's webhook URL; the CLI then
-// fetches the plaintext directly from <webhook>/v1/credential, bypassing TV.
+// Routing depends on the client persona:
+//   - Agent context (AgentKey set): GET /api/agents/credentials?service=X.
+//     For webhook-mode vaults the backend issues a 307 to the user's webhook;
+//     Go's HTTP client follows it transparently.
+//   - Admin context (BearerToken set): GET /api/tokens/{service}. The
+//     response carries the secret in one of several type-specific fields.
+//     In webhook mode the backend strips those (TV never holds plaintext),
+//     and we fall back to the credential-ticket flow (POST
+//     /api/vault/credential-ticket → GET <webhook>/v1/credential, bypassing
+//     TV's backend on the credential leg).
 func (c *Client) GetTokenValue(service string) (string, error) {
+	if c.AgentKey != "" {
+		return c.getTokenValueAgent(service)
+	}
 	body, err := c.doRequest("GET", "/api/tokens/"+service, nil, nil)
 	if err != nil {
 		return "", err
@@ -106,6 +110,37 @@ func (c *Client) GetTokenValue(service string) (string, error) {
 		return v, nil
 	}
 	return c.getTokenValueZK(service)
+}
+
+// getTokenValueAgent is the agent-persona path. In platform mode the
+// agent credentials endpoint returns {accessToken, serviceName, …}
+// directly. In webhook mode it 307-redirects to the user's webhook at
+// /v1/credential, which returns {"token": {accessToken, …}}; Go's
+// HTTP client follows the redirect transparently, so we just need to
+// handle both response shapes here.
+func (c *Client) getTokenValueAgent(service string) (string, error) {
+	body, err := c.doRequest("GET", "/api/agents/credentials", nil,
+		map[string]string{"service": service})
+	if err != nil {
+		return "", err
+	}
+	if v := firstSecretField(body); v != "" {
+		return v, nil
+	}
+	// Webhook-mode redirect lands here: response is {"token": {accessToken}}.
+	var wrap struct {
+		Token json.RawMessage `json:"token"`
+	}
+	if json.Unmarshal(body, &wrap) == nil && len(wrap.Token) > 0 {
+		if v := firstSecretField(wrap.Token); v != "" {
+			return v, nil
+		}
+	}
+	return "", &clierr.CLIError{
+		Kind:    clierr.KindEmpty,
+		Request: "GET /api/agents/credentials",
+		Message: "credential is empty (token has no value, or grant returned nothing)",
+	}
 }
 
 // firstSecretField returns the first non-empty secret field from a token

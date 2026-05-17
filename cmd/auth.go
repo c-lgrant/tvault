@@ -1,6 +1,8 @@
 package cmd
 
 import (
+	"fmt"
+
 	"github.com/c-lgrant/tvault/internal/auth"
 	"github.com/c-lgrant/tvault/internal/clierr"
 	"github.com/c-lgrant/tvault/internal/config"
@@ -38,7 +40,8 @@ var authPrintTokenCmd = &cobra.Command{
 			return err
 		}
 		cmd.PrintErrln("warning: this token grants full account access — avoid saving it to shell history or exporting/persisting it. Prefer `$(tvault tk get <svc>)` where possible.")
-		cmd.Println(client.BearerToken)
+		// stdout: callers do `BEARER=$(tvault auth print-token)`.
+		fmt.Println(client.BearerToken)
 		return nil
 	},
 }
