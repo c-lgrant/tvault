@@ -17,6 +17,7 @@ func TestExitCode(t *testing.T) {
 		{&CLIError{Kind: KindNetwork}, 3},
 		{&CLIError{Kind: KindServer}, 4},
 		{&CLIError{Kind: KindVaultLocked}, 5},
+		{&CLIError{Kind: KindEmpty}, 6},
 		{errors.New("plain error"), 1},
 	}
 	for _, c := range cases {

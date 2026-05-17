@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -229,8 +230,8 @@ func (c *Client) fetchWebhookCredential(webhookURL, ticket, service string) (str
 		return v, nil
 	}
 	return "", &clierr.CLIError{
-		Kind: clierr.KindServer, Request: reqLine,
-		Message: "webhook response did not contain a credential",
+		Kind: clierr.KindEmpty, Request: reqLine,
+		Message: "webhook response did not contain a credential (token is empty)",
 	}
 }
 
@@ -268,6 +269,79 @@ func (c *Client) SetTokenValue(service, credential string) error {
 	}
 	_, err := c.doRequest("POST", "/api/tokens", payload, nil)
 	return err
+}
+
+// StoreTokenViaWebhook is the webhook-mode equivalent of CreateToken /
+// SetTokenValue: it fetches a signed store ticket from TV, then POSTs the
+// token document directly to the user's webhook at /v1/store. The secret
+// never traverses TV's backend.
+func (c *Client) StoreTokenViaWebhook(service, tokenType, credential string) error {
+	ticket, err := c.VaultStoreTicket(service)
+	if err != nil {
+		return err
+	}
+	tokenData := map[string]any{
+		"tokenType":                            tokenType,
+		credentialFieldForType(tokenType): credential,
+	}
+	payload := map[string]any{
+		"ticket":    ticket.Ticket,
+		"service":   service,
+		"tokenData": tokenData,
+	}
+	return c.postWebhookStore(ticket.WebhookURL, payload)
+}
+
+func (c *Client) postWebhookStore(webhookURL string, payload any) error {
+	if webhookURL == "" {
+		return &clierr.CLIError{
+			Kind: clierr.KindServer, Request: "POST <webhook>/v1/store",
+			Message: "backend returned empty webhook URL",
+		}
+	}
+	reqLine := "POST " + webhookURL + "/v1/store"
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return &clierr.CLIError{Kind: clierr.KindUser, Request: reqLine, Message: err.Error()}
+	}
+	req, err := http.NewRequest("POST", webhookURL+"/v1/store", bytes.NewReader(raw))
+	if err != nil {
+		return &clierr.CLIError{Kind: clierr.KindUser, Request: reqLine, Message: err.Error()}
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	httpClient := c.HTTP
+	if httpClient == nil {
+		httpClient = &http.Client{Timeout: 30 * time.Second}
+	}
+	start := time.Now()
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		if c.Debug {
+			fmt.Fprintf(os.Stderr, "[debug] %s → connection error after %s: %v\n", reqLine, time.Since(start), err)
+		}
+		return &clierr.CLIError{
+			Kind: clierr.KindNetwork, Request: reqLine,
+			Message: "could not reach webhook — " + err.Error(),
+		}
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if c.Debug {
+		fmt.Fprintf(os.Stderr, "[debug] %s → %d in %s (%d bytes)\n",
+			reqLine, resp.StatusCode, time.Since(start), len(body))
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		er := parseErrorBody(body)
+		if er.Message == "" {
+			er.Message = string(body)
+		}
+		return &clierr.CLIError{
+			Kind: kindForStatus(resp.StatusCode), Request: reqLine,
+			Response: fmt.Sprintf("%d", resp.StatusCode), Message: er.Message,
+		}
+	}
+	return nil
 }
 
 // UpdateTokenMetadata edits displayName/notes/tags (PATCH …/metadata).

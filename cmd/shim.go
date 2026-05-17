@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -29,6 +30,8 @@ func runShim(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return enrich(cmd, cc, err)
 	}
-	cmd.Println(val)
+	// stdout, not cmd.Println (which Cobra writes to OutOrStderr) — scripts
+	// rely on $(tvault <svc>) capturing the value.
+	fmt.Println(val)
 	return nil
 }

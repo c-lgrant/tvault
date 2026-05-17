@@ -31,3 +31,27 @@ func (c *Client) VaultStatus() (*VaultStatusResult, error) {
 	}
 	return &st, nil
 }
+
+// StoreTicket is the response shape of POST /api/vault/store-ticket. The
+// ticket authorises the caller to push a token document directly to the
+// user's webhook at <WebhookURL>/v1/store, bypassing Token Vault.
+type StoreTicket struct {
+	Ticket     string `json:"ticket"`
+	WebhookURL string `json:"webhookUrl"`
+	ExpiresIn  int    `json:"expiresIn"`
+}
+
+// VaultStoreTicket fetches a webhook-store ticket for the named service. Only
+// valid for webhook-mode vaults; platform-mode users get a 400 from the API.
+func (c *Client) VaultStoreTicket(serviceName string) (*StoreTicket, error) {
+	body, err := c.doRequest("POST", "/api/vault/store-ticket",
+		map[string]string{"serviceName": serviceName}, nil)
+	if err != nil {
+		return nil, err
+	}
+	var t StoreTicket
+	if err := json.Unmarshal(body, &t); err != nil {
+		return nil, err
+	}
+	return &t, nil
+}

@@ -16,6 +16,7 @@ const (
 	KindNetwork                 // 3 — connect timeout, DNS, no route
 	KindServer                  // 4 — 5xx
 	KindVaultLocked             // 5 — 423 VAULT_LOCKED
+	KindEmpty                   // 6 — token exists but has no credential value
 )
 
 func (k Kind) exitCode() int {
@@ -30,6 +31,8 @@ func (k Kind) exitCode() int {
 		return 4
 	case KindVaultLocked:
 		return 5
+	case KindEmpty:
+		return 6
 	default:
 		return 1
 	}

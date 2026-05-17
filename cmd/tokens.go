@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"fmt"
 	"os"
 	"strings"
 
@@ -64,7 +65,10 @@ var tokensGetCmd = &cobra.Command{
 		if err != nil {
 			return enrich(cmd, cc, err)
 		}
-		cmd.Println(val)
+		// Use os.Stdout directly: Cobra's cmd.Println writes to OutOrStderr,
+		// which breaks $(tvault tokens get X) capture. The same footgun was
+		// fixed for `tvault version` in be6f4fe.
+		fmt.Println(val)
 		return nil
 	},
 }
@@ -110,7 +114,7 @@ var tokensSetCmd = &cobra.Command{
 			return err
 		}
 		if err := cc.Client.SetTokenValue(args[0], value); err != nil {
-			return enrich(cmd, cc, err)
+			return enrich(cmd, cc, hintWebhookStoreOnReject(err, args[0]))
 		}
 		cmd.PrintErrf("Updated credential for %q.\n", args[0])
 		return nil
@@ -260,9 +264,81 @@ var tokensCreateCmd = &cobra.Command{
 			}
 		}
 		if err := cc.Client.CreateToken(*req); err != nil {
+			return enrich(cmd, cc, hintWebhookStoreOnReject(err, req.ServiceName))
+		}
+		if req.Credential == "" {
+			cmd.PrintErrf("Created token %q (no value stored).\n", req.ServiceName)
+			cmd.PrintErrf("  fill with: tvault tokens set %s --value <secret>\n", req.ServiceName)
+			cmd.PrintErrf("  (webhook mode): tvault tokens store-ticket %s --value <secret>\n", req.ServiceName)
+		} else {
+			cmd.PrintErrf("Created token %q.\n", req.ServiceName)
+		}
+		return nil
+	},
+}
+
+// hintWebhookStoreOnReject adds a CLI-side hint to the backend's webhook-mode
+// rejection of plaintext POST /api/tokens, pointing at the store-ticket
+// subcommand that does the right thing.
+func hintWebhookStoreOnReject(err error, service string) error {
+	if err == nil {
+		return nil
+	}
+	var ce *clierr.CLIError
+	if !asCLIErr(err, &ce) {
+		return err
+	}
+	if strings.Contains(ce.Message, "Webhook mode") && ce.Hint == "" {
+		ce.Hint = fmt.Sprintf("tvault tokens store-ticket %s --type <type> --value <secret>", service)
+	}
+	return err
+}
+
+// tokensStoreTicketCmd implements webhook-mode store via the ticket flow.
+// In webhook (zero-knowledge) mode the backend will not accept plaintext
+// POSTs to /api/tokens. The browser dashboard uses a signed store ticket
+// to push the secret directly to the user's webhook, bypassing TV. This
+// subcommand makes that same flow available to scripts.
+//
+// With --value: full one-shot store. Without: print the ticket envelope
+// as JSON for advanced workflows (e.g. piping into curl or a sibling tool).
+var tokensStoreTicketCmd = &cobra.Command{
+	Use:               "store-ticket <service>",
+	Short:             "Store a secret directly on the webhook (webhook-mode vaults)",
+	Args:              cobra.ExactArgs(1),
+	ValidArgsFunction: completeServices,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		value, _ := cmd.Flags().GetString("value")
+		typ, _ := cmd.Flags().GetString("type")
+		if typ == "" {
+			typ = "PlainText"
+		}
+
+		cc, err := resolve(cmd, true)
+		if err != nil {
+			return err
+		}
+
+		if value == "" {
+			// Print the ticket envelope so the caller can use it elsewhere.
+			ticket, err := cc.Client.VaultStoreTicket(args[0])
+			if err != nil {
+				return enrich(cmd, cc, err)
+			}
+			rows := []map[string]string{{
+				"service":    args[0],
+				"webhookUrl": ticket.WebhookURL,
+				"ticket":     ticket.Ticket,
+				"expiresIn":  fmt.Sprintf("%d", ticket.ExpiresIn),
+			}}
+			return output.Render(os.Stdout, cc.Format,
+				[]string{"service", "webhookUrl", "ticket", "expiresIn"}, rows)
+		}
+
+		if err := cc.Client.StoreTokenViaWebhook(args[0], typ, value); err != nil {
 			return enrich(cmd, cc, err)
 		}
-		cmd.PrintErrf("Created token %q.\n", req.ServiceName)
+		cmd.PrintErrf("Stored %q via webhook.\n", args[0])
 		return nil
 	},
 }
@@ -276,11 +352,14 @@ func init() {
 	tokensCreateCmd.Flags().String("type", "", "token type (JWT, PlainText, Certificate, SSHKey, RawCredential, TOTP)")
 	tokensCreateCmd.Flags().String("service", "", "service name")
 	tokensCreateCmd.Flags().String("value", "", "credential value")
+	tokensStoreTicketCmd.Flags().String("value", "", "secret to store on the webhook (omit to print ticket envelope only)")
+	tokensStoreTicketCmd.Flags().String("type", "PlainText", "token type when --value is set")
 
 	tokensCmd.AddCommand(
 		tokensListCmd, tokensGetCmd, tokensShowCmd,
 		tokensSetCmd, tokensEditCmd, tokensRmCmd,
 		tokensRefreshCmd, tokensHistoryCmd, tokensCreateCmd,
+		tokensStoreTicketCmd,
 	)
 	rootCmd.AddCommand(tokensCmd)
 }
