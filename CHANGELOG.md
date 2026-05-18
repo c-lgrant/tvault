@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.1](https://github.com/c-lgrant/tvault/compare/v0.6.0...v0.6.1) (2026-05-18)
+
+
+### Bug Fixes
+
+* **install:** avoid SIGPIPE on latest-tag lookup ([88171c3](https://github.com/c-lgrant/tvault/commit/88171c319beef755b1ebcb196eed63b4b10efff8))
+
 ## [0.6.0](https://github.com/c-lgrant/tvault/compare/v0.5.0...v0.6.0) (2026-05-18)
 
 
