@@ -46,8 +46,10 @@ esac
 if [ -n "${TVAULT_VERSION:-}" ]; then
   tag="$TVAULT_VERSION"
 else
+  # Don't use `grep -m1` here — closing the pipe early gives curl SIGPIPE
+  # (exit 23 "Failure writing output to destination") under pipefail.
   tag="$(curl_retry "https://api.github.com/repos/${REPO}/releases/latest" \
-    | grep -m1 '"tag_name"' | cut -d'"' -f4)"
+    | grep '"tag_name"' | head -1 | cut -d'"' -f4)"
 fi
 if [ -z "$tag" ]; then
   echo "could not determine the release tag" >&2; exit 1
