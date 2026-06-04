@@ -30,13 +30,36 @@ function resolveExternalUrl(c: Context<AppEnv>, config: WebhookConfig): string |
   return host ? `${proto}://${host}` : null;
 }
 
+// The Token Vault frontend to bind to. A `tv` query param lets the launching TV
+// instance (dev, prod, or a self-host) point the webhook back at itself, so the
+// frontend URL is not hard-coded per deployment. The param is constrained to an
+// https origin (http only for localhost) and is SHOWN on the bind page, because
+// whoever receives the redirect can exchange the one-time code for the HMAC
+// secret — the operator must confirm the destination. No param → the configured
+// TOKENVAULT_FRONTEND_URL (the trusted default).
+function resolveFrontend(c: Context<AppEnv>, config: WebhookConfig): string {
+  const tv = c.req.query("tv");
+  if (tv) {
+    try {
+      const u = new URL(tv);
+      const isLocalhost = u.hostname === "localhost" || u.hostname === "127.0.0.1";
+      if (u.protocol === "https:" || (u.protocol === "http:" && isLocalhost)) {
+        return `${u.protocol}//${u.host}`;
+      }
+    } catch {
+      // malformed tv param → fall through to the configured default
+    }
+  }
+  return config.tokenvaultFrontendUrl;
+}
+
 function buildRegUrl(frontend: string, code: string, externalUrl: string, hmacHash: string): string {
   const webhookUrlB64 = base64Encode(utf8(externalUrl));
   const qs = new URLSearchParams({ code, webhook_url: webhookUrlB64, hmac_hash: hmacHash });
   return `${frontend.replace(/\/$/, "")}/vault/webhook-bind?${qs.toString()}`;
 }
 
-const BIND_PAGE = (regUrl: string, externalUrl: string) => `<!doctype html>
+const BIND_PAGE = (regUrl: string, externalUrl: string, frontend: string) => `<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Connect to Token Vault</title>
@@ -45,11 +68,15 @@ const BIND_PAGE = (regUrl: string, externalUrl: string) => `<!doctype html>
   .btn{display:inline-block;margin-top:1.5rem;padding:.7rem 1.25rem;border-radius:.5rem;
        background:#059669;color:#fff;text-decoration:none;font-weight:600}
   code{background:#f1f5f9;padding:.15rem .35rem;border-radius:.25rem;font-size:.85em}
+  .dest{margin-top:1rem;padding:.75rem 1rem;border:1px solid #e2e8f0;border-radius:.5rem;background:#f8fafc}
 </style></head><body>
 <h1>Connect this webhook to Token Vault</h1>
 <p>This webhook holds your credentials. Click below to complete the secure key
 exchange — your encryption key never leaves this server.</p>
 <p>Webhook URL: <code>${externalUrl}</code></p>
+<p class="dest">Binding to: <code>${frontend}</code><br>
+Only continue if this is your own Token Vault instance — the site you continue
+to receives a one-time code that completes the key exchange.</p>
 <a class="btn" href="${regUrl}">Connect to Token Vault</a>
 </body></html>`;
 
@@ -84,7 +111,7 @@ export function exchangeModule(): FeatureModule {
         const code = issueCode();
         const hash = await ctx.secrets.hmacSecretHash();
         return c.json({
-          registrationUrl: buildRegUrl(ctx.config.tokenvaultFrontendUrl, code, externalUrl, hash),
+          registrationUrl: buildRegUrl(resolveFrontend(c, ctx.config), code, externalUrl, hash),
           code,
           expiresIn: 300,
           webhookUrl: externalUrl,
@@ -115,10 +142,11 @@ export function exchangeModule(): FeatureModule {
         if (!externalUrl) {
           return c.html("<h1>Webhook misconfigured</h1><p>EXTERNAL_URL is not set.</p>", 500);
         }
+        const frontend = resolveFrontend(c, ctx.config);
         const code = issueCode();
         const hash = await ctx.secrets.hmacSecretHash();
-        const regUrl = buildRegUrl(ctx.config.tokenvaultFrontendUrl, code, externalUrl, hash);
-        return c.html(BIND_PAGE(regUrl, externalUrl));
+        const regUrl = buildRegUrl(frontend, code, externalUrl, hash);
+        return c.html(BIND_PAGE(regUrl, externalUrl, frontend));
       });
     },
   };
