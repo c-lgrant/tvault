@@ -1,0 +1,44 @@
+name = "tv-webhook"
+main = "src/runtime/worker.ts"
+compatibility_date = "2024-11-01"
+compatibility_flags = ["nodejs_compat"]
+
+# Set after `wrangler login` (or use CLOUDFLARE_ACCOUNT_ID in the environment):
+# account_id = ""
+
+# Non-secret configuration. Override per your deployment.
+[vars]
+TOKENVAULT_FRONTEND_URL = "https://tokenvault.uk"
+# WEBHOOK_EXTERNAL_URL is normally auto-detected from the request host; set it
+# only if you front the Worker with a custom domain that rewrites Host.
+# WEBHOOK_EXTERNAL_URL = "https://tv-webhook.<account>.workers.dev"
+# TOKENVAULT_IP — TV's egress IP, denied on /v1/credential, /v1/store, /v1/totp-code.
+# TOKENVAULT_IP = ""
+# DENY_IPS / DENY_ORIGINS — extra comma-separated denylist entries.
+
+# Replay protection (request IDs + ticket nonces). Required.
+[[kv_namespaces]]
+binding = "REPLAY"
+id = "placeholder_replay_kv_id"
+preview_id = "placeholder_replay_kv_preview_id"
+
+# Credential storage. Use KV (below) OR D1 (further down) — not both. KV is the
+# simplest; D1 gives durable, strongly-consistent storage for refresh writes.
+[[kv_namespaces]]
+binding = "TOKENS"
+id = "placeholder_tokens_kv_id"
+preview_id = "placeholder_tokens_kv_preview_id"
+
+# To use D1 instead of the TOKENS KV namespace, create a database and uncomment:
+# [[d1_databases]]
+# binding = "DB"
+# database_name = "tv-webhook"
+# database_id = "placeholder_d1_database_id"
+
+# Secrets — set via `wrangler secret put`, never in this file:
+#   TV_WEBHOOK_SEED      — the ONLY persisted secret. The AES-256 key + HMAC
+#                          secret are HKDF-derived from it in memory, stable
+#                          across redeploys. Use a long random value, e.g.
+#                          `openssl rand -hex 32 | wrangler secret put TV_WEBHOOK_SEED`.
+#   OAUTH_PROVIDERS_JSON — optional. JSON map provider→{clientSecret,clientId?,tokenUrl?}
+#                          enabling autonomous OAuth refresh (/v1/refresh-notify).
