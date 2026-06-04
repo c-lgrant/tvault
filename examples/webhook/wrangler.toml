@@ -16,18 +16,34 @@ TOKENVAULT_FRONTEND_URL = "https://tokenvault.uk"
 # TOKENVAULT_IP = ""
 # DENY_IPS / DENY_ORIGINS — extra comma-separated denylist entries.
 
+# ── KV namespaces ─────────────────────────────────────────────────────────────
+# This webhook needs TWO KV namespaces: REPLAY (replay protection) and TOKENS
+# (credential storage). The `id` values below are placeholders.
+#
+# Deploying with the "Deploy to Workers" button?
+#   You'll be prompted to create/select a namespace for EACH binding below — so
+#   two prompts, one for REPLAY and one for TOKENS. That's expected; the wizard
+#   creates the namespaces and rewrites these placeholder IDs in your fork.
+#   If a prompt says the namespace "already exists" (a previous attempt created
+#   it — KV titles are unique per account), just SELECT the existing one; it's
+#   harmless. (There are no `preview_id` lines here on purpose — they would
+#   double the prompts and are only used by `wrangler dev --remote`.)
+#
+# Deploying manually with the CLI? Run, then paste the returned IDs here:
+#   wrangler kv namespace create REPLAY
+#   wrangler kv namespace create TOKENS
+
 # Replay protection (request IDs + ticket nonces). Required.
 [[kv_namespaces]]
 binding = "REPLAY"
 id = "placeholder_replay_kv_id"
-preview_id = "placeholder_replay_kv_preview_id"
 
-# Credential storage. Use KV (below) OR D1 (further down) — not both. KV is the
-# simplest; D1 gives durable, strongly-consistent storage for refresh writes.
+# Credential storage. Use this KV namespace OR a D1 'DB' (further down) — not
+# both. KV is the simplest; D1 gives durable, strongly-consistent storage for
+# refresh writes.
 [[kv_namespaces]]
 binding = "TOKENS"
 id = "placeholder_tokens_kv_id"
-preview_id = "placeholder_tokens_kv_preview_id"
 
 # To use D1 instead of the TOKENS KV namespace, create a database and uncomment:
 # [[d1_databases]]
@@ -35,7 +51,10 @@ preview_id = "placeholder_tokens_kv_preview_id"
 # database_name = "tv-webhook"
 # database_id = "placeholder_d1_database_id"
 
-# Secrets — set via `wrangler secret put`, never in this file:
+# ── Secrets ───────────────────────────────────────────────────────────────────
+# Set via `wrangler secret put`, never in this file. NOTE: the button deploys the
+# code + KV, but it does NOT set these — the webhook cannot bind to Token Vault
+# until you set TV_WEBHOOK_SEED (Worker → Settings → Variables, or the CLI below).
 #   TV_WEBHOOK_SEED      — the ONLY persisted secret. The AES-256 key + HMAC
 #                          secret are HKDF-derived from it in memory, stable
 #                          across redeploys. Use a long random value, e.g.
