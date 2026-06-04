@@ -1,0 +1,24 @@
+node_modules/
+dist/
+*.log
+
+# Environment and secrets — never commit these
+.env
+.env.*
+.dev.vars
+*.tfvars
+
+# Wrangler local state and secret outputs
+.wrangler/
+wrangler-state/
+
+# Local data persistence
+/data/
+
+# Python bytecode (the conformance fixture generator is Python)
+__pycache__/
+*.pyc
+
+# OS
+.DS_Store
+Thumbs.db
