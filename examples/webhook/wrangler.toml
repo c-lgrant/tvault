@@ -41,13 +41,28 @@ TOKENVAULT_FRONTEND_URL = "https://tokenvault.uk"
 binding = "KV"
 id = "2a6702ef5db29638df2eea99422d0f22"
 
-# Prefer durable, strongly-consistent storage for refresh writes? Add a D1
-# database and the runtime uses it for credential storage instead of KV (the KV
-# namespace above is still required for replay). Create the DB and uncomment:
-# [[d1_databases]]
-# binding = "DB"
-# database_name = "tv-webhook"
-# database_id = "placeholder_d1_database_id"
+# ── D1 database (credential storage) ──────────────────────────────────────────
+# Credentials are stored in D1 (durable, strongly-consistent — better than KV for
+# refresh writes). The runtime auto-selects D1 whenever a `DB` binding is present;
+# the KV namespace above is STILL required (replay protection always uses KV).
+# The `kv` table self-creates on the first request (idempotent CREATE TABLE IF
+# NOT EXISTS in D1StorageAdapter.create) — there is no migration step.
+#
+# `database_id` is a PLACEHOLDER — not a real database. The deploy flow fills it:
+#
+# One-click deploy (button): the wizard shows a "Create D1 database" step (the
+# wizard names new resources after the worker, `tv-webhook`).
+#   - First deploy: pick "Create new" — it provisions one D1 db and rewrites this id.
+#   - Re-deploying (or if a leftover `tv-webhook` db exists): pick the EXISTING db
+#     instead of creating a new one. (A KV namespace and a D1 db may share the name
+#     `tv-webhook` — different resource types, no collision.)
+#
+# Manual deploy (CLI): create the db and paste the returned id:
+#   wrangler d1 create tv-webhook
+[[d1_databases]]
+binding = "DB"
+database_name = "tv-webhook"
+database_id = "00000000-0000-0000-0000-000000000000"
 
 # ── Secrets ───────────────────────────────────────────────────────────────────
 # Set via `wrangler secret put`, never in this file. NOTE: the button deploys the

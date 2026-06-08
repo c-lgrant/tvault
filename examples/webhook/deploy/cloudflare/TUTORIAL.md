@@ -46,9 +46,9 @@ Agent ──▶ Token Vault (control plane)         You deploy THIS:
 2. **Create the private Git repo** when prompted — this is the copy Cloudflare
    builds from.
 
-3. **Select KV namespace.** The template declares a **single** KV namespace
-   (binding `KV`) that backs both replay protection and credential storage. The
-   wizard shows one KV step:
+3. **Select KV namespace.** The template declares one KV namespace (binding `KV`)
+   that backs **replay protection** (request IDs + ticket nonces). The wizard
+   shows one KV step:
    - **First time:** choose **Create new**. Cloudflare provisions one namespace and
      writes its id into your deployed config.
    - **Re-deploying, or a leftover `tv-webhook` namespace already exists** (e.g.
@@ -58,10 +58,17 @@ Agent ──▶ Token Vault (control plane)         You deploy THIS:
      Selecting the existing one avoids that. (Tip: delete stale `tv-webhook`
      namespaces under **Workers & Pages → KV** for a clean slate.)
 
-4. **Variables.** You can leave these for now. `TOKENVAULT_FRONTEND_URL` defaults
+4. **Create D1 database.** The template declares a `DB` binding (D1) for
+   **credential storage**. The wizard shows a **"Create D1 database"** step — same
+   pattern: **Create new** the first time, or pick the **existing** `tv-webhook`
+   db when re-deploying. (A KV namespace and a D1 db can share the name
+   `tv-webhook` without colliding — different resource types.) The storage table
+   self-creates on first use; nothing to migrate.
+
+5. **Variables.** You can leave these for now. `TOKENVAULT_FRONTEND_URL` defaults
    to production — we handle dev in Step 3/4.
 
-5. Click **Deploy**. When it finishes you get a URL like:
+6. Click **Deploy**. When it finishes you get a URL like:
    ```
    https://tv-webhook.<your-subdomain>.workers.dev
    ```
@@ -167,8 +174,8 @@ You now have a webhook-mode vault wired to dev.
    `refresh`, …).
 
 2. **Store a credential** in Token Vault (the UI writes it to your webhook via the
-   `store` capability — it lands in your KV namespace, encrypted if you enabled it,
-   never on Token Vault).
+   `store` capability — it lands in your D1 database, encrypted, never on Token
+   Vault).
 
 3. **Create an agent**, grant it that token, and have it call:
    ```
@@ -200,10 +207,10 @@ is working.
 
 ## Optional configuration
 
-- **D1 instead of KV for storage** — for durable, strongly-consistent refresh
-  writes. Create a D1 database, uncomment the `[[d1_databases]]` block (binding
-  `DB`) in `wrangler.toml`. The runtime auto-selects D1 when `DB` is bound. The
-  `KV` namespace is still required (replay protection always uses it).
+- **KV-only storage (drop D1)** — this template stores credentials in D1 by
+  default. To store in KV instead, remove the `[[d1_databases]]` block from
+  `wrangler.toml`; the runtime falls back to KV-only storage. (KV is required
+  either way — replay protection always uses it.)
 - **Custom domain** — if you front the worker with a domain that rewrites `Host`,
   set `WEBHOOK_EXTERNAL_URL` so generated URLs are correct.
 - **Extra denylist entries** — `DENY_IPS` / `DENY_ORIGINS` (comma-separated) and
@@ -213,7 +220,8 @@ is working.
 
 ## Recap
 
-1. **Deploy** with the button → one KV namespace, get the `*.workers.dev` URL.
+1. **Deploy** with the button → one KV namespace (replay) + one D1 db (storage),
+   get the `*.workers.dev` URL.
 2. **Set `TV_WEBHOOK_SEED`** (Secret) — required before bind.
 3. **Target the right Token Vault** (dev via `?tv=` or the pinned variable).
 4. **Bind** at `/bind` — confirm the destination, let the server-to-server
