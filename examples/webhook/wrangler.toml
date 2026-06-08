@@ -18,32 +18,35 @@ TOKENVAULT_FRONTEND_URL = "https://tokenvault.uk"
 
 # ── KV namespaces ─────────────────────────────────────────────────────────────
 # This webhook needs TWO KV namespaces: REPLAY (replay protection) and TOKENS
-# (credential storage). The `id` values below are placeholders.
+# (credential storage).
 #
-# Deploying with the "Deploy to Workers" button?
-#   You'll be prompted to create/select a namespace for EACH binding below — so
-#   two prompts, one for REPLAY and one for TOKENS. That's expected; the wizard
-#   creates the namespaces and rewrites these placeholder IDs in your fork.
-#   If a prompt says the namespace "already exists" (a previous attempt created
-#   it — KV titles are unique per account), just SELECT the existing one; it's
-#   harmless. (There are no `preview_id` lines here on purpose — they would
-#   double the prompts and are only used by `wrangler dev --remote`.)
+# The `id` values below are DEFAULT PLACEHOLDERS in real namespace-id format
+# (32 hex chars), matching Cloudflare's own deploy-button templates. They are
+# NOT real namespaces — do not expect them to resolve.
 #
-# Deploying manually with the CLI? Run, then paste the returned IDs here:
+# Deploying with the "Deploy to Cloudflare" button?
+#   Cloudflare's provisioner sees these bindings, PROVISIONS A FRESH namespace
+#   for each (with a unique auto-generated name + new id) and rewrites these ids
+#   in the deployed config. Because a new namespace is created every time, repeat
+#   deploys do NOT collide. (This only works because the placeholders are in
+#   valid hex-id format; a non-hex string makes the provisioner fall back to
+#   naming the namespace after the worker, which then collides on re-deploy.)
+#
+# Deploying manually with the CLI? Create real namespaces and paste their ids:
 #   wrangler kv namespace create REPLAY
 #   wrangler kv namespace create TOKENS
 
 # Replay protection (request IDs + ticket nonces). Required.
 [[kv_namespaces]]
 binding = "REPLAY"
-id = "placeholder_replay_kv_id"
+id = "2a6702ef5db29638df2eea99422d0f22"
 
 # Credential storage. Use this KV namespace OR a D1 'DB' (further down) — not
 # both. KV is the simplest; D1 gives durable, strongly-consistent storage for
 # refresh writes.
 [[kv_namespaces]]
 binding = "TOKENS"
-id = "placeholder_tokens_kv_id"
+id = "bbfdc8ee5cbe6087e84cfcb8c7ff34da"
 
 # To use D1 instead of the TOKENS KV namespace, create a database and uncomment:
 # [[d1_databases]]

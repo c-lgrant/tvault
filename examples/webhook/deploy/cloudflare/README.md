@@ -12,11 +12,11 @@ account and walks you through setup.
 
 What to expect during the wizard:
 
-1. **Two KV-namespace prompts** — one for `REPLAY` (replay protection) and one
-   for `TOKENS` (credential storage). Let it create both; it rewrites the
-   placeholder IDs in `wrangler.toml` for your fork. If a prompt says a namespace
-   **"already exists"** (a prior attempt created it — KV titles are unique per
-   account), just **select the existing one**. It's harmless.
+1. **KV namespaces are auto-provisioned.** `wrangler.toml` declares `REPLAY` and
+   `TOKENS` with default placeholder IDs in real (hex) namespace-id format, so
+   Cloudflare creates a **fresh, uniquely-named namespace for each** and rewrites
+   the IDs in the deployed config. A new namespace is made every deploy, so
+   **repeat clicks never collide** ("already exists"). No prompts to select.
 2. **Deploy** finishes and gives you a `https://<name>.<account>.workers.dev` URL.
 
 Then finish setup (the button does **not** do these):
