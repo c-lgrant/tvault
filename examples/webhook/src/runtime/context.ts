@@ -73,6 +73,20 @@ export interface SecretProvider {
   webhookId(): Promise<string>;
   /** Hex SHA-256 of the HMAC secret — published in the register URL, verified by TV. */
   hmacSecretHash(): Promise<string>;
+  /**
+   * Where the active key material comes from, for the bind-page security UX:
+   * `secret` (hardened, write-only Secret), `stored` (convenience, seed in a
+   * runtime-writable store), or `none` (not configured yet). Optional.
+   */
+  source?(): Promise<"secret" | "stored" | "none">;
+  /**
+   * Generate + persist key material if none exists, for one-click setup. Returns
+   * whether it created any (false if already configured — existing material is
+   * never overwritten, since rotating it would break an existing bind). Optional:
+   * providers that require out-of-band provisioning (e.g. a Workers Secret) omit
+   * it, and callers must feature-detect before offering a "generate" action.
+   */
+  provision?(): Promise<{ created: boolean }>;
 }
 
 export interface ListOptions {

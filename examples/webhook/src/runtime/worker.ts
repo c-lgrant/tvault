@@ -1,18 +1,21 @@
 // Cloudflare Workers entry point. Builds the RuntimeContext from bindings:
-//   - secrets:  seed-derived (HKDF from the TV_WEBHOOK_SEED secret)
+//   - secrets:  seed-derived — a TV_WEBHOOK_SEED Secret if set, else a seed
+//               stored in KV (provisioned one-click from the /bind page)
 //   - storage:  D1 if a DB binding exists, else the KV namespace
-//   - replay:   the same KV namespace (request IDs + ticket nonces)
-// One KV namespace backs BOTH storage and replay — their keys never collide
-// (replay uses `rid:`/`nonce:` prefixes, storage uses `collection:key`). Using a
-// single namespace also keeps the one-click deploy simple: the wizard provisions
-// one namespace instead of two same-named ones that collide with each other.
+//   - replay:   the KV namespace (request IDs + ticket nonces)
+// The KV namespace backs replay AND the convenience-path seed (key `seed:v1`);
+// when no D1 is bound it also backs storage. Keys never collide — replay uses
+// `rid:`/`nonce:` prefixes, the seed uses `seed:`, storage uses `collection:key`.
+// Note the deliberate split: the seed lives in KV, credentials in D1, so a leak
+// of either store alone can't decrypt anything. One KV namespace also keeps the
+// one-click deploy simple (the wizard provisions one, not two colliding ones).
 // The app is built once per isolate and reused across requests.
 
 import type { Hono } from "hono";
 import { createApp, type AppEnv } from "../core/app.ts";
 import { allModules } from "../modules/index.ts";
 import { configFromEnv } from "./config.ts";
-import { seedDerivedSecrets } from "../adapters/secrets/seedDerived.ts";
+import { storedSeedSecrets } from "../adapters/secrets/storedSeed.ts";
 import { KvStorageAdapter } from "../adapters/storage/kv.ts";
 import { D1StorageAdapter } from "../adapters/storage/d1.ts";
 import { KvReplayGuard } from "../adapters/replay/kv.ts";
@@ -47,7 +50,7 @@ async function buildApp(env: Env): Promise<Hono<AppEnv>> {
 
   const ctx: RuntimeContext = {
     config: configFromEnv((k) => (typeof env[k] === "string" ? (env[k] as string) : undefined)),
-    secrets: seedDerivedSecrets(env.TV_WEBHOOK_SEED),
+    secrets: storedSeedSecrets({ envSeed: env.TV_WEBHOOK_SEED, kv: env.KV }),
     storage,
     replay: new KvReplayGuard(env.KV),
   };

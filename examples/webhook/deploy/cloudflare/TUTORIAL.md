@@ -80,34 +80,48 @@ Agent ──▶ Token Vault (control plane)         You deploy THIS:
 
 ---
 
-## Step 2 — Set the seed secret (required)
+## Step 2 — Provide the seed
 
-The webhook **cannot bind** until `TV_WEBHOOK_SEED` exists — it's the root value
-the AES key + HMAC secret are derived from. Set it as a **Secret** (encrypted,
-non-readable), never a plaintext variable.
+The webhook **cannot bind** until it has a root **seed** — the value the AES key
++ HMAC secret are HKDF-derived from. Open your webhook's `/bind` page; with no
+seed set it shows a setup screen with two paths. Pick **one**.
 
-**Option A — Dashboard (matches the button workflow):**
+### Option 1 — Generate & save (one-click, good for dev)
 
+Click **Generate & save seed** on the setup page. The webhook mints a random
+32-byte seed and stores it in **KV** (key `seed:v1`). Reload and the **Connect**
+button appears — no CLI, no redeploy.
+
+:::warning
+The seed is stored in KV, **readable to anyone with access to your KV namespace**.
+Your *credentials* live in D1, so a leak of one store alone can't decrypt — but
+for production prefer Option 2.
+:::
+
+### Option 2 — Workers Secret (hardened, recommended for production)
+
+Set `TV_WEBHOOK_SEED` as an encrypted, write-only **Secret** (not readable at
+rest). The setup page deep-links straight to the right settings screen.
+
+**Dashboard:**
 1. Workers & Pages → your worker → **Settings** → **Variables and Secrets**.
 2. **Add variable** → Type **Secret** → Name `TV_WEBHOOK_SEED`.
-3. Value: a fresh 32-byte hex. Generate one in any terminal:
-   ```bash
-   openssl rand -hex 32
-   ```
-4. **Save**. No redeploy needed — the next request picks it up.
+3. Value: a fresh 32-byte hex (`openssl rand -hex 32`). **Save** — no redeploy.
 
-**Option B — CLI (never writes the secret to disk):**
-
+**CLI** (the setup page bakes in `--name` so it works from any directory):
 ```bash
-openssl rand -hex 32 | npx wrangler secret put TV_WEBHOOK_SEED
+openssl rand -hex 32 | npx wrangler secret put TV_WEBHOOK_SEED --name <worker>
 ```
 
-> **Why this is a manual step and not auto-generated at bind:** the seed is the
-> root key. It must be durable and stable (Token Vault pins `sha256(hmacSecret)`
-> at bind and re-checks it on every request), and a Worker can't write its own
-> *Secret* at runtime. The only runtime-writable durable store is KV — and the
-> design deliberately keeps the root key out of KV (readable at rest) in favour of
-> an encrypted Secret. Putting it in a URL would leak it via history/logs/referrer.
+A `TV_WEBHOOK_SEED` Secret **always takes precedence** over a generated seed.
+
+:::warning
+**Choose before you bind.** The seed is the root key: change it *after* binding
+and the HMAC secret changes, Token Vault's pinned `sha256(hmacSecret)` no longer
+matches, and every call fails until you **re-bind**. To move Option 1 → Option 2
+without re-binding, set the Secret to the **same** value (copy it from Workers &
+Pages → KV → `seed:v1`); the generated copy is then ignored.
+:::
 
 **Optional — `OAUTH_PROVIDERS_JSON`** (only if you want the webhook to refresh
 OAuth tokens autonomously). Same place, as a Secret, value is a JSON map:
@@ -198,8 +212,9 @@ is working.
 | Wizard: **"Cannot provision a KV Namespace … already exists"** | A `tv-webhook` KV namespace is left over from a prior attempt. In the KV step pick the **existing** namespace, or delete stale ones under Workers & Pages → KV, then retry. |
 | Onboarding: **"Can't verify from browser (CORS), but URL looks valid"** | Expected. The browser can't read the webhook cross-origin; binding is server-to-server. Proceed. |
 | Bind page shows **`tokenvault.uk`** (prod) instead of dev | The `?tv=` param is missing/ignored. Use `/bind?tv=https://tokenvault.one`, or set `TOKENVAULT_FRONTEND_URL` (Step 3b). |
-| Bind fails / exchange errors | `TV_WEBHOOK_SEED` isn't set (Step 2). Add it, then rebind. |
-| Bind fails with an **HMAC hash mismatch** | The seed changed between the register-URL and the exchange (e.g. you re-set the secret mid-flow). Set the seed once, then bind. |
+| Bind page says **"Setup required"** | No seed yet (Step 2). Click **Generate & save**, or set `TV_WEBHOOK_SEED`, then reload. |
+| `wrangler secret put` → **"Required Worker name missing"** | You ran it outside the project dir. Add `--name <worker>` (the setup page shows the exact command), or `cd` into the repo. |
+| Bind fails with an **HMAC hash mismatch** | The seed changed between the register-URL and the exchange (e.g. you switched custody mid-flow, or regenerated). Settle the seed first, then bind. |
 | Agent credential request returns **403 POLICY_DENIED** | A policy (IP allowlist, time window, rate limit, …) blocked it — that's Token Vault working, not the webhook. Check the agent's attached policies. |
 | Credential request **denied at the webhook by IP** | The webhook denies Token Vault's own egress IP on `/v1/credential` etc. (defense-in-depth). That path is for the *agent*, not TV. If you set `TOKENVAULT_IP`/`DENY_IPS`, make sure they only list TV, not your agent. |
 
@@ -211,6 +226,10 @@ is working.
   default. To store in KV instead, remove the `[[d1_databases]]` block from
   `wrangler.toml`; the runtime falls back to KV-only storage. (KV is required
   either way — replay protection always uses it.)
+- **Logs & traces** — `[observability]` is enabled in `wrangler.toml`, so the
+  worker persists structured logs + per-invocation traces. View them in
+  **Workers & Pages → your worker → Logs**, or stream live with
+  `wrangler tail --name <worker>`.
 - **Custom domain** — if you front the worker with a domain that rewrites `Host`,
   set `WEBHOOK_EXTERNAL_URL` so generated URLs are correct.
 - **Extra denylist entries** — `DENY_IPS` / `DENY_ORIGINS` (comma-separated) and

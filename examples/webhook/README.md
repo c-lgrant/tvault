@@ -73,8 +73,13 @@ npm run dev:node        # http://127.0.0.1:8080
 
 ## Deploy to Cloudflare Workers
 
-On Workers the AES key + HMAC secret are HKDF-derived from a single seed secret
-(`TV_WEBHOOK_SEED`), in memory, stable across redeploys, never persisted.
+On Workers the AES key + HMAC secret are HKDF-derived in memory from one root
+seed, stable across redeploys. Provide the seed either as a `TV_WEBHOOK_SEED`
+Secret (hardened) or by clicking **Generate & save** on the `/bind` page (stored
+in KV — convenient for dev; a Secret always wins). Seed lives in KV, credentials
+in D1, so a leak of one store alone can't decrypt. See
+[`deploy/cloudflare/README.md`](deploy/cloudflare/README.md#seed-custody--the-security-tradeoff)
+for the full tradeoff.
 
 ```bash
 wrangler login

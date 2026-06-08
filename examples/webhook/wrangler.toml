@@ -64,13 +64,27 @@ binding = "DB"
 database_name = "tv-webhook"
 database_id = "00000000-0000-0000-0000-000000000000"
 
-# ── Secrets ───────────────────────────────────────────────────────────────────
-# Set via `wrangler secret put`, never in this file. NOTE: the button deploys the
-# code + KV, but it does NOT set these — the webhook cannot bind to Token Vault
-# until you set TV_WEBHOOK_SEED (Worker → Settings → Variables, or the CLI below).
-#   TV_WEBHOOK_SEED      — the ONLY persisted secret. The AES-256 key + HMAC
-#                          secret are HKDF-derived from it in memory, stable
-#                          across redeploys. Use a long random value, e.g.
+# ── Observability (Workers Logs + invocation traces) ──────────────────────────
+# Persists structured logs and per-invocation traces, viewable in the dashboard
+# (Workers & Pages → this worker → Logs / Observability) and live via
+# `wrangler tail`. head_sampling_rate = 1 keeps 100% (drop it for high traffic).
+[observability]
+enabled = true
+head_sampling_rate = 1
+
+# ── Secrets / seed ────────────────────────────────────────────────────────────
+# The webhook needs ONE root seed before it can bind. Two ways to provide it:
+#   • Hardened (recommended for prod): set TV_WEBHOOK_SEED as an encrypted Secret
+#     (Worker → Settings → Variables and Secrets, or the CLI below). Write-only,
+#     not readable at rest. A Secret ALWAYS takes precedence over a generated one.
+#   • Convenience (one-click, good for dev): open /bind and click "Generate & save
+#     seed" — the webhook mints a random seed and stores it in KV (key `seed:v1`).
+#     Readable to anyone with KV access; credentials live in D1, so a leak of one
+#     store alone can't decrypt. Choose BEFORE binding: changing the seed after a
+#     bind changes the HMAC secret and forces a re-bind.
+# Set secrets via `wrangler secret put`, never in this file:
+#   TV_WEBHOOK_SEED      — the root seed. AES-256 key + HMAC secret are HKDF-derived
+#                          from it in memory, stable across redeploys. e.g.
 #                          `openssl rand -hex 32 | wrangler secret put TV_WEBHOOK_SEED`.
 #   OAUTH_PROVIDERS_JSON — optional. JSON map provider→{clientSecret,clientId?,tokenUrl?}
 #                          enabling autonomous OAuth refresh (/v1/refresh-notify).

@@ -9,7 +9,20 @@ import { describe, expect, it } from "vitest";
 import { createApp } from "../../src/core/app.ts";
 import { exchangeModule } from "../../src/modules/exchange.ts";
 import { seedDerivedSecrets } from "../../src/adapters/secrets/seedDerived.ts";
+import { storedSeedSecrets } from "../../src/adapters/secrets/storedSeed.ts";
 import { makeContext } from "../conformance/_harness.ts";
+
+/** Minimal in-memory KV (get/put) for the seed provider. */
+function fakeKv() {
+  const m = new Map<string, string>();
+  return {
+    store: m,
+    get: async (k: string) => m.get(k) ?? null,
+    put: async (k: string, v: string) => {
+      m.set(k, v);
+    },
+  };
+}
 
 const secret = crypto.getRandomValues(new Uint8Array(32)) as Uint8Array<ArrayBuffer>;
 
@@ -143,5 +156,78 @@ describe("bind page — setup required when no seed", () => {
     expect(html).toContain("dash.cloudflare.com/?to=/:account/workers-and-pages");
     // unknown name → the CLI command carries no flag (prose still suggests --name)
     expect(html).toContain("put TV_WEBHOOK_SEED</pre>");
+  });
+});
+
+describe("seed provisioning — generate & save", () => {
+  it("offers the generate button only when the provider can self-provision", async () => {
+    // storedSeed provider → has provision() → button shown
+    const ctxGen = makeContext({ hmacSecret: secret });
+    ctxGen.secrets = storedSeedSecrets({ kv: fakeKv() });
+    const genHtml = await (
+      await createApp(ctxGen, [exchangeModule()]).request("https://wh.example/bind", { headers: HOST })
+    ).text();
+    expect(genHtml).toContain("Generate &amp; save seed");
+    expect(genHtml).toContain('action="/bind/init-seed"');
+
+    // seedDerived provider (no provision) → no button, manual options only
+    const ctxNo = makeContext({ hmacSecret: secret });
+    ctxNo.secrets = seedDerivedSecrets(undefined);
+    const noHtml = await (
+      await createApp(ctxNo, [exchangeModule()]).request("https://wh.example/bind", { headers: HOST })
+    ).text();
+    expect(noHtml).not.toContain("Generate &amp; save seed");
+  });
+
+  it("POST /bind/init-seed mints a seed, then /bind shows Connect + the stored-seed warning", async () => {
+    const kv = fakeKv();
+    const ctx = makeContext({ hmacSecret: secret });
+    ctx.secrets = storedSeedSecrets({ kv });
+    const app = createApp(ctx, [exchangeModule()]);
+
+    const post = await app.request("https://wh.example/bind/init-seed", { method: "POST", headers: HOST });
+    expect(post.status).toBe(303);
+    expect(post.headers.get("location")).toBe("/bind");
+    expect(kv.store.get("seed:v1")).toMatch(/^[0-9a-f]{64}$/); // 32-byte hex
+
+    const bind = await app.request("https://wh.example/bind", { headers: HOST });
+    expect(bind.status).toBe(200);
+    const html = await bind.text();
+    expect(html).toContain("Connect to Token Vault");
+    expect(html).toContain("Seed is stored in KV"); // at-rest disclosure on bind page
+  });
+
+  it("init-seed is idempotent — a second call does not overwrite the seed", async () => {
+    const kv = fakeKv();
+    const ctx = makeContext({ hmacSecret: secret });
+    ctx.secrets = storedSeedSecrets({ kv });
+    const app = createApp(ctx, [exchangeModule()]);
+
+    await app.request("https://wh.example/bind/init-seed", { method: "POST", headers: HOST });
+    const first = kv.store.get("seed:v1");
+    await app.request("https://wh.example/bind/init-seed", { method: "POST", headers: HOST });
+    expect(kv.store.get("seed:v1")).toBe(first);
+  });
+
+  it("a TV_WEBHOOK_SEED Secret wins: configured, no generated seed, hardened note on bind", async () => {
+    const kv = fakeKv();
+    const ctx = makeContext({ hmacSecret: secret });
+    ctx.secrets = storedSeedSecrets({ envSeed: "a".repeat(64), kv });
+    const app = createApp(ctx, [exchangeModule()]);
+
+    const bind = await app.request("https://wh.example/bind", { headers: HOST });
+    expect(bind.status).toBe(200); // already configured → bind page, not setup
+    const html = await bind.text();
+    expect(html).toContain("Workers Secret (hardened)");
+    expect(html).not.toContain("Seed is stored in KV");
+    expect(kv.store.has("seed:v1")).toBe(false); // Secret path never writes KV
+  });
+
+  it("init-seed returns 501 when the provider can't self-provision", async () => {
+    const ctx = makeContext({ hmacSecret: secret });
+    ctx.secrets = seedDerivedSecrets(undefined);
+    const app = createApp(ctx, [exchangeModule()]);
+    const res = await app.request("https://wh.example/bind/init-seed", { method: "POST", headers: HOST });
+    expect(res.status).toBe(501);
   });
 });

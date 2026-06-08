@@ -32,13 +32,26 @@ What to expect during the wizard:
 
 Then finish setup (the button does **not** do these):
 
-4. **Set the seed secret** — the webhook can't bind until this exists:
-   ```bash
-   openssl rand -hex 32 | wrangler secret put TV_WEBHOOK_SEED
-   ```
-   (Or Worker → Settings → Variables → add `TV_WEBHOOK_SEED` as a Secret.)
-5. **Bind to Token Vault** — open `https://<your-worker>.workers.dev/bind` and
-   follow it through. It mints a one-time code and redirects to Token Vault's
+4. **Provide the seed** — the webhook needs one root seed before it can bind.
+   Open `https://<your-worker>.workers.dev/bind`; if no seed is set it shows a
+   setup page with two choices:
+   - **Generate & save (one-click)** — the page mints a random seed and stores it
+     in KV (key `seed:v1`). Fastest; good for dev. The seed is readable to anyone
+     with KV access (credentials live in D1, so a leak of one store alone can't
+     decrypt).
+   - **Workers Secret (hardened, recommended for prod)** — set `TV_WEBHOOK_SEED`
+     as an encrypted Secret (the page deep-links to Settings, or use the CLI):
+     ```bash
+     openssl rand -hex 32 | wrangler secret put TV_WEBHOOK_SEED --name <worker>
+     ```
+     A Secret always takes precedence over a generated one.
+
+   > **Choose before you bind.** The seed is the root key — changing it after a
+   > bind changes the HMAC secret and forces a re-bind. To move generated → Secret
+   > without re-binding, set the Secret to the *same* value (read it from
+   > Workers & Pages → KV → `seed:v1`).
+5. **Bind to Token Vault** — back on `/bind` (now that a seed exists), click
+   **Connect**. It mints a one-time code and redirects to Token Vault's
    `/vault/webhook-bind`, which calls `POST /v1/exchange` to fetch the HMAC
    secret and verifies its hash. Done — the control plane is now paired with
    your webhook.
@@ -54,8 +67,9 @@ wrangler login
 wrangler kv namespace create KV
 wrangler d1 create tv-webhook
 
-# 3. Set the seed secret (required). OAUTH_PROVIDERS_JSON is optional — only
-#    needed for autonomous OAuth refresh (/v1/refresh-notify).
+# 3. Set the seed (hardened path). Optional if you'll click "Generate & save" on
+#    /bind instead. OAUTH_PROVIDERS_JSON is optional — only for autonomous OAuth
+#    refresh (/v1/refresh-notify).
 openssl rand -hex 32 | wrangler secret put TV_WEBHOOK_SEED
 # wrangler secret put OAUTH_PROVIDERS_JSON   # optional
 
@@ -74,6 +88,40 @@ strongly-consistent, which matters for refresh writes — and uses **KV** (bindi
 `wrangler.toml`; the wizard/CLI provisions both. The runtime auto-selects D1 for
 storage whenever a `DB` binding is present and falls back to KV-only storage if
 you remove the `DB` binding. KV is required either way.
+
+## Seed custody & the security tradeoff
+
+The AES-256 encryption key, the HMAC signing secret, and the webhook id are all
+HKDF-derived in memory from one root **seed** — Token Vault never sees the key,
+only the HMAC secret (via the one-time `/v1/exchange`). Where the seed lives is
+your choice:
+
+| Path | Where the seed lives | At-rest exposure | Use |
+|---|---|---|---|
+| **Workers Secret** (`TV_WEBHOOK_SEED`) | Encrypted Secret store | Write-only, not readable | Production |
+| **Generate & save** (button on `/bind`) | KV (`seed:v1`) | Readable with KV access | Dev / quick start |
+
+Blast-radius split: the seed is in **KV**, credentials are in **D1** — a leak of
+*either* store alone decrypts nothing; you need both. A `TV_WEBHOOK_SEED` Secret
+always wins over a generated seed.
+
+**Consequence of changing the seed after binding:** the derived HMAC secret
+changes, so the hash Token Vault pinned at bind no longer matches and every call
+fails until you **re-bind**. To move generated → Secret without re-binding, set
+the Secret to the *same* value (copy it from Workers & Pages → KV → `seed:v1`),
+then the generated copy is ignored.
+
+## Logs & traces (observability)
+
+`wrangler.toml` enables `[observability]`, so the worker persists structured logs
+and per-invocation traces. View them in **Workers & Pages → this worker → Logs**
+(a.k.a. Observability), or stream live:
+
+```bash
+wrangler tail --name <worker>
+```
+
+`head_sampling_rate = 1` keeps 100% of invocations — lower it for high traffic.
 
 ## Post-deploy bind URL
 
