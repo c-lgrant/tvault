@@ -8,6 +8,8 @@
     "dev:worker": "wrangler dev src/runtime/worker.ts",
     "build": "tsc --noEmit && wrangler deploy --dry-run",
     "deploy": "wrangler deploy src/runtime/worker.ts",
+    "deploy:auto": "sh scripts/deploy.sh",
+    "ensure-seed": "sh scripts/ensure-seed.sh",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },

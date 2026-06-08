@@ -92,11 +92,10 @@ Click **Generate & save seed** on the setup page. The webhook mints a random
 32-byte seed and stores it in **KV** (key `seed:v1`). Reload and the **Connect**
 button appears — no CLI, no redeploy.
 
-:::warning
-The seed is stored in KV, **readable to anyone with access to your KV namespace**.
-Your *credentials* live in D1, so a leak of one store alone can't decrypt — but
-for production prefer Option 2.
-:::
+> ⚠️ The seed is stored in KV, **readable to anyone with access to your KV
+> namespace**. Your *credentials* live in D1, so a leak of one store alone can't
+> decrypt — but for production prefer Option 2 (or auto-provision as a Secret at
+> deploy — see Step 2c).
 
 ### Option 2 — Workers Secret (hardened, recommended for production)
 
@@ -115,13 +114,29 @@ openssl rand -hex 32 | npx wrangler secret put TV_WEBHOOK_SEED --name <worker>
 
 A `TV_WEBHOOK_SEED` Secret **always takes precedence** over a generated seed.
 
-:::warning
-**Choose before you bind.** The seed is the root key: change it *after* binding
-and the HMAC secret changes, Token Vault's pinned `sha256(hmacSecret)` no longer
-matches, and every call fails until you **re-bind**. To move Option 1 → Option 2
-without re-binding, set the Secret to the **same** value (copy it from Workers &
-Pages → KV → `seed:v1`); the generated copy is then ignored.
-:::
+> ⚠️ **Choose before you bind.** The seed is the root key: change it *after*
+> binding and the HMAC secret changes, Token Vault's pinned `sha256(hmacSecret)`
+> no longer matches, and every call fails until you **re-bind**. To move Option 1
+> → Option 2 without re-binding, set the Secret to the **same** value (copy it
+> from Workers & Pages → KV → `seed:v1`); the generated copy is then ignored.
+
+### Option 3 (Step 2c) — Auto-provision the seed as a Secret at deploy
+
+The hardened custody of Option 2 with the zero-touch convenience of Option 1: the
+deploy provisions the Secret for you. Set the Workers Builds **deploy command**
+(Settings → Builds) to:
+
+```bash
+sh scripts/deploy.sh
+```
+
+It deploys, then runs `scripts/ensure-seed.sh`, which generates `TV_WEBHOOK_SEED`
+and stores it as a Secret **only if one isn't already set** (idempotent — safe to
+re-run on every push). `wrangler secret put` needs **Workers Scripts: Edit**; if
+it fails on auth, add a `CLOUDFLARE_API_TOKEN` build variable with that scope. The
+token lives in **CI, never in the Worker** — a Worker can't set its own Secret at
+runtime. With this, the webhook already has its seed by the time it's reachable,
+so you can skip the `/bind` generate button.
 
 **Optional — `OAUTH_PROVIDERS_JSON`** (only if you want the webhook to refresh
 OAuth tokens autonomously). Same place, as a Secret, value is a JSON map:
