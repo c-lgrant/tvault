@@ -8,9 +8,28 @@
 import { describe, expect, it } from "vitest";
 import { createApp } from "../../src/core/app.ts";
 import { exchangeModule } from "../../src/modules/exchange.ts";
+import { seedDerivedSecrets } from "../../src/adapters/secrets/seedDerived.ts";
 import { makeContext } from "../conformance/_harness.ts";
 
 const secret = crypto.getRandomValues(new Uint8Array(32)) as Uint8Array<ArrayBuffer>;
+
+const HOST = { "x-forwarded-host": "wh.example" };
+const JSON_HDR = { "content-type": "application/json", ...HOST };
+
+async function issueCode(app: ReturnType<typeof createApp>): Promise<string> {
+  const res = await app.request("https://wh.example/v1/register-url", { headers: HOST });
+  expect(res.status).toBe(200);
+  const { code } = (await res.json()) as { code: string };
+  return code;
+}
+
+function exchange(app: ReturnType<typeof createApp>, code: string) {
+  return app.request("https://wh.example/v1/exchange", {
+    method: "POST",
+    headers: JSON_HDR,
+    body: JSON.stringify({ code }),
+  });
+}
 
 async function bindHtml(query = ""): Promise<string> {
   const ctx = makeContext({ hmacSecret: secret }); // tokenvaultFrontendUrl = https://tokenvault.test
@@ -45,5 +64,54 @@ describe("bind page frontend resolution", () => {
   it("rejects a malformed tv param and falls back to the default", async () => {
     const html = await bindHtml("?tv=not-a-url");
     expect(html).toContain("https://tokenvault.test/vault/webhook-bind");
+  });
+});
+
+describe("bind code exchange — durable across isolates", () => {
+  // The Workers bug: /bind issues a code on one isolate, TV calls /v1/exchange on
+  // another. Two apps sharing one storage model that — the second must consume the
+  // code the first issued. (With the old in-memory map this failed → "code expired".)
+  it("a code issued on one app instance is consumable on another sharing storage", async () => {
+    const ctx = makeContext({ hmacSecret: secret });
+    const issuer = createApp(ctx, [exchangeModule()]); // "isolate A"
+    const consumer = createApp(ctx, [exchangeModule()]); // "isolate B" — same storage
+
+    const code = await issueCode(issuer);
+    const res = await exchange(consumer, code);
+
+    expect(res.status).toBe(200);
+    const data = (await res.json()) as { hmacSecret: string };
+    expect(typeof data.hmacSecret).toBe("string");
+    expect(data.hmacSecret.length).toBeGreaterThan(0);
+  });
+
+  it("a code is single-use (second exchange is rejected)", async () => {
+    const ctx = makeContext({ hmacSecret: secret });
+    const app = createApp(ctx, [exchangeModule()]);
+
+    const code = await issueCode(app);
+    expect((await exchange(app, code)).status).toBe(200);
+    expect((await exchange(app, code)).status).toBe(410);
+  });
+
+  it("an unknown code is rejected", async () => {
+    const ctx = makeContext({ hmacSecret: secret });
+    const app = createApp(ctx, [exchangeModule()]);
+    expect((await exchange(app, "never-issued")).status).toBe(410);
+  });
+});
+
+describe("bind page — setup required when no seed", () => {
+  it("renders the seed-setup page (503) instead of failing opaquely", async () => {
+    const ctx = makeContext({ hmacSecret: secret });
+    ctx.secrets = seedDerivedSecrets(undefined); // unconfigured: no TV_WEBHOOK_SEED
+    const app = createApp(ctx, [exchangeModule()]);
+
+    const res = await app.request("https://wh.example/bind", { headers: HOST });
+    expect(res.status).toBe(503);
+    const html = await res.text();
+    expect(html).toContain("Setup required");
+    expect(html).toContain("TV_WEBHOOK_SEED");
+    expect(html).not.toContain("Connect to Token Vault</a>"); // no bind button yet
   });
 });

@@ -1,0 +1,224 @@
+# Deploy & Bind the Token Vault Webhook on Cloudflare Workers — End-to-End
+
+This walks you from zero to a **bound, working** Token Vault webhook running on
+Cloudflare Workers, using the one-click **Deploy to Workers** button.
+
+The webhook is Token Vault's **data plane** — the credential custodian. It holds
+(and optionally encrypts) the credentials and makes the upstream API calls. Token
+Vault (the control plane) holds identities, grants, and policies but **never sees
+your credential plaintext**. AES-256 encryption keys and the HMAC signing secret
+are HKDF-derived in memory from a single seed you set after deploy; nothing
+secret is ever written to disk or to Token Vault.
+
+```
+Agent ──▶ Token Vault (control plane)         You deploy THIS:
+            • validates API key + policies      Cloudflare Worker (data plane)
+            • signs a short-lived ticket    ──▶   • holds credentials (in KV/D1)
+            • 307-redirects to the webhook        • returns them to the agent
+                                                   • makes upstream API calls
+```
+
+---
+
+## What you need
+
+- A **Cloudflare account** (free tier is fine).
+- A **Token Vault instance** to bind to. This tutorial uses the **dev** instance
+  `https://tokenvault.one`. (For production it would be `https://tokenvault.uk`.)
+- ~10 minutes. No local tooling required for the button path; the optional CLI
+  path needs Node 18+.
+
+> **Heads-up about the frontend URL.** The template ships with
+> `TOKENVAULT_FRONTEND_URL = https://tokenvault.uk` (production). To bind to
+> **dev**, you must either pass `?tv=https://tokenvault.one` on the bind link
+> (Step 4 — the onboarding screen does this for you) **or** override the variable
+> on the worker (Step 3b). Don't skip this, or your one-time code gets sent to the
+> wrong Token Vault.
+
+---
+
+## Step 1 — Deploy the worker (the button)
+
+1. Open the Token Vault webhook onboarding screen (on **tokenvault.one**), or use
+   the **Deploy to Workers** button in the webhook example's README. Cloudflare
+   forks the repo into your account and opens the setup wizard.
+
+2. **Create the private Git repo** when prompted — this is the copy Cloudflare
+   builds from.
+
+3. **Select KV namespace.** The template declares a **single** KV namespace
+   (binding `KV`) that backs both replay protection and credential storage. The
+   wizard shows one KV step:
+   - **First time:** choose **Create new**. Cloudflare provisions one namespace and
+     writes its id into your deployed config.
+   - **Re-deploying, or a leftover `tv-webhook` namespace already exists** (e.g.
+     from an earlier failed attempt): choose the **existing** namespace instead of
+     "Create new". The wizard names new namespaces after the worker (`tv-webhook`),
+     so creating a second one with the same name fails with *"already exists"*.
+     Selecting the existing one avoids that. (Tip: delete stale `tv-webhook`
+     namespaces under **Workers & Pages → KV** for a clean slate.)
+
+4. **Variables.** You can leave these for now. `TOKENVAULT_FRONTEND_URL` defaults
+   to production — we handle dev in Step 3/4.
+
+5. Click **Deploy**. When it finishes you get a URL like:
+   ```
+   https://tv-webhook.<your-subdomain>.workers.dev
+   ```
+   Copy it. That's your webhook base URL for the rest of the tutorial.
+
+> The "Deploy to Workers" version pulls the `webhook-ts-core` branch when launched
+> from the dev onboarding screen, so you're testing the in-development webhook
+> against dev — production stays on `main`.
+
+---
+
+## Step 2 — Set the seed secret (required)
+
+The webhook **cannot bind** until `TV_WEBHOOK_SEED` exists — it's the root value
+the AES key + HMAC secret are derived from. Set it as a **Secret** (encrypted,
+non-readable), never a plaintext variable.
+
+**Option A — Dashboard (matches the button workflow):**
+
+1. Workers & Pages → your worker → **Settings** → **Variables and Secrets**.
+2. **Add variable** → Type **Secret** → Name `TV_WEBHOOK_SEED`.
+3. Value: a fresh 32-byte hex. Generate one in any terminal:
+   ```bash
+   openssl rand -hex 32
+   ```
+4. **Save**. No redeploy needed — the next request picks it up.
+
+**Option B — CLI (never writes the secret to disk):**
+
+```bash
+openssl rand -hex 32 | npx wrangler secret put TV_WEBHOOK_SEED
+```
+
+> **Why this is a manual step and not auto-generated at bind:** the seed is the
+> root key. It must be durable and stable (Token Vault pins `sha256(hmacSecret)`
+> at bind and re-checks it on every request), and a Worker can't write its own
+> *Secret* at runtime. The only runtime-writable durable store is KV — and the
+> design deliberately keeps the root key out of KV (readable at rest) in favour of
+> an encrypted Secret. Putting it in a URL would leak it via history/logs/referrer.
+
+**Optional — `OAUTH_PROVIDERS_JSON`** (only if you want the webhook to refresh
+OAuth tokens autonomously). Same place, as a Secret, value is a JSON map:
+```json
+{ "google": { "clientId": "…", "clientSecret": "…" } }
+```
+
+---
+
+## Step 3 — Point the webhook at the right Token Vault
+
+The webhook redirects the one-time bind code to a Token Vault frontend. Pick one:
+
+**3a — Per-bind (recommended for testing).** Do nothing here; pass
+`?tv=https://tokenvault.one` on the bind link in Step 4. The onboarding screen
+appends this automatically. The webhook validates it (https origin only; http
+allowed for localhost) and shows the destination on the bind page for you to
+confirm.
+
+**3b — Pin it on the worker (set-and-forget for a dedicated dev webhook).**
+Settings → Variables and Secrets → add a **plaintext** variable
+`TOKENVAULT_FRONTEND_URL = https://tokenvault.one`. Now plain `/bind` (no query
+param) redirects to dev.
+
+---
+
+## Step 4 — Bind to Token Vault
+
+This is the pairing handshake. It runs **server-to-server** — Token Vault's
+backend calls your webhook directly — so browser CORS warnings on the onboarding
+screen are expected and don't block anything.
+
+1. Open the bind URL:
+   ```
+   https://tv-webhook.<your-subdomain>.workers.dev/bind?tv=https://tokenvault.one
+   ```
+   (or just `/bind` if you pinned the variable in Step 3b, or click the bind link
+   on the onboarding screen).
+
+2. The bind page shows **"Binding to: `https://tokenvault.one`"**. **Confirm it
+   says `tokenvault.one`, not `tokenvault.uk`** before continuing. (Whoever
+   receives this code can exchange it for the HMAC secret, so this confirmation is
+   your anti-phishing check.)
+
+3. Continue. The webhook mints a one-time code and redirects to
+   `https://tokenvault.one/vault/webhook-bind?code=…`.
+
+4. Token Vault's backend calls your webhook's `POST /v1/exchange`, retrieves the
+   HMAC secret, and verifies `sha256(hmacSecret)` matches the hash the webhook
+   advertised. On success the screen confirms the webhook is **paired**.
+
+You now have a webhook-mode vault wired to dev.
+
+---
+
+## Step 5 — Verify it actually works
+
+1. **Health (optional, from a terminal):**
+   ```bash
+   curl https://tv-webhook.<your-subdomain>.workers.dev/v1/health
+   ```
+   Returns `{ "status": "ok", … , "capabilities": [ … ] }`. The capability list
+   reflects the mounted modules (`storage`, `credential`, `store`, `proxy`,
+   `refresh`, …).
+
+2. **Store a credential** in Token Vault (the UI writes it to your webhook via the
+   `store` capability — it lands in your KV namespace, encrypted if you enabled it,
+   never on Token Vault).
+
+3. **Create an agent**, grant it that token, and have it call:
+   ```
+   GET https://tokenvault.one/api/agents/credentials?service=<name>
+   ```
+   with its `tvagent_…` key. Token Vault validates the key + policies, then
+   **307-redirects** the agent to your webhook's `/v1/credential` with a signed
+   ticket; your webhook returns the credential straight to the agent. Token Vault
+   never touches the bytes.
+
+If the agent gets its credential, the full control-plane → data-plane round trip
+is working.
+
+---
+
+## Troubleshooting
+
+| Symptom | Cause & fix |
+|---|---|
+| Wizard: **"Cannot provision a KV Namespace … already exists"** | A `tv-webhook` KV namespace is left over from a prior attempt. In the KV step pick the **existing** namespace, or delete stale ones under Workers & Pages → KV, then retry. |
+| Onboarding: **"Can't verify from browser (CORS), but URL looks valid"** | Expected. The browser can't read the webhook cross-origin; binding is server-to-server. Proceed. |
+| Bind page shows **`tokenvault.uk`** (prod) instead of dev | The `?tv=` param is missing/ignored. Use `/bind?tv=https://tokenvault.one`, or set `TOKENVAULT_FRONTEND_URL` (Step 3b). |
+| Bind fails / exchange errors | `TV_WEBHOOK_SEED` isn't set (Step 2). Add it, then rebind. |
+| Bind fails with an **HMAC hash mismatch** | The seed changed between the register-URL and the exchange (e.g. you re-set the secret mid-flow). Set the seed once, then bind. |
+| Agent credential request returns **403 POLICY_DENIED** | A policy (IP allowlist, time window, rate limit, …) blocked it — that's Token Vault working, not the webhook. Check the agent's attached policies. |
+| Credential request **denied at the webhook by IP** | The webhook denies Token Vault's own egress IP on `/v1/credential` etc. (defense-in-depth). That path is for the *agent*, not TV. If you set `TOKENVAULT_IP`/`DENY_IPS`, make sure they only list TV, not your agent. |
+
+---
+
+## Optional configuration
+
+- **D1 instead of KV for storage** — for durable, strongly-consistent refresh
+  writes. Create a D1 database, uncomment the `[[d1_databases]]` block (binding
+  `DB`) in `wrangler.toml`. The runtime auto-selects D1 when `DB` is bound. The
+  `KV` namespace is still required (replay protection always uses it).
+- **Custom domain** — if you front the worker with a domain that rewrites `Host`,
+  set `WEBHOOK_EXTERNAL_URL` so generated URLs are correct.
+- **Extra denylist entries** — `DENY_IPS` / `DENY_ORIGINS` (comma-separated) and
+  `TOKENVAULT_IP` tighten the app-level denylist on credential/store/totp routes.
+
+---
+
+## Recap
+
+1. **Deploy** with the button → one KV namespace, get the `*.workers.dev` URL.
+2. **Set `TV_WEBHOOK_SEED`** (Secret) — required before bind.
+3. **Target the right Token Vault** (dev via `?tv=` or the pinned variable).
+4. **Bind** at `/bind` — confirm the destination, let the server-to-server
+   exchange complete.
+5. **Verify** with a stored credential + an agent fetch.
+
+Your credentials live only in your Cloudflare account; Token Vault stays the
+policy plane and never holds the plaintext.
