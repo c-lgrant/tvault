@@ -94,8 +94,8 @@ button appears — no CLI, no redeploy.
 
 > ⚠️ The seed is stored in KV, **readable to anyone with access to your KV
 > namespace**. Your *credentials* live in D1, so a leak of one store alone can't
-> decrypt — but for production prefer Option 2 (or auto-provision as a Secret at
-> deploy — see Step 2c).
+> decrypt — but for production prefer Option 2 (or the deploy auto-provisions a
+> Secret for you — see Option 3, which runs by default).
 
 ### Option 2 — Workers Secret (hardened, recommended for production)
 
@@ -120,23 +120,23 @@ A `TV_WEBHOOK_SEED` Secret **always takes precedence** over a generated seed.
 > → Option 2 without re-binding, set the Secret to the **same** value (copy it
 > from Workers & Pages → KV → `seed:v1`); the generated copy is then ignored.
 
-### Option 3 (Step 2c) — Auto-provision the seed as a Secret at deploy
+### Option 3 — Auto-provision the seed as a Secret at deploy (default, zero-touch)
 
-The hardened custody of Option 2 with the zero-touch convenience of Option 1: the
-deploy provisions the Secret for you. Set the Workers Builds **deploy command**
-(Settings → Builds) to:
+The hardened custody of Option 2 with the zero-touch convenience of Option 1 —
+and **it runs by itself**, no dashboard config. The repo's `deploy` script *is*
+the provisioning one (`npm run deploy` → `scripts/deploy.sh`), and Workers Builds
+reads `package.json` and runs your `deploy` script automatically. So on the very
+first build the deploy runs, then `scripts/ensure-seed.sh` generates
+`TV_WEBHOOK_SEED` and stores it as a Secret **only if one isn't already set**
+(idempotent — safe to re-run on every push). Nothing for you to set.
 
-```bash
-sh scripts/deploy.sh
-```
-
-It deploys, then runs `scripts/ensure-seed.sh`, which generates `TV_WEBHOOK_SEED`
-and stores it as a Secret **only if one isn't already set** (idempotent — safe to
-re-run on every push). `wrangler secret put` needs **Workers Scripts: Edit**; if
-it fails on auth, add a `CLOUDFLARE_API_TOKEN` build variable with that scope. The
-token lives in **CI, never in the Worker** — a Worker can't set its own Secret at
-runtime. With this, the webhook already has its seed by the time it's reachable,
-so you can skip the `/bind` generate button.
+`wrangler secret put` needs **Workers Scripts: Edit**. If the build's wrangler
+token has it, the seed is a Secret before the webhook is even reachable and you
+can skip both buttons above. If it doesn't, `ensure-seed` is **non-fatal** — the
+deploy still succeeds and you fall back to Option 1's KV button on `/bind`. To
+force the Secret path, add a `CLOUDFLARE_API_TOKEN` build variable (Workers
+Scripts: Edit) under Settings → Builds → Variables and Secrets. The token lives
+in **CI, never in the Worker** — a Worker can't set its own Secret at runtime.
 
 **Optional — `OAUTH_PROVIDERS_JSON`** (only if you want the webhook to refresh
 OAuth tokens autonomously). Same place, as a Secret, value is a JSON map:

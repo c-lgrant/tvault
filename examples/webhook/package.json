@@ -7,8 +7,8 @@
     "dev:node": "tsx watch src/runtime/node.ts",
     "dev:worker": "wrangler dev src/runtime/worker.ts",
     "build": "tsc --noEmit && wrangler deploy --dry-run",
-    "deploy": "wrangler deploy src/runtime/worker.ts",
-    "deploy:auto": "sh scripts/deploy.sh",
+    "deploy": "sh scripts/deploy.sh",
+    "deploy:plain": "wrangler deploy src/runtime/worker.ts",
     "ensure-seed": "sh scripts/ensure-seed.sh",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"

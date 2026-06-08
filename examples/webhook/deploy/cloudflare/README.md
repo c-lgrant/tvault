@@ -111,36 +111,31 @@ fails until you **re-bind**. To move generated → Secret without re-binding, se
 the Secret to the *same* value (copy it from Workers & Pages → KV → `seed:v1`),
 then the generated copy is ignored.
 
-### Auto-provision the seed as a Secret at deploy (recommended)
+### Auto-provision the seed as a Secret at deploy (zero-touch — default)
 
-Best of both worlds — a **real encrypted Secret**, set with **no manual step**.
-`scripts/deploy.sh` runs `wrangler deploy`, then `scripts/ensure-seed.sh`, which
-mints a seed and stores it as `TV_WEBHOOK_SEED` **only if one isn't already set**
-(idempotent — it never rotates an existing seed, so re-running on every push is
-safe). Locally:
+Best of both worlds — a **real encrypted Secret**, set with **no manual step and
+no dashboard config**. The canonical `deploy` script *is* the seed-provisioning
+one: `npm run deploy` → `scripts/deploy.sh` runs `wrangler deploy`, then
+`scripts/ensure-seed.sh`, which mints a seed and stores it as `TV_WEBHOOK_SEED`
+**only if one isn't already set** (idempotent — it never rotates an existing seed,
+so re-running on every push is safe).
 
-```bash
-npm run deploy:auto
-```
+**Workers Builds picks this up automatically.** Cloudflare reads `package.json`
+and pre-populates the build/deploy fields from your `build` and `deploy` scripts —
+so the Deploy-to-Workers flow runs `npm run deploy` (i.e. `scripts/deploy.sh`)
+without you touching the dashboard. No "deploy command" to set by hand.
 
-For the **Deploy-to-Workers / Workers Builds** flow, set the project's **deploy
-command** (Settings → Builds) to:
-
-```bash
-sh scripts/deploy.sh
-```
-
-`wrangler secret put` needs **Workers Scripts: Edit**. Workers Builds may already
-authorize it; if `ensure-seed` fails on auth, add a `CLOUDFLARE_API_TOKEN` build
-variable (Workers Scripts: Edit) under Settings → Builds → Variables and Secrets.
+`wrangler secret put` needs **Workers Scripts: Edit**. If the build's wrangler
+token has it, the seed lands as a Secret on the first build and you can skip the
+`/bind` "Generate & save" button entirely. If it doesn't, `ensure-seed` is
+**non-fatal** — the deploy still succeeds and you fall back to the KV path on
+`/bind`. To force the Secret path, add a `CLOUDFLARE_API_TOKEN` build variable
+(Workers Scripts: Edit) under Settings → Builds → Variables and Secrets.
 
 > The token lives in **CI only — never in the Worker**. A Worker can't set its own
 > Secret at runtime (Secrets are deploy-time, read-only bindings; setting one is a
 > privileged API call). Doing it from the build keeps that privilege in CI, where
 > it belongs, and gives you Secret-grade custody without the KV fallback.
-
-With this in place you can skip the `/bind` "Generate & save" button entirely —
-the webhook already has its seed as a Secret by the time it's reachable.
 
 ## Logs & traces (observability)
 
