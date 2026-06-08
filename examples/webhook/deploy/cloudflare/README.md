@@ -12,11 +12,16 @@ account and walks you through setup.
 
 What to expect during the wizard:
 
-1. **KV namespaces are auto-provisioned.** `wrangler.toml` declares `REPLAY` and
-   `TOKENS` with default placeholder IDs in real (hex) namespace-id format, so
-   Cloudflare creates a **fresh, uniquely-named namespace for each** and rewrites
-   the IDs in the deployed config. A new namespace is made every deploy, so
-   **repeat clicks never collide** ("already exists"). No prompts to select.
+1. **One KV namespace.** `wrangler.toml` declares a single `KV` binding (it backs
+   both replay protection and credential storage). The wizard shows one
+   **"Select KV namespace"** step:
+   - **First deploy:** choose **Create new** — Cloudflare makes the namespace and
+     rewrites the id in the deployed config.
+   - **Re-deploying** (or if a leftover `tv-webhook` namespace exists from an
+     earlier attempt): choose the **existing** namespace instead of creating a new
+     one. The wizard names new namespaces after the worker (`tv-webhook`), so
+     "Create new" a second time fails with *"already exists"* — selecting the
+     existing one avoids that.
 2. **Deploy** finishes and gives you a `https://<name>.<account>.workers.dev` URL.
 
 Then finish setup (the button does **not** do these):
@@ -38,9 +43,8 @@ Then finish setup (the button does **not** do these):
 # 1. Authenticate
 wrangler login
 
-# 2. Create the two KV namespaces, then paste the returned IDs into wrangler.toml
-wrangler kv namespace create REPLAY
-wrangler kv namespace create TOKENS
+# 2. Create the KV namespace, then paste the returned id into wrangler.toml
+wrangler kv namespace create KV
 
 # 3. Set the seed secret (required). OAUTH_PROVIDERS_JSON is optional — only
 #    needed for autonomous OAuth refresh (/v1/refresh-notify).
@@ -57,9 +61,10 @@ Non-secret config (`TOKENVAULT_FRONTEND_URL`, optional `TOKENVAULT_IP`,
 ## D1 instead of KV for tokens (optional)
 
 KV is the default for credential storage. For durable, strongly-consistent
-refresh writes, use a D1 database instead: create it, uncomment the
-`[[d1_databases]]` block in `wrangler.toml` (binding `DB`), and drop the `TOKENS`
-KV binding. The runtime picks D1 automatically when a `DB` binding is present.
+refresh writes, use a D1 database instead: create it and uncomment the
+`[[d1_databases]]` block in `wrangler.toml` (binding `DB`). The runtime picks D1
+automatically when a `DB` binding is present. The `KV` namespace is still
+required either way — replay protection always uses it.
 
 ## Post-deploy bind URL
 

@@ -78,9 +78,8 @@ On Workers the AES key + HMAC secret are HKDF-derived from a single seed secret
 
 ```bash
 wrangler login
-wrangler kv namespace create REPLAY
-wrangler kv namespace create TOKENS        # or configure a D1 'DB' binding
-# put the returned IDs into wrangler.toml, then:
+wrangler kv namespace create KV            # backs replay + storage; or add a D1 'DB' for storage
+# put the returned id into wrangler.toml, then:
 openssl rand -hex 32 | wrangler secret put TV_WEBHOOK_SEED
 npm run deploy
 ```

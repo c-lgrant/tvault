@@ -16,39 +16,34 @@ TOKENVAULT_FRONTEND_URL = "https://tokenvault.uk"
 # TOKENVAULT_IP = ""
 # DENY_IPS / DENY_ORIGINS — extra comma-separated denylist entries.
 
-# ── KV namespaces ─────────────────────────────────────────────────────────────
-# This webhook needs TWO KV namespaces: REPLAY (replay protection) and TOKENS
-# (credential storage).
+# ── KV namespace ──────────────────────────────────────────────────────────────
+# ONE KV namespace backs everything: replay protection (request IDs + ticket
+# nonces) AND credential storage. The keys never collide — replay uses `rid:`/
+# `nonce:` prefixes, storage uses `collection:key`.
 #
-# The `id` values below are DEFAULT PLACEHOLDERS in real namespace-id format
-# (32 hex chars), matching Cloudflare's own deploy-button templates. They are
-# NOT real namespaces — do not expect them to resolve.
+# Why one namespace and not two? The "Deploy to Cloudflare" button names every
+# new KV namespace after the worker (`tv-webhook`). Two bindings would both ask
+# to create `tv-webhook` and the second would fail with "already exists". A single
+# binding sidesteps that — the wizard provisions exactly one namespace.
 #
-# Deploying with the "Deploy to Cloudflare" button?
-#   Cloudflare's provisioner sees these bindings, PROVISIONS A FRESH namespace
-#   for each (with a unique auto-generated name + new id) and rewrites these ids
-#   in the deployed config. Because a new namespace is created every time, repeat
-#   deploys do NOT collide. (This only works because the placeholders are in
-#   valid hex-id format; a non-hex string makes the provisioner fall back to
-#   naming the namespace after the worker, which then collides on re-deploy.)
+# `id` is a DEFAULT PLACEHOLDER in real namespace-id format (32 hex chars). It is
+# NOT a real namespace — do not expect it to resolve.
 #
-# Deploying manually with the CLI? Create real namespaces and paste their ids:
-#   wrangler kv namespace create REPLAY
-#   wrangler kv namespace create TOKENS
-
-# Replay protection (request IDs + ticket nonces). Required.
+# One-click deploy (button): the wizard shows a single "Select KV namespace" step.
+#   - First deploy: pick "Create new" — it makes one namespace and rewrites this id.
+#   - Re-deploying (or if a leftover `tv-webhook` namespace exists from a previous
+#     attempt): pick the EXISTING namespace instead of creating a new one, to
+#     avoid an "already exists" error.
+#
+# Manual deploy (CLI): create a namespace and paste its id:
+#   wrangler kv namespace create KV
 [[kv_namespaces]]
-binding = "REPLAY"
+binding = "KV"
 id = "2a6702ef5db29638df2eea99422d0f22"
 
-# Credential storage. Use this KV namespace OR a D1 'DB' (further down) — not
-# both. KV is the simplest; D1 gives durable, strongly-consistent storage for
-# refresh writes.
-[[kv_namespaces]]
-binding = "TOKENS"
-id = "bbfdc8ee5cbe6087e84cfcb8c7ff34da"
-
-# To use D1 instead of the TOKENS KV namespace, create a database and uncomment:
+# Prefer durable, strongly-consistent storage for refresh writes? Add a D1
+# database and the runtime uses it for credential storage instead of KV (the KV
+# namespace above is still required for replay). Create the DB and uncomment:
 # [[d1_databases]]
 # binding = "DB"
 # database_name = "tv-webhook"

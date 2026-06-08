@@ -1,7 +1,11 @@
 // Cloudflare Workers entry point. Builds the RuntimeContext from bindings:
 //   - secrets:  seed-derived (HKDF from the TV_WEBHOOK_SEED secret)
-//   - storage:  D1 if a DB binding exists, else KV (TOKENS)
-//   - replay:   KV (REPLAY)
+//   - storage:  D1 if a DB binding exists, else the KV namespace
+//   - replay:   the same KV namespace (request IDs + ticket nonces)
+// One KV namespace backs BOTH storage and replay — their keys never collide
+// (replay uses `rid:`/`nonce:` prefixes, storage uses `collection:key`). Using a
+// single namespace also keeps the one-click deploy simple: the wizard provisions
+// one namespace instead of two same-named ones that collide with each other.
 // The app is built once per isolate and reused across requests.
 
 import type { Hono } from "hono";
@@ -17,11 +21,12 @@ import type { RuntimeContext, StorageAdapter } from "./context.ts";
 export interface Env {
   /** The one persisted secret — AES key + HMAC secret are HKDF-derived from it. */
   TV_WEBHOOK_SEED?: string;
-  /** KV namespace for credential storage (used when no D1 binding is present). */
-  TOKENS?: KVNamespace;
-  /** KV namespace for replay protection (request IDs + ticket nonces). */
-  REPLAY?: KVNamespace;
-  /** Optional D1 database — preferred over KV for durable, consistent storage. */
+  /**
+   * KV namespace backing replay protection (always) and credential storage
+   * (when no D1 binding is present). Required.
+   */
+  KV?: KVNamespace;
+  /** Optional D1 database — preferred over KV for durable credential storage. */
   DB?: D1Database;
   /** String config vars are read by configFromEnv. */
   [key: string]: unknown;
@@ -30,21 +35,21 @@ export interface Env {
 let appPromise: Promise<Hono<AppEnv>> | null = null;
 
 async function buildApp(env: Env): Promise<Hono<AppEnv>> {
-  let storage: StorageAdapter;
-  if (env.DB) {
-    storage = await D1StorageAdapter.create(env.DB);
-  } else if (env.TOKENS) {
-    storage = new KvStorageAdapter(env.TOKENS);
-  } else {
-    throw new Error("No storage binding: configure a D1 'DB' or KV 'TOKENS' binding");
+  if (!env.KV) {
+    throw new Error(
+      "No 'KV' namespace bound — required for replay protection (and for storage unless a D1 'DB' is bound)",
+    );
   }
-  if (!env.REPLAY) throw new Error("No 'REPLAY' KV binding configured");
+
+  const storage: StorageAdapter = env.DB
+    ? await D1StorageAdapter.create(env.DB)
+    : new KvStorageAdapter(env.KV);
 
   const ctx: RuntimeContext = {
     config: configFromEnv((k) => (typeof env[k] === "string" ? (env[k] as string) : undefined)),
     secrets: seedDerivedSecrets(env.TV_WEBHOOK_SEED),
     storage,
-    replay: new KvReplayGuard(env.REPLAY),
+    replay: new KvReplayGuard(env.KV),
   };
   return createApp(ctx, allModules());
 }
