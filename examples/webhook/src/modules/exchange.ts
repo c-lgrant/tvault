@@ -76,6 +76,30 @@ function resolveFrontend(c: Context<AppEnv>, config: WebhookConfig): string {
   return config.tokenvaultFrontendUrl;
 }
 
+// Best-effort deep link into the Cloudflare dashboard for THIS worker's settings,
+// where TV_WEBHOOK_SEED is set. The worker name is the first label of a
+// `*.workers.dev` host; behind a custom domain we can't know it, so fall back to
+// the Workers & Pages list. `:account` is a dashboard placeholder Cloudflare
+// resolves to the signed-in account, so we don't need the account id.
+function workerNameFromHost(externalUrl: string): string | null {
+  try {
+    const host = new URL(externalUrl).hostname;
+    if (host.endsWith(".workers.dev")) {
+      const label = host.split(".")[0];
+      return label && label !== "workers" ? label : null;
+    }
+  } catch {
+    /* malformed URL → no name */
+  }
+  return null;
+}
+
+function dashboardSettingsUrl(workerName: string | null): string {
+  return workerName
+    ? `https://dash.cloudflare.com/?to=/:account/workers/services/view/${workerName}/production/settings`
+    : "https://dash.cloudflare.com/?to=/:account/workers-and-pages";
+}
+
 function buildRegUrl(frontend: string, code: string, externalUrl: string, hmacHash: string): string {
   const webhookUrlB64 = base64Encode(utf8(externalUrl));
   const qs = new URLSearchParams({ code, webhook_url: webhookUrlB64, hmac_hash: hmacHash });
@@ -111,8 +135,14 @@ receives a one-time code that completes the key exchange.</p>
 </body></html>`;
 
 // Shown when the seed isn't set yet: the webhook can't derive its HMAC secret, so
-// binding is impossible until the operator provisions TV_WEBHOOK_SEED.
-const SETUP_PAGE = (externalUrl: string) => `<!doctype html>
+// binding is impossible until the operator provisions TV_WEBHOOK_SEED. Deep-links
+// to this worker's dashboard settings and bakes `--name` into the CLI command
+// (both derived from the worker name) so neither path needs the operator to know
+// the worker name or be in the project directory.
+const SETUP_PAGE = (externalUrl: string, workerName: string | null) => {
+  const settingsUrl = dashboardSettingsUrl(workerName);
+  const nameFlag = workerName ? ` --name ${workerName}` : "";
+  return `<!doctype html>
 <html lang="en"><head>${PAGE_HEAD}</head><body>
 <h1>Setup required — set the seed secret</h1>
 <p>This webhook (<code>${externalUrl}</code>) can't bind yet. It needs a single
@@ -123,16 +153,18 @@ memory and never persisted.</p>
 <strong>Set it as a Secret, not a plaintext variable.</strong> The seed is the
 root key — keep it write-only and out of your repo.
 </div>
+<a class="btn" href="${settingsUrl}" target="_blank" rel="noopener">Open this Worker's Settings →</a>
 <h2>Option A — Dashboard</h2>
 <ol>
-<li>Workers &amp; Pages → this worker → <strong>Settings → Variables and Secrets</strong>.</li>
+<li>The button above opens the dashboard${workerName ? " on this worker's <strong>Settings</strong>" : " — open <strong>Workers &amp; Pages</strong>, pick this worker, then <strong>Settings</strong>"} → <strong>Variables and Secrets</strong>.</li>
 <li><strong>Add variable</strong>, type <strong>Secret</strong>, name <code>TV_WEBHOOK_SEED</code>.</li>
 <li>Value: a fresh 32-byte hex (generate with <code>openssl rand -hex 32</code>). Save.</li>
 </ol>
 <h2>Option B — CLI</h2>
-<pre>openssl rand -hex 32 | npx wrangler secret put TV_WEBHOOK_SEED</pre>
-<p>Then <a href="">reload this page</a> and the Connect button will appear.</p>
+<pre>openssl rand -hex 32 | npx wrangler secret put TV_WEBHOOK_SEED${nameFlag}</pre>
+${workerName ? "" : `<p>Run from your project directory (where <code>wrangler.toml</code> lives), or add <code>--name &lt;worker-name&gt;</code> as shown in the dashboard.</p>\n`}<p>Then <a href="">reload this page</a> and the Connect button will appear.</p>
 </body></html>`;
+};
 
 export function exchangeModule(): FeatureModule {
   return {
@@ -182,7 +214,7 @@ export function exchangeModule(): FeatureModule {
         }
         // No seed yet → explain how to provision it instead of failing opaquely.
         if (!(await ctx.secrets.isConfigured())) {
-          return c.html(SETUP_PAGE(externalUrl), 503);
+          return c.html(SETUP_PAGE(externalUrl, workerNameFromHost(externalUrl)), 503);
         }
         const frontend = resolveFrontend(c, ctx.config);
         const code = await issueCode(ctx.storage);

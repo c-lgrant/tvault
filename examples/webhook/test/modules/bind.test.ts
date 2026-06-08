@@ -114,4 +114,34 @@ describe("bind page — setup required when no seed", () => {
     expect(html).toContain("TV_WEBHOOK_SEED");
     expect(html).not.toContain("Connect to Token Vault</a>"); // no bind button yet
   });
+
+  it("deep-links to the worker's dashboard settings and bakes --name for a *.workers.dev host", async () => {
+    const ctx = makeContext({ hmacSecret: secret });
+    ctx.secrets = seedDerivedSecrets(undefined);
+    const app = createApp(ctx, [exchangeModule()]);
+
+    const res = await app.request("https://tv-webhook.acme.workers.dev/bind", {
+      headers: { "x-forwarded-host": "tv-webhook.acme.workers.dev" },
+    });
+    expect(res.status).toBe(503);
+    const html = await res.text();
+    // worker name derived from the host → targeted deep link + --name flag
+    expect(html).toContain(
+      "dash.cloudflare.com/?to=/:account/workers/services/view/tv-webhook/production/settings",
+    );
+    expect(html).toContain("npx wrangler secret put TV_WEBHOOK_SEED --name tv-webhook");
+  });
+
+  it("falls back to the Workers & Pages list when the host is not *.workers.dev", async () => {
+    const ctx = makeContext({ hmacSecret: secret });
+    ctx.secrets = seedDerivedSecrets(undefined);
+    const app = createApp(ctx, [exchangeModule()]);
+
+    const res = await app.request("https://wh.example/bind", { headers: HOST });
+    expect(res.status).toBe(503);
+    const html = await res.text();
+    expect(html).toContain("dash.cloudflare.com/?to=/:account/workers-and-pages");
+    // unknown name → the CLI command carries no flag (prose still suggests --name)
+    expect(html).toContain("put TV_WEBHOOK_SEED</pre>");
+  });
 });
