@@ -28,9 +28,9 @@ src/
     refreshNotify, tvRefresh
     interceptors/   # totp (capability + code gen), gcpSa (SA → access token)
   adapters/
-    storage/        # fs (Node) | kv, d1 (Workers)
+    storage/        # fs (Node) | d1 (Workers)
     secrets/        # fileSecret (Node) | seedDerived (Workers, HKDF)
-    replay/         # memory (Node) | kv (Workers)
+    replay/         # memory (Node) | cache (Workers, per-colo Cache API)
   runtime/
     config.ts       # shared env → WebhookConfig
     node.ts         # @hono/node-server entry
@@ -74,23 +74,23 @@ npm run dev:node        # http://127.0.0.1:8080
 ## Deploy to Cloudflare Workers
 
 On Workers the AES key + HMAC secret are HKDF-derived in memory from one root
-seed, stable across redeploys. Provide the seed either as a `TV_WEBHOOK_SEED`
-Secret (hardened) or by clicking **Generate & save** on the `/bind` page (stored
-in KV — convenient for dev; a Secret always wins). Seed lives in KV, credentials
-in D1, so a leak of one store alone can't decrypt. See
-[`deploy/cloudflare/README.md`](deploy/cloudflare/README.md#seed-custody--the-security-tradeoff)
-for the full tradeoff.
+seed (`TV_WEBHOOK_SEED`, a Workers Secret), stable across redeploys and never
+persisted. Credentials live in **D1**; replay protection uses the per-colo
+**Cache API** (no binding). The one-click button auto-provisions the D1 database
+(its `database_id` is omitted from `wrangler.toml`, so Wrangler creates it on the
+first deploy and reuses it on every push) and the seed Secret. CLI:
 
 ```bash
 wrangler login
-wrangler kv namespace create KV            # replay protection (required)
-wrangler d1 create tv-webhook             # credential storage
-# put the returned ids into wrangler.toml (KV id + D1 database_id), then:
+# Set the seed (encrypted, write-only Secret):
 openssl rand -hex 32 | wrangler secret put TV_WEBHOOK_SEED
+# Deploy — with database_id omitted, this auto-provisions the D1 database on the
+# first run and reuses it thereafter (no id to paste into wrangler.toml):
 npm run deploy
 ```
 
-See [`deploy/cloudflare/README.md`](deploy/cloudflare/README.md) for detail.
+See [`deploy/cloudflare/README.md`](deploy/cloudflare/README.md) and
+[`deploy/cloudflare/TUTORIAL.md`](deploy/cloudflare/TUTORIAL.md) for detail.
 
 ## Tests
 

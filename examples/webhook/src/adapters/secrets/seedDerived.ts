@@ -3,7 +3,7 @@
 // A single `wrangler secret put TV_WEBHOOK_SEED` is the ONLY persisted secret.
 // The AES-256 key, the HMAC secret, and the webhook ID are all HKDF-derived
 // from it in memory (distinct info labels → independent material), never written
-// to KV/D1, and stable across redeploys because the seed is stable. Token Vault
+// to disk or any store, and stable across redeploys because the seed is. Token Vault
 // only ever learns the HMAC secret, and only through the one-time /v1/exchange
 // handshake — never the encryption key.
 
@@ -30,10 +30,8 @@ async function sha256Hex(b: Bytes): Promise<string> {
 
 /**
  * HKDF the AES key, HMAC secret, webhook id, and hmac-secret-hash from a seed.
- * Shared by the env-Secret provider here and the KV-stored provider so both
- * derive identical material from the same seed — switching custody (Secret ⇄
- * stored) with the SAME seed value yields the SAME hmacSecret, so a prior bind
- * stays valid. A DIFFERENT seed → different hmacSecret → re-bind required.
+ * The SAME seed value always yields the SAME hmacSecret, so the bind stays valid
+ * across redeploys. A DIFFERENT seed → different hmacSecret → re-bind required.
  */
 export async function deriveSecrets(seed: string): Promise<Derived> {
   const seedBytes = utf8(seed);

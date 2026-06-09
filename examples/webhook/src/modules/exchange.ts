@@ -6,8 +6,8 @@
 // the register URL (vault.py:257-263), so the secret + its published hash must
 // be consistent — both come from the SecretProvider here.
 //
-// One-time codes are persisted via ctx.storage (KV on Workers, D1 if bound, fs
-// on Node) — NOT an in-memory map. The bind→exchange pair is human-in-the-loop:
+// One-time codes are persisted via ctx.storage (D1 on Workers, fs on Node) —
+// NOT an in-memory map. The bind→exchange pair is human-in-the-loop:
 // the operator opens /bind on one request and TV calls /v1/exchange on a later,
 // separate request. On Workers those land on different isolates, so an in-memory
 // code is invisible to the exchange and TV reports "code expired or already
@@ -127,15 +127,7 @@ const PAGE_HEAD = `<meta charset="utf-8">
   ol{padding-left:1.2rem}
 </style>`;
 
-// `seedSource` ("secret" hardened | "stored" convenience) drives a one-line
-// at-rest note so the operator can see, at bind time, where their root key lives.
-const BIND_PAGE = (
-  regUrl: string,
-  externalUrl: string,
-  frontend: string,
-  seedSource: "secret" | "stored",
-  settingsUrl: string,
-) => `<!doctype html>
+const BIND_PAGE = (regUrl: string, externalUrl: string, frontend: string) => `<!doctype html>
 <html lang="en"><head>${PAGE_HEAD}</head><body>
 <h1>Connect this webhook to Token Vault</h1>
 <p>This webhook holds your credentials. Click below to complete the secure key
@@ -144,60 +136,31 @@ exchange — your encryption key never leaves this server.</p>
 <p class="dest">Binding to: <code>${frontend}</code><br>
 Only continue if this is your own Token Vault instance — the site you continue to
 receives a one-time code that completes the key exchange.</p>
-${
-  seedSource === "stored"
-    ? `<div class="warn"><strong>Seed is stored in KV (convenience mode).</strong>
-Readable to anyone with access to your KV namespace. For stronger at-rest
-protection set <code>TV_WEBHOOK_SEED</code> as a
-<a href="${settingsUrl}" target="_blank" rel="noopener">Workers Secret</a> —
-but do it <strong>before you bind below</strong>: changing the seed after binding
-changes the HMAC secret and you'll have to re-bind. To switch without re-binding,
-set the Secret to the <em>same</em> value (read it from Workers &amp; Pages → KV →
-key <code>seed:v1</code>).</div>`
-    : `<p class="muted">Seed source: Workers Secret (hardened).</p>`
-}
+<p class="muted">Seed source: Workers Secret (hardened) — HKDF-derived in memory, never persisted.</p>
 <a class="btn" href="${regUrl}">Connect to Token Vault</a>
 </body></html>`;
 
 // Shown when no seed exists yet: the webhook can't derive its HMAC secret, so it
-// can't bind. Offers two clearly-contrasted paths — a one-click generate-&-save
-// (only when the provider supports runtime provisioning) and the hardened Workers
-// Secret — plus the consequence of changing the seed after a bind. The dashboard
-// deep link + `--name` are derived from the worker's *.workers.dev host so the
-// operator needn't know the worker name or be in the project directory.
-const SETUP_PAGE = (
-  externalUrl: string,
-  workerName: string | null,
-  canGenerate: boolean,
-  tvParam: string | null,
-) => {
+// can't bind. The seed is set as a Workers Secret (the deploy script auto-
+// provisions it when the build token allows; otherwise set it by hand). The
+// dashboard deep link + `--name` are derived from the worker's *.workers.dev
+// host so the operator needn't know the worker name or be in the project dir.
+const SETUP_PAGE = (externalUrl: string, workerName: string | null) => {
   const settingsUrl = dashboardSettingsUrl(workerName);
   const nameFlag = workerName ? ` --name ${workerName}` : "";
-  const initAction = tvParam ? `/bind/init-seed?tv=${encodeURIComponent(tvParam)}` : "/bind/init-seed";
-  const generateBlock = canGenerate
-    ? `<h2>Option 1 — Generate &amp; save (one-click)</h2>
-<p>Let this webhook mint a random 32-byte seed and store it, so you can bind
-right away with no CLI step.</p>
-<form method="post" action="${initAction}">
-<button class="btn" type="submit">Generate &amp; save seed</button>
-</form>
-<div class="tip"><strong>Where it's stored:</strong> the seed is saved in your
-<strong>KV</strong> namespace (key <code>seed:v1</code>); your <strong>credentials</strong>
-live in <strong>D1</strong>. They're split on purpose — a leak of <em>either</em>
-store alone can't decrypt anything. This is convenient and fine for dev. The
-seed is readable to anyone who can read your KV, so for production prefer Option 2.</div>
-<hr>`
-    : "";
   return `<!doctype html>
 <html lang="en"><head>${PAGE_HEAD}</head><body>
 <h1>Setup required — set the seed</h1>
 <p>This webhook (<code>${externalUrl}</code>) can't bind yet. It needs a single
-root secret before it can derive its encryption key and HMAC secret. Pick one of
-the options below — then reload and the <strong>Connect</strong> button appears.</p>
-${generateBlock}
-<h2>Option ${canGenerate ? "2" : "A"} — Workers Secret (hardened, recommended for production)</h2>
-<p>Set <code>TV_WEBHOOK_SEED</code> as an encrypted, write-only Secret — not
-readable at rest, not in your repo.</p>
+root secret — <code>TV_WEBHOOK_SEED</code> — before it can derive its encryption
+key and HMAC secret. Set it as a Workers Secret, then reload and the
+<strong>Connect</strong> button appears.</p>
+<div class="tip">The deploy script (<code>npm run deploy</code>) auto-provisions
+this Secret on the first deploy when the build token has <strong>Workers Scripts:
+Edit</strong> — so usually there's nothing to do here. Set it manually only if
+that step was skipped.</div>
+<h2>Set it as a Workers Secret</h2>
+<p>An encrypted, write-only Secret — not readable at rest, not in your repo.</p>
 <a class="btn secondary" href="${settingsUrl}" target="_blank" rel="noopener">Open this Worker's Settings →</a>
 <ol>
 <li>The button opens the dashboard${workerName ? " on this worker's <strong>Settings</strong>" : " — open <strong>Workers &amp; Pages</strong>, pick this worker, then <strong>Settings</strong>"} → <strong>Variables and Secrets</strong>.</li>
@@ -208,9 +171,7 @@ readable at rest, not in your repo.</p>
 <pre>openssl rand -hex 32 | npx wrangler secret put TV_WEBHOOK_SEED${nameFlag}</pre>
 ${workerName ? "" : `<p class="muted">Run from your project directory (where <code>wrangler.toml</code> lives), or add <code>--name &lt;worker-name&gt;</code>.</p>\n`}<div class="warn"><strong>Choose before you bind.</strong> The seed is the root
 key: if you change it <em>after</em> binding, the HMAC secret changes, Token
-Vault's pinned hash no longer matches, and every call fails until you re-bind.
-A <code>TV_WEBHOOK_SEED</code> Secret always takes precedence over a generated
-one — set it to the same value to switch custody without re-binding.</div>
+Vault's pinned hash no longer matches, and every call fails until you re-bind.</div>
 <p><a href="">Reload this page</a> once a seed is set.</p>
 </body></html>`;
 };
@@ -261,41 +222,16 @@ export function exchangeModule(): FeatureModule {
         if (!externalUrl) {
           return c.html("<h1>Webhook misconfigured</h1><p>EXTERNAL_URL is not set.</p>", 500);
         }
-        // No seed yet → explain how to provision it instead of failing opaquely.
-        // Offer the one-click generate path only if the provider can self-provision.
+        // No seed yet → explain how to set the TV_WEBHOOK_SEED Secret instead of
+        // failing opaquely.
         if (!(await ctx.secrets.isConfigured())) {
-          const canGenerate = typeof ctx.secrets.provision === "function";
-          return c.html(
-            SETUP_PAGE(externalUrl, workerNameFromHost(externalUrl), canGenerate, c.req.query("tv") ?? null),
-            503,
-          );
+          return c.html(SETUP_PAGE(externalUrl, workerNameFromHost(externalUrl)), 503);
         }
         const frontend = resolveFrontend(c, ctx.config);
         const code = await issueCode(ctx.storage);
         const hash = await ctx.secrets.hmacSecretHash();
         const regUrl = buildRegUrl(frontend, code, externalUrl, hash);
-        const source = (await ctx.secrets.source?.()) ?? "secret";
-        const seedSource = source === "stored" ? "stored" : "secret";
-        return c.html(
-          BIND_PAGE(regUrl, externalUrl, frontend, seedSource, dashboardSettingsUrl(workerNameFromHost(externalUrl))),
-        );
-      });
-
-      // Operator action: generate + save a seed (convenience path) so a fresh
-      // deploy can bind without a CLI step. Refuses to overwrite an existing seed
-      // (a Secret, or an already-generated one) — rotating it would break a bind.
-      // Not a TV-facing /v1 endpoint; only the operator at /bind reaches it.
-      app.post("/bind/init-seed", async (c) => {
-        if (typeof ctx.secrets.provision !== "function") {
-          return c.html(
-            "<h1>Not supported</h1><p>This webhook can't self-provision a seed. Set <code>TV_WEBHOOK_SEED</code> instead.</p>",
-            501,
-          );
-        }
-        await ctx.secrets.provision();
-        // Back to /bind (preserving ?tv=) — now configured → shows Connect.
-        const tv = c.req.query("tv");
-        return c.redirect(tv ? `/bind?tv=${encodeURIComponent(tv)}` : "/bind", 303);
+        return c.html(BIND_PAGE(regUrl, externalUrl, frontend));
       });
     },
   };

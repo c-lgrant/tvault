@@ -16,6 +16,6 @@ set -eu
 cd "$(dirname "$0")/.."
 wrangler deploy src/runtime/worker.ts
 # Seed provisioning is best-effort: if the build's wrangler token lacks Workers
-# Scripts: Edit, the deploy still succeeds and the operator falls back to the
-# /bind "Generate & save" (KV) path. Non-fatal so a missing scope never reds the build.
-sh scripts/ensure-seed.sh || echo "deploy: ensure-seed skipped (no Secret-set permission) — use /bind 'Generate & save' or set TV_WEBHOOK_SEED manually."
+# Scripts: Edit, the deploy still succeeds and the operator sets the seed by hand
+# (the /bind setup page shows how). Non-fatal so a missing scope never reds the build.
+sh scripts/ensure-seed.sh || echo "deploy: ensure-seed skipped (no Secret-set permission) — set TV_WEBHOOK_SEED manually (see the /bind setup page or deploy/cloudflare/README.md)."

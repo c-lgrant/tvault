@@ -16,53 +16,24 @@ TOKENVAULT_FRONTEND_URL = "https://tokenvault.uk"
 # TOKENVAULT_IP = ""
 # DENY_IPS / DENY_ORIGINS — extra comma-separated denylist entries.
 
-# ── KV namespace ──────────────────────────────────────────────────────────────
-# ONE KV namespace backs everything: replay protection (request IDs + ticket
-# nonces) AND credential storage. The keys never collide — replay uses `rid:`/
-# `nonce:` prefixes, storage uses `collection:key`.
-#
-# Why one namespace and not two? The "Deploy to Cloudflare" button names every
-# new KV namespace after the worker (`tv-webhook`). Two bindings would both ask
-# to create `tv-webhook` and the second would fail with "already exists". A single
-# binding sidesteps that — the wizard provisions exactly one namespace.
-#
-# `id` is a DEFAULT PLACEHOLDER in real namespace-id format (32 hex chars). It is
-# NOT a real namespace — do not expect it to resolve.
-#
-# One-click deploy (button): the wizard shows a single "Select KV namespace" step.
-#   - First deploy: pick "Create new" — it makes one namespace and rewrites this id.
-#   - Re-deploying (or if a leftover `tv-webhook` namespace exists from a previous
-#     attempt): pick the EXISTING namespace instead of creating a new one, to
-#     avoid an "already exists" error.
-#
-# Manual deploy (CLI): create a namespace and paste its id:
-#   wrangler kv namespace create KV
-[[kv_namespaces]]
-binding = "KV"
-id = "2a6702ef5db29638df2eea99422d0f22"
-
 # ── D1 database (credential storage) ──────────────────────────────────────────
-# Credentials are stored in D1 (durable, strongly-consistent — better than KV for
-# refresh writes). The runtime auto-selects D1 whenever a `DB` binding is present;
-# the KV namespace above is STILL required (replay protection always uses KV).
-# The `kv` table self-creates on the first request (idempotent CREATE TABLE IF
-# NOT EXISTS in D1StorageAdapter.create) — there is no migration step.
+# Credentials live in D1 — durable and strongly-consistent (read-your-writes,
+# which matters for OAuth refresh). The `kv` table self-creates on the first
+# request (idempotent CREATE TABLE IF NOT EXISTS in D1StorageAdapter.create);
+# there is no migration step. (Replay protection uses the per-colo Cache API —
+# no binding, no daily write quota — so there is NO KV namespace to provision.)
 #
-# `database_id` is a PLACEHOLDER — not a real database. The deploy flow fills it:
-#
-# One-click deploy (button): the wizard shows a "Create D1 database" step (the
-# wizard names new resources after the worker, `tv-webhook`).
-#   - First deploy: pick "Create new" — it provisions one D1 db and rewrites this id.
-#   - Re-deploying (or if a leftover `tv-webhook` db exists): pick the EXISTING db
-#     instead of creating a new one. (A KV namespace and a D1 db may share the name
-#     `tv-webhook` — different resource types, no collision.)
-#
-# Manual deploy (CLI): create the db and paste the returned id:
-#   wrangler d1 create tv-webhook
+# `database_id` is DELIBERATELY OMITTED. Wrangler (>=4.45) auto-provisions the
+# database on first deploy and KEEPS IT LINKED across every later deploy, so a
+# git-push (Workers Builds) redeploy reuses the SAME database — no data loss, and
+# no account-specific id baked into this shared template. Do NOT add a placeholder
+# id: a non-empty `database_id` disables auto-provisioning and points the binding
+# at a database that doesn't exist. (Manual CLI deploy: run `wrangler d1 create
+# tv-webhook` once and either let auto-provisioning link it by name or paste the
+# returned id here.)
 [[d1_databases]]
 binding = "DB"
 database_name = "tv-webhook"
-database_id = "00000000-0000-0000-0000-000000000000"
 
 # ── Observability (Workers Logs + invocation traces) ──────────────────────────
 # Persists structured logs and per-invocation traces, viewable in the dashboard
@@ -72,19 +43,15 @@ database_id = "00000000-0000-0000-0000-000000000000"
 enabled = true
 head_sampling_rate = 1
 
-# ── Secrets / seed ────────────────────────────────────────────────────────────
-# The webhook needs ONE root seed before it can bind. Two ways to provide it:
-#   • Hardened (recommended for prod): set TV_WEBHOOK_SEED as an encrypted Secret
-#     (Worker → Settings → Variables and Secrets, or the CLI below). Write-only,
-#     not readable at rest. A Secret ALWAYS takes precedence over a generated one.
-#   • Convenience (one-click, good for dev): open /bind and click "Generate & save
-#     seed" — the webhook mints a random seed and stores it in KV (key `seed:v1`).
-#     Readable to anyone with KV access; credentials live in D1, so a leak of one
-#     store alone can't decrypt. Choose BEFORE binding: changing the seed after a
-#     bind changes the HMAC secret and forces a re-bind.
-# Set secrets via `wrangler secret put`, never in this file:
-#   TV_WEBHOOK_SEED      — the root seed. AES-256 key + HMAC secret are HKDF-derived
-#                          from it in memory, stable across redeploys. e.g.
-#                          `openssl rand -hex 32 | wrangler secret put TV_WEBHOOK_SEED`.
-#   OAUTH_PROVIDERS_JSON — optional. JSON map provider→{clientSecret,clientId?,tokenUrl?}
+# ── Secret: the root seed ─────────────────────────────────────────────────────
+# The webhook needs ONE root seed before it can bind. The AES-256 key, HMAC
+# secret, and webhook id are all HKDF-derived from it in memory — never persisted,
+# stable across redeploys. Provide it as an encrypted, write-only Worker Secret
+# (never in this file):
+#   openssl rand -hex 32 | wrangler secret put TV_WEBHOOK_SEED
+# The canonical `deploy` script (`npm run deploy` -> scripts/deploy.sh) auto-
+# provisions this Secret on the first deploy when the build token has
+# `Workers Scripts: Edit`, so a git-push deploy is bindable with no manual step.
+# See deploy/cloudflare/README.md.
+#   OAUTH_PROVIDERS_JSON — optional Secret. JSON map provider->{clientSecret,clientId?,tokenUrl?}
 #                          enabling autonomous OAuth refresh (/v1/refresh-notify).

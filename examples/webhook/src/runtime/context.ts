@@ -97,7 +97,7 @@ export interface ListOptions {
 }
 
 /**
- * Low-level key-value storage, swapped per runtime (fs / KV / D1). It is
+ * Low-level key-value storage, swapped per runtime (fs on Node / D1 on Workers). It is
  * deliberately dumb: list-response *shaping* (meta-only projection, sensitive
  * field stripping, audit handling, pagination) lives in the storage module so
  * the security-critical filter cannot diverge between adapters.
