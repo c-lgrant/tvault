@@ -53,7 +53,7 @@ func runTokensList(cmd *cobra.Command, _ []string) error {
 
 var tokensGetCmd = &cobra.Command{
 	Use:               "get <service>",
-	Short:             "Print a credential value (stdout only — safe for $(...))",
+	Short:             "Print a credential value (stdout only — safe for $(...)); supports service.field for composites",
 	Args:              cobra.ExactArgs(1),
 	ValidArgsFunction: completeServices,
 	RunE:              runTokensGet,
@@ -65,10 +65,10 @@ func runTokensGet(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	check, _ := cmd.Flags().GetBool("check")
-	val, err := cc.Client.GetTokenValue(args[0])
+
+	// --check mode: probe for token existence only, no composite resolution.
 	if check {
-		// --check / --exists: presence-only probe. Exit 0 if the token has
-		// a value, 6 (KindEmpty) if it doesn't, never print the secret.
+		_, err := cc.Client.GetTokenValue(args[0])
 		if err == nil {
 			return nil
 		}
@@ -82,8 +82,11 @@ func runTokensGet(cmd *cobra.Command, args []string) error {
 		}
 		return enrich(cmd, cc, err)
 	}
+
+	// Normal get: resolve composite fields/formats.
+	val, err := resolveTokenOutput(cmd, cc, args[0])
 	if err != nil {
-		return enrich(cmd, cc, err)
+		return err
 	}
 	// Use os.Stdout directly: Cobra's cmd.Println writes to OutOrStderr,
 	// which breaks $(tvault tokens get X) capture. The same footgun was
@@ -359,6 +362,7 @@ var tokensStoreTicketCmd = &cobra.Command{
 
 func init() {
 	tokensGetCmd.Flags().Bool("check", false, "exit 0 if the token has a value, 6 if empty; never prints the secret")
+	// Note: --field, --kv, --json are registered as rootCmd.PersistentFlags() in root.go
 	tokensSetCmd.Flags().String("value", "", "new credential value")
 	tokensEditCmd.Flags().String("name", "", "display name")
 	tokensEditCmd.Flags().String("notes", "", "freeform notes")

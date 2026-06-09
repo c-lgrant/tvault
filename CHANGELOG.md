@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Features
+
+* **tokens:** composite token field resolution via `service.field` syntax and `--field`/`--kv` flags ([#pending]())
+
 ## [0.6.0](https://github.com/c-lgrant/tvault/compare/v0.5.0...v0.6.0) (2026-05-18)
 
 
