@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/c-lgrant/tvault/internal/api"
 	"github.com/c-lgrant/tvault/internal/clierr"
 	"github.com/c-lgrant/tvault/internal/config"
 	"github.com/spf13/cobra"
@@ -95,6 +96,8 @@ func Execute() {
 }
 
 func init() {
+	api.DefaultUserAgent = "tvault/" + version
+
 	rootCmd.PersistentFlags().String("context", "", "override the active context for this command")
 	// --ctx mirrors --context (Cobra has no long-flag aliases, so a parallel
 	// flag is the cleanest path). resolve() prefers whichever was set.
