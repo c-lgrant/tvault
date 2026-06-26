@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/c-lgrant/tvault/internal/api"
 	"github.com/c-lgrant/tvault/internal/clierr"
 	"github.com/c-lgrant/tvault/internal/config"
 	"github.com/spf13/cobra"
@@ -95,6 +96,8 @@ func Execute() {
 }
 
 func init() {
+	api.DefaultUserAgent = "tvault/" + version
+
 	rootCmd.PersistentFlags().String("context", "", "override the active context for this command")
 	// --ctx mirrors --context (Cobra has no long-flag aliases, so a parallel
 	// flag is the cleanest path). resolve() prefers whichever was set.
@@ -103,4 +106,9 @@ func init() {
 	rootCmd.PersistentFlags().Bool("no-color", false, "disable colored output")
 	rootCmd.PersistentFlags().Bool("debug", false, "print HTTP request/response diagnostics to stderr")
 	rootCmd.PersistentFlags().Bool("dry-run", false, "print the request a write command would send, without sending it")
+
+	// Composite token flags (used by both shim and `tk get`).
+	rootCmd.PersistentFlags().String("field", "", "extract a specific field from a composite token")
+	rootCmd.PersistentFlags().Bool("kv", false, "output composite token as sorted KEY=VALUE lines")
+	rootCmd.PersistentFlags().Bool("json", false, "output value as-is (default; exists for symmetry with --kv)")
 }

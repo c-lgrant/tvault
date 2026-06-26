@@ -1,0 +1,28 @@
+{
+  "name": "@token-vault/webhook",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev:node": "tsx watch src/runtime/node.ts",
+    "dev:worker": "wrangler dev src/runtime/worker.ts",
+    "build": "tsc --noEmit && wrangler deploy --dry-run",
+    "deploy": "sh scripts/deploy.sh",
+    "deploy:plain": "wrangler deploy src/runtime/worker.ts",
+    "ensure-seed": "sh scripts/ensure-seed.sh",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "hono": "^4.6.0"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20241106.0",
+    "@hono/node-server": "^1.13.0",
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0",
+    "wrangler": "^4.98.0"
+  }
+}

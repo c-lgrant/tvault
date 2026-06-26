@@ -17,6 +17,10 @@ import (
 	"github.com/c-lgrant/tvault/internal/clierr"
 )
 
+// DefaultUserAgent is sent as the User-Agent header on every request.
+// Set this at program startup before any Client is created.
+var DefaultUserAgent = "tvault"
+
 // Client talks to one Token Vault API base URL with one set of credentials.
 // Exactly one of BearerToken (admin) or AgentKey (agent) is set.
 type Client struct {
@@ -24,6 +28,7 @@ type Client struct {
 	HTTP        *http.Client
 	BearerToken string // admin: Firebase ID token → Authorization: Bearer
 	AgentKey    string // agent: tvagent_* → X-Agent-Key
+	UserAgent   string // sent as User-Agent; defaults to DefaultUserAgent when New() is used
 	Debug       bool
 
 	DryRun    bool      // when true, mutating requests are printed, not sent
@@ -42,7 +47,8 @@ func New(baseURL string, timeout time.Duration) *Client {
 		timeout = 30 * time.Second
 	}
 	return &Client{
-		BaseURL: baseURL,
+		BaseURL:   baseURL,
+		UserAgent: DefaultUserAgent,
 		HTTP: &http.Client{
 			Timeout: timeout,
 			Transport: &http.Transport{
@@ -170,6 +176,9 @@ func (c *Client) attempt(method, path string, body any, query map[string]string)
 	}
 	if c.AgentKey != "" {
 		req.Header.Set("X-Agent-Key", c.AgentKey)
+	}
+	if c.UserAgent != "" {
+		req.Header.Set("User-Agent", c.UserAgent)
 	}
 
 	start := time.Now()

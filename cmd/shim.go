@@ -10,6 +10,9 @@ import (
 // runShim handles bare `tvault` invocations:
 //
 //	tvault <service> [more words]  → print that service's credential
+//	tvault service.field           → extract field from composite token
+//	tvault --field key <service>   → extract field (explicit form)
+//	tvault --kv <service>          → print composite as KEY=VALUE lines
 //	tvault                          → show help (like any other CLI)
 //
 // The `tvault <service>` form is the legacy back-compat path that keeps
@@ -25,10 +28,13 @@ func runShim(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	// For multi-arg shim calls (e.g., "tvault some service"), join them.
+	// Each arg is independently resolved if --field/--kv are set.
 	service := strings.Join(args, " ")
-	val, err := cc.Client.GetTokenValue(service)
+
+	val, err := resolveTokenOutput(cmd, cc, service)
 	if err != nil {
-		return enrich(cmd, cc, err)
+		return err
 	}
 	// stdout, not cmd.Println (which Cobra writes to OutOrStderr) — scripts
 	// rely on $(tvault <svc>) capturing the value.
