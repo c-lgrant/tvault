@@ -65,8 +65,11 @@ export async function verifyTicket(
     throw ticketExpired("Ticket has expired");
   }
 
+  // Absent or empty nonce is rejected — TV always sends a nonce, and a
+  // nonce-less ticket cannot be replay-guarded.
   const nonce = payload.nonce ?? "";
-  if (nonce && (await replay.checkNonce(nonce))) {
+  if (!nonce) throw ticketInvalid("Ticket is missing required nonce");
+  if (await replay.checkNonce(nonce)) {
     throw ticketInvalid("Ticket nonce already used (replay)");
   }
 

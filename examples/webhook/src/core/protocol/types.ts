@@ -3,7 +3,7 @@
 // credential_tickets.py and the webhook routes for the authoritative source.
 
 /** Protocol version advertised at /v1/exchange and /v1/health. */
-export const WEBHOOK_VERSION = "2.0.0";
+export const WEBHOOK_VERSION = "2.4.0";
 
 /** Max clock skew (seconds) tolerated on X-TokenVault-Timestamp. */
 export const TIMESTAMP_TOLERANCE = 300;

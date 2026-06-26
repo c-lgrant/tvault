@@ -12,9 +12,7 @@ import { verifyTicket } from "../core/protocol/tickets.ts";
 import { readTokenObject } from "../core/protocol/tokendoc.ts";
 import type { FeatureModule } from "../core/registry.ts";
 
-// `browser_credential` has no TV issuer (a phantom purpose); accepted here for
-// parity with the reference, but never required.
-const CREDENTIAL_PURPOSES = new Set(["agent_credential", "user_reveal", "browser_credential"]);
+const CREDENTIAL_PURPOSES = new Set(["agent_credential", "user_reveal"]);
 
 export function credentialModule(): FeatureModule {
   return {
