@@ -232,3 +232,11 @@ is working.
 
 Your credentials live only in your Cloudflare account; Token Vault stays the
 policy plane and never holds the plaintext.
+
+---
+
+## Keeping it up to date
+
+To upgrade later, run the **Update webhook** Action in your repo (Actions tab) →
+review the PR → merge. Workers Builds redeploys against the same D1 and seed.
+Full details: [UPGRADING.md](./UPGRADING.md).
