@@ -5,6 +5,7 @@
 
 import { readdir, mkdir, copyFile, stat } from "node:fs/promises";
 import { join, dirname, relative, sep } from "node:path";
+import { pathToFileURL } from "node:url";
 
 // Paths (relative to the webhook root) that belong to the operator and must
 // never be overwritten by an upstream overlay.
@@ -61,7 +62,11 @@ export async function applyOverlay(upstreamDir, targetDir) {
 }
 
 // CLI: node apply-update.mjs <upstreamDir> <targetDir>
-if (import.meta.url === `file://${process.argv[1]}`) {
+// Compare against pathToFileURL(argv[1]).href rather than a hand-built
+// `file://${argv[1]}` string: import.meta.url is URL-encoded (spaces → %20,
+// platform-correct separators), so a raw concatenation mismatches whenever the
+// script path contains spaces or runs on Windows, silently skipping the CLI.
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const [, , upstreamDir, targetDir] = process.argv;
   if (!upstreamDir || !targetDir) {
     console.error("usage: apply-update.mjs <upstreamWebhookDir> <targetRepoDir>");
