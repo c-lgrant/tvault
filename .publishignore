@@ -1,0 +1,13 @@
+# Paths withheld from the public mirror (c-lgrant/tvault).
+# Used as an rsync --exclude-from list by .github/workflows/publish.yml.
+# Anchored to the repo root with a leading slash. Everything NOT listed here
+# is published. Keep this list tight — almost all of tvault is public.
+
+# Private-only CI: tests + release tooling + the mirror itself run in the
+# private canonical repo, not on the public publish target.
+/.github/workflows/release-please.yml
+/.github/workflows/publish.yml
+
+# Local agent / IDE config — never tracked, listed defensively.
+/.claude/
+/.idea/

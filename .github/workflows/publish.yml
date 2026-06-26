@@ -1,0 +1,98 @@
+name: Publish to public
+
+# Single-writer mirror: this PRIVATE repo (c-lgrant/tvault-private) is canonical.
+# On a release tag, publish the tag's tree (minus .publishignore) to the PUBLIC
+# repo (c-lgrant/tvault) as ONE squashed "release: <tag>" commit, then push the
+# tag so the public GoReleaser (release.yml) builds binaries.
+#
+# Auth: PUBLISH_DEPLOY_KEY secret = private half of a write deploy key on public.
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing tag to publish (e.g. v0.7.0)'
+        required: true
+
+concurrency:
+  group: publish-public
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      # Derive the tag from trusted env (never interpolate raw event data into
+      # shell) and validate it to a strict release-tag shape before it is used
+      # anywhere downstream (checkout ref, commit message, git tag).
+      - name: Resolve and validate tag
+        id: tag
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_TAG: ${{ inputs.tag }}
+          PUSH_REF: ${{ github.ref_name }}
+        run: |
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            ref="$INPUT_TAG"
+          else
+            ref="$PUSH_REF"
+          fi
+          if ! printf '%s' "$ref" | grep -Eq '^v[0-9][A-Za-z0-9._-]*$'; then
+            echo "Refusing to publish: invalid tag ref '$ref'." >&2
+            exit 1
+          fi
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout private at tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.tag.outputs.ref }}
+          fetch-depth: 0
+
+      - name: Configure publish deploy key
+        env:
+          DEPLOY_KEY: ${{ secrets.PUBLISH_DEPLOY_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "$DEPLOY_KEY" > ~/.ssh/publish_key
+          chmod 600 ~/.ssh/publish_key
+          ssh-keyscan github.com >> ~/.ssh/known_hosts 2>/dev/null
+          cat >> ~/.ssh/config <<'EOF'
+          Host github-public
+            HostName github.com
+            User git
+            IdentityFile ~/.ssh/publish_key
+            IdentitiesOnly yes
+          EOF
+
+      - name: Clone public main
+        run: |
+          git clone github-public:c-lgrant/tvault.git "$RUNNER_TEMP/public"
+
+      - name: Overlay tree (minus .publishignore) and publish squashed release
+        env:
+          TAG: ${{ steps.tag.outputs.ref }}
+        run: |
+          DEST="$RUNNER_TEMP/public"
+          # Mirror the tag's tracked tree into the public checkout, deleting
+          # files that no longer exist, but never touching .git or withheld paths.
+          rsync -a --delete \
+            --exclude='/.git/' \
+            --exclude-from='.publishignore' \
+            ./ "$DEST/"
+          cd "$DEST"
+          git config user.name  "tvault-publish[bot]"
+          git config user.email "tvault-publish@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "Nothing to publish for ${TAG}."
+            exit 0
+          fi
+          git commit -m "release: ${TAG}"
+          git tag "${TAG}"
+          git push origin HEAD:main
+          git push origin "${TAG}"
+          echo "Published ${TAG} to public c-lgrant/tvault."
