@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  BASELINE_SCHEMA_VERSION,
   CURRENT_SCHEMA_VERSION,
   applyPendingMigrations,
 } from "../../src/migrations/index.ts";
@@ -42,5 +43,30 @@ describe("applyPendingMigrations", () => {
     ], 2);
     expect(ran).toEqual([1, 2]);
     expect((await s.get("meta", "schema_state"))?.version).toBe(2);
+  });
+
+  it("stampless store runs only steps above BASELINE, not zero steps (regression: absent stamp must use BASELINE not current)", async () => {
+    // Bug scenario: a store that has NO schema_state stamp (set up before this
+    // mechanism) with two steps [{version:1},{version:2}] targeting current=2.
+    //
+    // OLD (wrong) fallback=current: from=2 → pending=[] → 0 steps run. v2
+    // step silently skipped even though the store was never migrated.
+    //
+    // NEW (correct) fallback=BASELINE=1: from=1 → pending=[{version:2}] → only
+    // v2 runs. v1 was part of the baseline release and needs no catch-up.
+    const s = new MemStore();
+    // No schema_state written — stampless store.
+    const ran: number[] = [];
+    const { applyPendingMigrationsWith } = await import("../../src/migrations/index.ts");
+    await applyPendingMigrationsWith(s, [
+      { version: 1, up: async () => { ran.push(1); } },
+      { version: 2, up: async () => { ran.push(2); } },
+    ], 2);
+    // Only v2 should run (from=BASELINE=1, pending = version>1).
+    expect(ran).toEqual([2]);
+    // Final stamp should be the target current=2.
+    expect((await s.get("meta", "schema_state"))?.version).toBe(2);
+    // Sanity-check the constant exported by the module.
+    expect(BASELINE_SCHEMA_VERSION).toBe(1);
   });
 });

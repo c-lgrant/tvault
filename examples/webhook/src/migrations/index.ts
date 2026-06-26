@@ -8,8 +8,21 @@
 
 import type { StorageAdapter } from "../runtime/context.ts";
 
+/** The schema version at which the migration mechanism itself shipped. */
+export const BASELINE_SCHEMA_VERSION = 1;
+
 export const CURRENT_SCHEMA_VERSION = 1;
 
+/**
+ * A single schema migration step.
+ *
+ * Contract for every `up` implementation:
+ *  - **Idempotent.** A step may re-run if the process crashes after it executes
+ *    but before the final `schema_state` stamp is written. It must produce the
+ *    same result whether run once or multiple times.
+ *  - **Empty-store safe.** Steps iterate existing records; a fresh store has
+ *    none, so `up` must be a no-op when the store is empty.
+ */
 export interface MigrationStep {
   version: number;
   up(storage: StorageAdapter): Promise<void>;
@@ -23,10 +36,13 @@ const KEY = "schema_state";
 async function storedVersion(storage: StorageAdapter, fallback: number): Promise<number> {
   const doc = await storage.get(META, KEY);
   const v = doc?.version;
-  // Absent stamp ⇒ a store created before this mechanism. A brand-new store is
-  // indistinguishable here, but running zero pending steps and stamping CURRENT
-  // is correct for both: a fresh store has no legacy records to convert, and a
-  // pre-mechanism store at the current code version likewise needs none.
+  // Absent stamp ⇒ "never migrated". We treat it as BASELINE_SCHEMA_VERSION
+  // (not `current`) so every step whose version is > baseline will run. This
+  // is correct for both cases an absent stamp can represent:
+  //   • A store set up before this mechanism shipped — may need catch-up steps.
+  //   • A brand-new empty store — steps iterate existing records and are no-ops.
+  // Using `current` as the fallback would silently skip needed steps whenever a
+  // stale store jumps to a future release where CURRENT_SCHEMA_VERSION > 1.
   return typeof v === "number" ? v : fallback;
 }
 
@@ -35,7 +51,7 @@ export async function applyPendingMigrationsWith(
   steps: MigrationStep[],
   current: number,
 ): Promise<{ from: number; to: number }> {
-  const from = await storedVersion(storage, current);
+  const from = await storedVersion(storage, BASELINE_SCHEMA_VERSION);
   const pending = steps
     .filter((s) => s.version > from)
     .sort((a, b) => a.version - b.version);

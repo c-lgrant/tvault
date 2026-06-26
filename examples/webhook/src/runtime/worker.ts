@@ -50,7 +50,13 @@ async function buildApp(env: Env): Promise<Hono<AppEnv>> {
 
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
-    appPromise ??= buildApp(env);
+    // Self-healing memo: if buildApp rejects (e.g. startup storage I/O fails)
+    // we clear the cached promise so the next request gets a fresh attempt
+    // rather than re-awaiting the same rejected promise forever.
+    appPromise ??= buildApp(env).catch((e: unknown) => {
+      appPromise = null;
+      throw e;
+    });
     const app = await appPromise;
     return app.fetch(request, env, ctx);
   },

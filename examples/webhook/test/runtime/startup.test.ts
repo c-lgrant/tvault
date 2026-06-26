@@ -34,4 +34,24 @@ describe("runStartup", () => {
     await runStartup(ctx);
     expect(await isBound(ctx.storage)).toBe(true);
   });
+
+  it("resolves even when markBound throws — auto-seal failure is non-fatal", async () => {
+    const ctx = makeContext({ hmacSecret: secret });
+    // Seed a token so the auto-seal path is reached (webhook has tokens but no bind_state).
+    await ctx.storage.set("tokens", "github", { tokenId: "github", serviceName: "github" });
+
+    // Wrap storage.set to throw only for the bind_state write.
+    // The schema_state write (from migration) must still succeed.
+    const originalSet = ctx.storage.set.bind(ctx.storage);
+    ctx.storage.set = async (col: string, key: string, data: import("../../src/runtime/context.ts").StoredDocument) => {
+      if (col === "meta" && key === "bind_state") throw new Error("simulated storage failure");
+      return originalSet(col, key, data);
+    };
+
+    // runStartup must resolve (not throw) despite the bind_state write failing.
+    await expect(runStartup(ctx)).resolves.toBeUndefined();
+
+    // Migration still ran and stamped schema_state successfully.
+    expect((await ctx.storage.get("meta", "schema_state"))?.version).toBe(CURRENT_SCHEMA_VERSION);
+  });
 });

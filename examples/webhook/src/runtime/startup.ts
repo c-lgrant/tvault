@@ -14,8 +14,15 @@ import { isBound, markBound } from "../modules/bindState.ts";
 export async function runStartup(ctx: RuntimeContext): Promise<void> {
   await applyPendingMigrations(ctx.storage);
 
-  if (await isBound(ctx.storage)) return;
-  if (!(await ctx.secrets.isConfigured())) return;
-  const tokens = await ctx.storage.entries("tokens");
-  if (tokens.length > 0) await markBound(ctx.storage);
+  // Auto-seal is best-effort: a failure to write the bind flag must never
+  // prevent the webhook from serving. Migration above is intentionally outside
+  // this block — serving on an un-upconverted store is worse than not sealing.
+  try {
+    if (await isBound(ctx.storage)) return;
+    if (!(await ctx.secrets.isConfigured())) return;
+    const tokens = await ctx.storage.entries("tokens");
+    if (tokens.length > 0) await markBound(ctx.storage);
+  } catch (e) {
+    console.warn("[startup] auto-seal failed (non-fatal):", e);
+  }
 }

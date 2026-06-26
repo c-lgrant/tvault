@@ -39,6 +39,11 @@ git push origin chore/update-webhook   # open a PR, review, merge → auto-deplo
 | Webhook URL + TV binding | ✅ | Identity is HKDF-derived from the seed; nothing re-registers |
 | `wrangler.toml` / secrets | ✅ | The update Action skips operator config |
 
+> **Auto-seal on upgrade.** If you bound your webhook before the bind-seal
+> mechanism shipped and never set `TV_ADMIN_SECRET`, the webhook will
+> auto-seal its setup endpoints on the next boot. To re-run `/v1/exchange`
+> afterwards, set `TV_ADMIN_SECRET` as a Workers Secret and redeploy.
+
 ## Re-hosting (different account, region, or runtime)
 
 That's a different operation — moving the *data* to *new infrastructure* — not an
