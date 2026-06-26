@@ -106,6 +106,22 @@ describe("FIX 4c — ticket nonce is required", () => {
       code: "ticket_invalid",
     });
   });
+
+  it("rejects a ticket whose nonce is a non-string (controlled 401, not a 500)", async () => {
+    // Regression for the Copilot review: a tampered payload with a numeric nonce
+    // must yield ticket_invalid, not throw downstream in checkNonce.
+    const numericNonce = await signTicket(secret, {
+      sub: "u",
+      svc: "github",
+      pur: "agent_credential",
+      iat: 1700000000,
+      exp: 9999999999,
+      nonce: 12345,
+    } as unknown as Parameters<typeof signTicket>[1]);
+    await expect(verifyTicket(numericNonce, secret, new MemoryReplayGuard())).rejects.toMatchObject({
+      code: "ticket_invalid",
+    });
+  });
 });
 
 describe("FIX 4b — browser_credential is not an accepted purpose", () => {

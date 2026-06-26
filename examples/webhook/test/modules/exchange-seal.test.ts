@@ -65,6 +65,30 @@ describe("bind seal — isBound transitions", () => {
     // After exchange, the webhook must be marked bound.
     expect(await isBound(ctx.storage)).toBe(true);
   });
+
+  it("(f) a failed exchange (secrets throw) does NOT seal the webhook", async () => {
+    // Regression for the Copilot review: bind_state must be persisted only on a
+    // fully successful exchange. If the secrets provider throws, the setup
+    // endpoints must remain open so the operator can recover.
+    const ctx = makeContext({ hmacSecret: secret });
+    ctx.secrets = {
+      isConfigured: async () => true,
+      hmacSecret: async () => {
+        throw new Error("seed missing");
+      },
+      encryptionKey: async () => secret,
+      webhookId: async () => "wh_test",
+      hmacSecretHash: async () => "x",
+    };
+    const app = createApp(ctx, [exchangeModule()]);
+
+    const code = await issueCode(app);
+    const res = await exchange(app, code);
+
+    expect(res.status).toBeGreaterThanOrEqual(500);
+    // The failed exchange must leave the webhook unbound and recoverable.
+    expect(await isBound(ctx.storage)).toBe(false);
+  });
 });
 
 describe("bind seal — endpoints locked after first bind", () => {

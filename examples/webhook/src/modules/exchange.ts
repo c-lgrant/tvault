@@ -236,11 +236,16 @@ export function exchangeModule(): FeatureModule {
             410,
           );
         }
-        await markBound(ctx.storage);
+        // Resolve secrets BEFORE persisting bind-state: if the secrets provider
+        // throws (missing seed / misconfigured), a failed exchange must not
+        // permanently seal the setup endpoints. Bind only on a fully successful
+        // exchange.
         const secret = await ctx.secrets.hmacSecret();
+        const webhookId = await ctx.secrets.webhookId();
+        await markBound(ctx.storage);
         return c.json({
           hmacSecret: base64Encode(secret),
-          webhookId: await ctx.secrets.webhookId(),
+          webhookId,
           version: WEBHOOK_VERSION,
           capabilities: registry.capabilities,
         });

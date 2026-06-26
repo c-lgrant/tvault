@@ -3,8 +3,9 @@
 // /bind are sealed — callers must supply x-tv-admin-secret (TV_ADMIN_SECRET) to
 // re-run the setup flow.
 //
-// Collection "meta" is a private internal namespace (never exposed via the
-// /v1/storage endpoint, which only accepts KNOWN_COLLECTIONS); the flag is stored
+// Collection "meta" is an INTERNAL_COLLECTIONS namespace: adapters provision it
+// (so every runtime can read/write it), but it is excluded from KNOWN_COLLECTIONS
+// so the agent-facing /v1/storage endpoint never exposes it. The flag is stored
 // under the key "bind_state".
 
 import type { StorageAdapter } from "../runtime/context.ts";

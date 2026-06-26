@@ -15,6 +15,21 @@ export const KNOWN_COLLECTIONS = [
 
 export type Collection = (typeof KNOWN_COLLECTIONS)[number];
 
+/**
+ * Internal collections the webhook persists for its own bookkeeping (e.g. the
+ * durable bind-state flag). These are deliberately NOT part of
+ * `KNOWN_COLLECTIONS`, so the agent-facing `/v1/storage` endpoint — which gates
+ * on `isKnownCollection` — never exposes them. Storage adapters must still
+ * initialize them so internal reads/writes work on every runtime.
+ */
+export const INTERNAL_COLLECTIONS = ["meta"] as const;
+
+/** Every collection an adapter must provision: agent-facing plus internal. */
+export const ALL_COLLECTIONS = [
+  ...KNOWN_COLLECTIONS,
+  ...INTERNAL_COLLECTIONS,
+] as const;
+
 /** A stored document is an opaque JSON object keyed by string. */
 export type StoredDocument = Record<string, unknown>;
 
