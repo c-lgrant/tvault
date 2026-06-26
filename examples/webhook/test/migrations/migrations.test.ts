@@ -91,4 +91,24 @@ describe("applyPendingMigrations", () => {
     // Sanity-check the constant exported by the module.
     expect(BASELINE_SCHEMA_VERSION).toBe(1);
   });
+
+  it("ignores a corrupted (NaN/Infinity/negative/non-integer) stamp and falls back to BASELINE", async () => {
+    // A corrupted schema_state.version must not poison the migration logic.
+    // NaN in particular would make `version > from` always false (silently
+    // disabling all future migrations) and persist NaN via Math.max. The read
+    // must reject it and fall back to BASELINE so catch-up steps still run.
+    const { applyPendingMigrationsWith } = await import("../../src/migrations/index.ts");
+    for (const bad of [Number.NaN, Infinity, -3, 1.5]) {
+      const s = new MemStore();
+      await s.set("meta", "schema_state", { version: bad });
+      const ran: number[] = [];
+      const r = await applyPendingMigrationsWith(s, [
+        { version: 2, up: async () => { ran.push(2); } },
+      ], 2);
+      // Fell back to BASELINE=1 → the v2 step runs and the stamp is a clean int.
+      expect(ran).toEqual([2]);
+      expect(r.to).toBe(2);
+      expect((await s.get("meta", "schema_state"))?.version).toBe(2);
+    }
+  });
 });

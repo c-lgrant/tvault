@@ -43,7 +43,11 @@ async function storedVersion(storage: StorageAdapter, fallback: number): Promise
   //   • A brand-new empty store — steps iterate existing records and are no-ops.
   // Using `current` as the fallback would silently skip needed steps whenever a
   // stale store jumps to a future release where CURRENT_SCHEMA_VERSION > 1.
-  return typeof v === "number" ? v : fallback;
+  // Validate as a finite, non-negative integer. A corrupted stamp (NaN,
+  // Infinity, negative, or non-numeric) must not propagate: NaN in particular
+  // would poison `Math.max(from, current)` and make every `version > from`
+  // filter false, silently disabling all future migrations. Fall back instead.
+  return typeof v === "number" && Number.isInteger(v) && v >= 0 ? v : fallback;
 }
 
 /**
