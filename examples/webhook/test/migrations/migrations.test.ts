@@ -3,6 +3,7 @@ import {
   BASELINE_SCHEMA_VERSION,
   CURRENT_SCHEMA_VERSION,
   applyPendingMigrations,
+  applyPendingMigrationsWith,
 } from "../../src/migrations/index.ts";
 import type { StorageAdapter, StoredDocument } from "../../src/runtime/context.ts";
 
@@ -43,6 +44,27 @@ describe("applyPendingMigrations", () => {
     ], 2);
     expect(ran).toEqual([1, 2]);
     expect((await s.get("meta", "schema_state"))?.version).toBe(2);
+  });
+
+  it("never downgrades the stored stamp when current < from (Copilot review: no schema downgrade)", async () => {
+    const s = new MemStore();
+    // Simulate an older build redeployed: stored version is 5, but this build only knows up to 2.
+    await s.set("meta", "schema_state", { version: 5 });
+    const ran: number[] = [];
+    const r = await applyPendingMigrationsWith(
+      s,
+      [
+        { version: 1, up: async () => { ran.push(1); } },
+        { version: 2, up: async () => { ran.push(2); } },
+      ],
+      2, // current = 2, stored = 5 → must NOT downgrade
+    );
+    // No steps should run (all steps are <= current=2 <= from=5)
+    expect(ran).toEqual([]);
+    // Stamp must NOT be downgraded from 5 to 2
+    expect((await s.get("meta", "schema_state"))?.version).toBe(5);
+    // Returned `to` must be the higher value (5, not 2)
+    expect(r.to).toBe(5);
   });
 
   it("stampless store runs only steps above BASELINE, not zero steps (regression: absent stamp must use BASELINE not current)", async () => {

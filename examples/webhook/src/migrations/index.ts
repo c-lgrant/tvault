@@ -46,18 +46,30 @@ async function storedVersion(storage: StorageAdapter, fallback: number): Promise
   return typeof v === "number" ? v : fallback;
 }
 
+/**
+ * Applies any pending migration steps and stamps the schema version.
+ *
+ * **Never downgrades the stored stamp.** If the store already records a
+ * version higher than `current` (e.g. an operator temporarily redeploys an
+ * older build), the stamp is left at `from` and no steps are run. This
+ * prevents wrongly re-running migrations against already-upconverted data on
+ * the next forward deployment.
+ */
 export async function applyPendingMigrationsWith(
   storage: StorageAdapter,
   steps: MigrationStep[],
   current: number,
 ): Promise<{ from: number; to: number }> {
   const from = await storedVersion(storage, BASELINE_SCHEMA_VERSION);
+  // Never stamp below the already-recorded version (guard against older builds
+  // redeployed temporarily then re-upgraded).
+  const to = Math.max(from, current);
   const pending = steps
-    .filter((s) => s.version > from)
+    .filter((s) => s.version > from && s.version <= current)
     .sort((a, b) => a.version - b.version);
   for (const step of pending) await step.up(storage);
-  await storage.set(META, KEY, { version: current });
-  return { from, to: current };
+  await storage.set(META, KEY, { version: to });
+  return { from, to };
 }
 
 export function applyPendingMigrations(storage: StorageAdapter): Promise<{ from: number; to: number }> {

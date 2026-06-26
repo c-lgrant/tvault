@@ -22,25 +22,42 @@ export function planOverlay(files) {
   return { copy, skipped };
 }
 
+/**
+ * Recursively collect files under `dir`, relative to `base`.
+ * Symlinks are never followed or emitted — they are returned separately in
+ * `symlinkPaths` so callers can report them as skipped.
+ */
 async function walk(dir, base = dir) {
   const out = [];
+  const symlinkPaths = [];
   for (const ent of await readdir(dir, { withFileTypes: true })) {
     const abs = join(dir, ent.name);
-    if (ent.isDirectory()) out.push(...(await walk(abs, base)));
-    else out.push(relative(base, abs));
+    if (ent.isSymbolicLink()) {
+      // Refuse to follow symlinks: they could point anywhere on the runner
+      // filesystem and copyFile() would silently exfiltrate the target.
+      symlinkPaths.push(relative(base, abs));
+    } else if (ent.isDirectory()) {
+      const sub = await walk(abs, base);
+      out.push(...sub.files);
+      symlinkPaths.push(...sub.symlinks);
+    } else {
+      out.push(relative(base, abs));
+    }
   }
-  return out;
+  return { files: out, symlinks: symlinkPaths };
 }
 
 export async function applyOverlay(upstreamDir, targetDir) {
-  const all = await walk(upstreamDir);
-  const { copy, skipped } = planOverlay(all);
+  const { files, symlinks } = await walk(upstreamDir);
+  const { copy, skipped } = planOverlay(files);
+  // Symlinks are always skipped — append them to the skipped list.
+  const allSkipped = [...skipped, ...symlinks];
   for (const rel of copy) {
     const dest = join(targetDir, rel);
     await mkdir(dirname(dest), { recursive: true });
     await copyFile(join(upstreamDir, rel), dest);
   }
-  return { copied: copy, skipped };
+  return { copied: copy, skipped: allSkipped };
 }
 
 // CLI: node apply-update.mjs <upstreamDir> <targetDir>
