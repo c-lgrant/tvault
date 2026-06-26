@@ -23,10 +23,16 @@ async function issueCode(app: ReturnType<typeof createApp>): Promise<string> {
   return code;
 }
 
-function exchange(app: ReturnType<typeof createApp>, code: string) {
+function exchange(
+  app: ReturnType<typeof createApp>,
+  code: string,
+  adminSecret?: string,
+) {
+  const headers: Record<string, string> = { ...JSON_HDR };
+  if (adminSecret !== undefined) headers["x-tv-admin-secret"] = adminSecret;
   return app.request("https://wh.example/v1/exchange", {
     method: "POST",
-    headers: JSON_HDR,
+    headers,
     body: JSON.stringify({ code }),
   });
 }
@@ -85,13 +91,25 @@ describe("bind code exchange — durable across isolates", () => {
     expect(data.hmacSecret.length).toBeGreaterThan(0);
   });
 
-  it("a code is single-use (second exchange is rejected)", async () => {
+  it("a code is single-use; after first bind the webhook is sealed (403 without admin secret)", async () => {
     const ctx = makeContext({ hmacSecret: secret });
     const app = createApp(ctx, [exchangeModule()]);
 
     const code = await issueCode(app);
-    expect((await exchange(app, code)).status).toBe(200);
-    expect((await exchange(app, code)).status).toBe(410);
+    expect((await exchange(app, code)).status).toBe(200); // success + webhook now bound
+    // After bind: no admin secret → 403 (sealed), not 410 (code consumed).
+    // The webhook being sealed is the stricter rejection; the code is also gone.
+    expect((await exchange(app, code)).status).toBe(403);
+  });
+
+  it("a code is single-use (second exchange rejected 410 when admin secret provided)", async () => {
+    const ctx = makeContext({ hmacSecret: secret, adminSecret: "test-admin" });
+    const app = createApp(ctx, [exchangeModule()]);
+
+    const code = await issueCode(app);
+    expect((await exchange(app, code)).status).toBe(200); // success + webhook now bound
+    // With admin secret the guard passes but the code is already consumed → 410.
+    expect((await exchange(app, code, "test-admin")).status).toBe(410);
   });
 
   it("an unknown code is rejected", async () => {

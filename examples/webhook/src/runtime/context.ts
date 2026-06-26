@@ -29,6 +29,12 @@ export interface WebhookConfig {
   /** This webhook's own public URL (for the register-URL flow). */
   externalUrl?: string;
   /**
+   * Admin secret that gates re-binding after the first successful exchange.
+   * Set via TV_ADMIN_SECRET. When absent, a bound webhook is fully sealed —
+   * no re-bind is possible until the secret is configured.
+   */
+  adminSecret?: string;
+  /**
    * Client IPs that must be rejected on the credential + store endpoints.
    * Token Vault's own server egress IP belongs here: a real ticket replayed
    * from TV's IP must NOT yield a credential (TV stays zero-knowledge).

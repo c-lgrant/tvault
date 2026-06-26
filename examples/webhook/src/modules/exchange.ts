@@ -13,17 +13,41 @@
 // code is invisible to the exchange and TV reports "code expired or already
 // used". A durable store fixes that — any isolate can consume the code.
 
-import { base64Encode, utf8 } from "../core/crypto/encoding.ts";
-import { invalidRequest } from "../core/protocol/errors.ts";
+import { base64Encode, constantTimeEqual, utf8 } from "../core/crypto/encoding.ts";
+import { forbidden, invalidRequest } from "../core/protocol/errors.ts";
 import { WEBHOOK_VERSION } from "../core/protocol/types.ts";
 import { readJsonBody } from "../core/middleware/body.ts";
 import { sendError } from "../core/middleware/respond.ts";
-import type { StorageAdapter, WebhookConfig } from "../runtime/context.ts";
+import { isBound, markBound } from "./bindState.ts";
+import type { RuntimeContext, StorageAdapter, WebhookConfig } from "../runtime/context.ts";
 import type { FeatureModule } from "../core/registry.ts";
 import type { Context } from "hono";
 import type { AppEnv } from "../core/app.ts";
 
 const CODE_TTL_MS = 300_000;
+
+// Guard: once a webhook is bound, setup endpoints require the admin secret.
+// If TV_ADMIN_SECRET is unset, the webhook is fully sealed after first bind —
+// that is the intended safe default. Returns a 403 Response on failure or null
+// when the caller is permitted to proceed.
+async function guardBound(
+  c: Context<AppEnv>,
+  ctx: RuntimeContext,
+): Promise<Response | null> {
+  if (await isBound(ctx.storage)) {
+    const provided = c.req.header("x-tv-admin-secret") ?? "";
+    const expected = ctx.config.adminSecret ?? "";
+    // If no admin secret is configured, or the provided value does not match
+    // (constant-time to prevent timing attacks), deny the request.
+    if (!expected || !constantTimeEqual(provided, expected)) {
+      return sendError(
+        c,
+        forbidden("Webhook already bound. Provide a valid x-tv-admin-secret header to re-bind."),
+      );
+    }
+  }
+  return null;
+}
 // Internal collection for one-time bind codes. Underscore-prefixed so it never
 // collides with a real credential collection; TV never lists it.
 const CODE_COLLECTION = "_bind_codes";
@@ -188,6 +212,8 @@ export function exchangeModule(): FeatureModule {
             invalidRequest("Could not determine external URL. Set EXTERNAL_URL."),
           );
         }
+        const blocked = await guardBound(c, ctx);
+        if (blocked) return blocked;
         const code = await issueCode(ctx.storage);
         const hash = await ctx.secrets.hmacSecretHash();
         return c.json({
@@ -199,6 +225,8 @@ export function exchangeModule(): FeatureModule {
       });
 
       app.post("/v1/exchange", async (c) => {
+        const blocked = await guardBound(c, ctx);
+        if (blocked) return blocked;
         const body = readJsonBody(c);
         const code = typeof body.code === "string" ? body.code : "";
         if (!code) return sendError(c, invalidRequest("Missing 'code'"));
@@ -208,6 +236,7 @@ export function exchangeModule(): FeatureModule {
             410,
           );
         }
+        await markBound(ctx.storage);
         const secret = await ctx.secrets.hmacSecret();
         return c.json({
           hmacSecret: base64Encode(secret),
@@ -227,6 +256,8 @@ export function exchangeModule(): FeatureModule {
         if (!(await ctx.secrets.isConfigured())) {
           return c.html(SETUP_PAGE(externalUrl, workerNameFromHost(externalUrl)), 503);
         }
+        const blocked = await guardBound(c, ctx);
+        if (blocked) return blocked;
         const frontend = resolveFrontend(c, ctx.config);
         const code = await issueCode(ctx.storage);
         const hash = await ctx.secrets.hmacSecretHash();

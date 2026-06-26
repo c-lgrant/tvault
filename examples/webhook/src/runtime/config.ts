@@ -42,14 +42,26 @@ export function configFromEnv(get: Getenv): WebhookConfig {
   const externalUrl = get("WEBHOOK_EXTERNAL_URL") ?? get("EXTERNAL_URL");
   const oauthProviders = parseOAuthProviders(get("OAUTH_PROVIDERS_JSON"));
 
+  // TOKENVAULT_FRONTEND_URL is required — no silent prod fallback.
+  // wrangler.toml [vars] must set it; Node deployments must set it in the env.
+  const tokenvaultFrontendUrl = get("TOKENVAULT_FRONTEND_URL");
+  if (!tokenvaultFrontendUrl) {
+    throw new Error(
+      "TOKENVAULT_FRONTEND_URL is required. Set it to the Token Vault frontend origin (e.g. https://tokenvault.uk).",
+    );
+  }
+
+  const adminSecret = get("TV_ADMIN_SECRET");
+
   return {
     version: WEBHOOK_VERSION,
     timestampTolerance: Number.isFinite(tolerance) && tolerance > 0 ? tolerance : TIMESTAMP_TOLERANCE,
-    tokenvaultFrontendUrl: get("TOKENVAULT_FRONTEND_URL") ?? "https://tokenvault.uk",
+    tokenvaultFrontendUrl,
     denyIps,
     denyOrigins: csv(get("DENY_ORIGINS")),
     // Omit optional keys entirely when unset (exactOptionalPropertyTypes).
     ...(externalUrl ? { externalUrl } : {}),
     ...(oauthProviders ? { oauthProviders } : {}),
+    ...(adminSecret ? { adminSecret } : {}),
   };
 }
