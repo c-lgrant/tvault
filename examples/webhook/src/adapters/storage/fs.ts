@@ -6,7 +6,7 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import {
-  KNOWN_COLLECTIONS,
+  ALL_COLLECTIONS,
   type StorageAdapter,
   type StoredDocument,
 } from "../../runtime/context.ts";
@@ -24,11 +24,11 @@ export class FsStorageAdapter implements StorageAdapter {
   static async create(path?: string): Promise<FsStorageAdapter> {
     const resolved = path ?? process.env.TOKENVAULT_KV_STORE_PATH ?? DEFAULT_PATH;
     const store: Store = {};
-    for (const c of KNOWN_COLLECTIONS) store[c] = {};
+    for (const c of ALL_COLLECTIONS) store[c] = {};
 
     try {
       const data = JSON.parse(await readFile(resolved, "utf-8")) as Record<string, unknown>;
-      for (const c of KNOWN_COLLECTIONS) {
+      for (const c of ALL_COLLECTIONS) {
         const loaded = data[c];
         if (loaded && typeof loaded === "object") {
           store[c] = loaded as Record<string, StoredDocument>;

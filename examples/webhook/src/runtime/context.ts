@@ -15,6 +15,21 @@ export const KNOWN_COLLECTIONS = [
 
 export type Collection = (typeof KNOWN_COLLECTIONS)[number];
 
+/**
+ * Internal collections the webhook persists for its own bookkeeping (e.g. the
+ * durable bind-state flag). These are deliberately NOT part of
+ * `KNOWN_COLLECTIONS`, so the agent-facing `/v1/storage` endpoint — which gates
+ * on `isKnownCollection` — never exposes them. Storage adapters must still
+ * initialize them so internal reads/writes work on every runtime.
+ */
+export const INTERNAL_COLLECTIONS = ["meta"] as const;
+
+/** Every collection an adapter must provision: agent-facing plus internal. */
+export const ALL_COLLECTIONS = [
+  ...KNOWN_COLLECTIONS,
+  ...INTERNAL_COLLECTIONS,
+] as const;
+
 /** A stored document is an opaque JSON object keyed by string. */
 export type StoredDocument = Record<string, unknown>;
 
@@ -28,6 +43,12 @@ export interface WebhookConfig {
   tokenvaultFrontendUrl: string;
   /** This webhook's own public URL (for the register-URL flow). */
   externalUrl?: string;
+  /**
+   * Admin secret that gates re-binding after the first successful exchange.
+   * Set via TV_ADMIN_SECRET. When absent, a bound webhook is fully sealed —
+   * no re-bind is possible until the secret is configured.
+   */
+  adminSecret?: string;
   /**
    * Client IPs that must be rejected on the credential + store endpoints.
    * Token Vault's own server egress IP belongs here: a real ticket replayed

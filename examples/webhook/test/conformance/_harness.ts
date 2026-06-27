@@ -64,14 +64,16 @@ export function makeContext(opts: {
   encryptionKey?: Bytes;
   denyIps?: string[];
   denyOrigins?: string[];
+  adminSecret?: string;
 }): RuntimeContext {
   const key = opts.encryptionKey ?? crypto.getRandomValues(new Uint8Array(32));
   const config: WebhookConfig = {
-    version: "2.0.0",
+    version: "2.4.0",
     timestampTolerance: 300,
     tokenvaultFrontendUrl: "https://tokenvault.test",
     denyIps: opts.denyIps ?? [],
     denyOrigins: opts.denyOrigins ?? [],
+    ...(opts.adminSecret ? { adminSecret: opts.adminSecret } : {}),
   };
   return {
     config,

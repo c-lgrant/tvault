@@ -8,6 +8,9 @@ compatibility_flags = ["nodejs_compat"]
 
 # Non-secret configuration. Override per your deployment.
 [vars]
+# TOKENVAULT_FRONTEND_URL is REQUIRED — no silent fallback. Set this to the
+# Token Vault frontend origin (e.g. "https://tokenvault.uk" for the hosted
+# service, or your self-hosted origin).
 TOKENVAULT_FRONTEND_URL = "https://tokenvault.uk"
 # WEBHOOK_EXTERNAL_URL is normally auto-detected from the request host; set it
 # only if you front the Worker with a custom domain that rewrites Host.
@@ -55,3 +58,9 @@ head_sampling_rate = 1
 # See deploy/cloudflare/README.md.
 #   OAUTH_PROVIDERS_JSON — optional Secret. JSON map provider->{clientSecret,clientId?,tokenUrl?}
 #                          enabling autonomous OAuth refresh (/v1/refresh-notify).
+#   TV_ADMIN_SECRET — optional Secret. When set, this value must be supplied as
+#                     the x-tv-admin-secret request header to access the setup
+#                     endpoints (/bind, /v1/register-url, /v1/exchange) after
+#                     the first successful bind. Without it a bound webhook is
+#                     fully sealed — re-binding requires configuring this secret.
+#   Set via: openssl rand -hex 32 | wrangler secret put TV_ADMIN_SECRET

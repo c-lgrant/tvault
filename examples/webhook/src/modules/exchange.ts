@@ -13,17 +13,49 @@
 // code is invisible to the exchange and TV reports "code expired or already
 // used". A durable store fixes that — any isolate can consume the code.
 
-import { base64Encode, utf8 } from "../core/crypto/encoding.ts";
-import { invalidRequest } from "../core/protocol/errors.ts";
+import { base64Encode, constantTimeEqual, sha256Hex, utf8 } from "../core/crypto/encoding.ts";
+import { forbidden, invalidRequest } from "../core/protocol/errors.ts";
 import { WEBHOOK_VERSION } from "../core/protocol/types.ts";
 import { readJsonBody } from "../core/middleware/body.ts";
 import { sendError } from "../core/middleware/respond.ts";
-import type { StorageAdapter, WebhookConfig } from "../runtime/context.ts";
+import { isBound, markBound } from "./bindState.ts";
+import type { RuntimeContext, StorageAdapter, WebhookConfig } from "../runtime/context.ts";
 import type { FeatureModule } from "../core/registry.ts";
 import type { Context } from "hono";
 import type { AppEnv } from "../core/app.ts";
 
 const CODE_TTL_MS = 300_000;
+
+// Guard: once a webhook is bound, setup endpoints require the admin secret.
+// If TV_ADMIN_SECRET is unset, the webhook is fully sealed after first bind —
+// that is the intended safe default. Returns a 403 Response on failure or null
+// when the caller is permitted to proceed.
+async function guardBound(
+  c: Context<AppEnv>,
+  ctx: RuntimeContext,
+): Promise<Response | null> {
+  if (await isBound(ctx.storage)) {
+    const provided = c.req.header("x-tv-admin-secret") ?? "";
+    const expected = ctx.config.adminSecret ?? "";
+    // If no admin secret is configured, deny outright (fully sealed). Otherwise
+    // compare SHA-256 digests rather than the raw strings: constantTimeEqual
+    // short-circuits on a length mismatch, which would leak the admin secret's
+    // length for an arbitrary-length TV_ADMIN_SECRET. Hashing both sides first
+    // makes every comparison operate on fixed-length (64-char) digests.
+    const matches = !!expected
+      && constantTimeEqual(await sha256Hex(provided), await sha256Hex(expected));
+    if (!matches) {
+      // Distinguish the two sealed states so the message isn't misleading: with
+      // no TV_ADMIN_SECRET configured the webhook is permanently sealed (no
+      // header can re-open it) and the operator must set the secret and redeploy.
+      const message = expected
+        ? "Webhook already bound. Provide a valid x-tv-admin-secret header to re-bind."
+        : "Webhook already bound and no admin secret is configured, so it is permanently sealed. Set TV_ADMIN_SECRET and redeploy to re-bind.";
+      return sendError(c, forbidden(message));
+    }
+  }
+  return null;
+}
 // Internal collection for one-time bind codes. Underscore-prefixed so it never
 // collides with a real credential collection; TV never lists it.
 const CODE_COLLECTION = "_bind_codes";
@@ -181,6 +213,11 @@ export function exchangeModule(): FeatureModule {
     name: "exchange",
     register(app, ctx, registry) {
       app.get("/v1/register-url", async (c) => {
+        // Seal check FIRST: a bound webhook must return 403 before any config
+        // resolution, so an unauthenticated caller can't probe config state
+        // (e.g. a misconfig 400) through a sealed endpoint.
+        const blocked = await guardBound(c, ctx);
+        if (blocked) return blocked;
         const externalUrl = resolveExternalUrl(c, ctx.config);
         if (!externalUrl) {
           return sendError(
@@ -199,6 +236,8 @@ export function exchangeModule(): FeatureModule {
       });
 
       app.post("/v1/exchange", async (c) => {
+        const blocked = await guardBound(c, ctx);
+        if (blocked) return blocked;
         const body = readJsonBody(c);
         const code = typeof body.code === "string" ? body.code : "";
         if (!code) return sendError(c, invalidRequest("Missing 'code'"));
@@ -208,16 +247,27 @@ export function exchangeModule(): FeatureModule {
             410,
           );
         }
+        // Resolve secrets BEFORE persisting bind-state: if the secrets provider
+        // throws (missing seed / misconfigured), a failed exchange must not
+        // permanently seal the setup endpoints. Bind only on a fully successful
+        // exchange.
         const secret = await ctx.secrets.hmacSecret();
+        const webhookId = await ctx.secrets.webhookId();
+        await markBound(ctx.storage);
         return c.json({
           hmacSecret: base64Encode(secret),
-          webhookId: await ctx.secrets.webhookId(),
+          webhookId,
           version: WEBHOOK_VERSION,
           capabilities: registry.capabilities,
         });
       });
 
       app.get("/bind", async (c) => {
+        // Seal check FIRST: a bound webhook stays sealed even if it later loses
+        // its seed (misconfigured). Checking config before the seal would serve
+        // the setup page to unauthenticated callers on a bound-but-broken webhook.
+        const blocked = await guardBound(c, ctx);
+        if (blocked) return blocked;
         const externalUrl = resolveExternalUrl(c, ctx.config);
         if (!externalUrl) {
           return c.html("<h1>Webhook misconfigured</h1><p>EXTERNAL_URL is not set.</p>", 500);

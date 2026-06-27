@@ -13,6 +13,7 @@ import { FsStorageAdapter } from "../adapters/storage/fs.ts";
 import { FileSecretProvider } from "../adapters/secrets/fileSecret.ts";
 import { MemoryReplayGuard } from "../adapters/replay/memory.ts";
 import { configFromEnv } from "./config.ts";
+import { runStartup } from "./startup.ts";
 
 async function main(): Promise<void> {
   const [storage, secrets] = await Promise.all([FsStorageAdapter.create(), FileSecretProvider.create()]);
@@ -22,6 +23,8 @@ async function main(): Promise<void> {
     storage,
     replay: new MemoryReplayGuard(),
   };
+
+  await runStartup(ctx);
 
   const app = createApp(ctx, allModules());
 

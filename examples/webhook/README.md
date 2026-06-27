@@ -100,6 +100,13 @@ npm test                # vitest: conformance + modules + security
 sh test/smoke/run.sh    # local Node HTTP E2E round-trip
 ```
 
+## Upgrading
+
+Upgrades are an in-place redeploy — no migration, no re-keying, no URL change.
+Run the **Update webhook** GitHub Action in your repo to open a PR, merge it, and
+Workers Builds redeploys against your existing D1 + seed. See
+[deploy/cloudflare/UPGRADING.md](deploy/cloudflare/UPGRADING.md).
+
 ## License
 
 [MIT](../../LICENSE) — Token Vault project.

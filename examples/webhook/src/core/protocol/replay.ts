@@ -5,12 +5,17 @@
 import { authFailed } from "./errors.ts";
 import type { ReplayGuard } from "../../runtime/context.ts";
 
-/** Reject a duplicate X-TokenVault-Request-Id (auth.py:54-58). */
+/**
+ * Reject a missing or duplicate X-TokenVault-Request-Id (auth.py:54-58).
+ * TV always sends this header; an absent ID cannot be replay-guarded and
+ * is therefore rejected rather than silently allowed through.
+ */
 export async function guardRequestId(
   replay: ReplayGuard,
   requestId: string | undefined,
 ): Promise<void> {
-  if (requestId && (await replay.checkRequestId(requestId))) {
+  if (!requestId) throw authFailed("Missing X-TokenVault-Request-Id header");
+  if (await replay.checkRequestId(requestId)) {
     throw authFailed("Duplicate request ID");
   }
 }
