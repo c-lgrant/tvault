@@ -1,0 +1,79 @@
+# examples/webhook/.github/workflows/update-webhook.yml
+# Ships INSIDE the webhook template. After the Cloudflare "Deploy to Workers"
+# button extracts the template to your repo root, this lands at
+# .github/workflows/update-webhook.yml. Run it (Actions tab → "Update webhook")
+# to open a PR that pulls the latest RELEASED webhook from upstream. Review the
+# diff, merge, and Workers Builds redeploys against your same D1 + seed.
+name: Update webhook
+
+on:
+  workflow_dispatch: {}
+  schedule:
+    # Optional weekly check (Mondays 09:00 UTC). Delete this block to disable.
+    - cron: "0 9 * * 1"
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: update-webhook
+  cancel-in-progress: false
+
+env:
+  UPSTREAM: c-lgrant/tvault
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout operator repo
+        uses: actions/checkout@v4
+
+      - name: Resolve latest upstream release tag
+        id: rel
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag=$(gh api "repos/${UPSTREAM}/releases/latest" -q .tag_name)
+          if [ -z "$tag" ] || [ "$tag" = "null" ]; then
+            echo "Could not resolve latest release tag for ${UPSTREAM}." >&2
+            exit 1
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Fetch upstream webhook tree at the tag
+        env:
+          TAG: ${{ steps.rel.outputs.tag }}
+        run: |
+          curl -fsSL "https://codeload.github.com/${UPSTREAM}/tar.gz/refs/tags/${TAG}" -o upstream.tgz
+          mkdir -p "${RUNNER_TEMP}/upstream"
+          tar -xzf upstream.tgz -C "${RUNNER_TEMP}/upstream" --strip-components=1
+          test -d "${RUNNER_TEMP}/upstream/examples/webhook" \
+            || { echo "upstream tree has no examples/webhook" >&2; exit 1; }
+
+      - name: Overlay onto the repo (preserves wrangler.toml + secrets)
+        run: |
+          node scripts/apply-update.mjs \
+            "${RUNNER_TEMP}/upstream/examples/webhook" \
+            "${GITHUB_WORKSPACE}"
+
+      - name: Open update PR
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          branch: chore/update-webhook
+          delete-branch: true
+          title: "chore: update webhook to ${{ steps.rel.outputs.tag }}"
+          commit-message: "chore: update webhook to ${{ steps.rel.outputs.tag }}"
+          body: |
+            Automated webhook update to **${{ steps.rel.outputs.tag }}** from
+            `${{ env.UPSTREAM }}`.
+
+            Your `wrangler.toml`, `.dev.vars`, and secrets were left untouched.
+            Review the diff, then **merge** — Cloudflare Workers Builds will
+            redeploy against your existing D1 database and seed (no data loss,
+            no URL change). The webhook upconverts its storage schema on boot.
+
+            If this release adds new `wrangler.toml` variables, this PR will not
+            include them — check the upstream release notes and add them manually.

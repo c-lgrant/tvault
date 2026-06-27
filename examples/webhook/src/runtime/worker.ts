@@ -17,6 +17,7 @@ import { seedDerivedSecrets } from "../adapters/secrets/seedDerived.ts";
 import { D1StorageAdapter } from "../adapters/storage/d1.ts";
 import { CacheReplayGuard } from "../adapters/replay/cache.ts";
 import type { RuntimeContext } from "./context.ts";
+import { runStartup } from "./startup.ts";
 
 export interface Env {
   /** The one persisted secret — AES key + HMAC secret are HKDF-derived from it. */
@@ -43,12 +44,19 @@ async function buildApp(env: Env): Promise<Hono<AppEnv>> {
     storage: await D1StorageAdapter.create(env.DB),
     replay: new CacheReplayGuard(),
   };
+  await runStartup(ctx); // memoized by appPromise: runs once per isolate
   return createApp(ctx, allModules());
 }
 
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
-    appPromise ??= buildApp(env);
+    // Self-healing memo: if buildApp rejects (e.g. startup storage I/O fails)
+    // we clear the cached promise so the next request gets a fresh attempt
+    // rather than re-awaiting the same rejected promise forever.
+    appPromise ??= buildApp(env).catch((e: unknown) => {
+      appPromise = null;
+      throw e;
+    });
     const app = await appPromise;
     return app.fetch(request, env, ctx);
   },
