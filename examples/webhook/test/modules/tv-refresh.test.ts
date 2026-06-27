@@ -17,6 +17,11 @@ import { makeContext } from "../conformance/_harness.ts";
 const hmac = crypto.getRandomValues(new Uint8Array(32)) as Uint8Array<ArrayBuffer>;
 const encKey = crypto.getRandomValues(new Uint8Array(32)) as Uint8Array<ArrayBuffer>;
 
+// Deterministic, collision-free request IDs for the replay guard. A counter
+// avoids Math.random()'s nondeterminism and tiny chance of a rare collision
+// causing a spurious replay-guard failure.
+let requestIdCounter = 0;
+
 /** Build valid HMAC auth headers for a given body string. */
 async function authHeaders(body: string): Promise<Record<string, string>> {
   const ts = String(Math.floor(Date.now() / 1000));
@@ -25,7 +30,7 @@ async function authHeaders(body: string): Promise<Record<string, string>> {
     "content-type": "application/json",
     "X-TokenVault-Signature": `sha256=${sig}`,
     "X-TokenVault-Timestamp": ts,
-    "X-TokenVault-Request-Id": `req_${Math.random().toString(36).slice(2)}`,
+    "X-TokenVault-Request-Id": `req_${++requestIdCounter}`,
   };
 }
 

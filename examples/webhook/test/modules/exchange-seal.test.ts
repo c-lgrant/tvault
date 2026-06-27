@@ -157,6 +157,41 @@ describe("bind seal — endpoints locked after first bind", () => {
   });
 });
 
+describe("bind seal — guardBound runs before config resolution (Copilot review)", () => {
+  it("(g) /bind on a bound-but-misconfigured webhook returns 403, not the setup page", async () => {
+    // A webhook that was bound and later lost its seed (isConfigured false) must
+    // stay sealed: guardBound runs first, so an unauthenticated caller gets 403
+    // rather than the 503 setup page (which would leak that it's re-bindable).
+    const ctx = makeContext({ hmacSecret: secret });
+    await ctx.storage.set("meta", "bind_state", { bound: true, boundAt: 1 });
+    ctx.secrets = {
+      isConfigured: async () => false,
+      hmacSecret: async () => secret,
+      encryptionKey: async () => secret,
+      webhookId: async () => "wh_test",
+      hmacSecretHash: async () => "x",
+    };
+    const app = createApp(ctx, [exchangeModule()]);
+    const res = await app.request("https://wh.example/bind", { headers: HOST });
+    expect(res.status).toBe(403);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe("forbidden");
+  });
+
+  it("(h) /v1/register-url on a bound webhook with no resolvable URL returns 403, not 400 misconfig", async () => {
+    // With no host headers resolveExternalUrl() is null. Pre-fix the handler
+    // resolved the URL first and returned a 400 misconfig before the seal check,
+    // leaking config state. guardBound now runs first → 403.
+    const ctx = makeContext({ hmacSecret: secret });
+    await ctx.storage.set("meta", "bind_state", { bound: true, boundAt: 1 });
+    const app = createApp(ctx, [exchangeModule()]);
+    const res = await app.request(new Request("http://localhost/v1/register-url"));
+    expect(res.status).toBe(403);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe("forbidden");
+  });
+});
+
 describe("FIX 2 — configFromEnv requires TOKENVAULT_FRONTEND_URL", () => {
   it("throws when TOKENVAULT_FRONTEND_URL is absent", () => {
     expect(() =>
