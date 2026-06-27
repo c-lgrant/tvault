@@ -19,6 +19,7 @@ import { WEBHOOK_VERSION } from "../core/protocol/types.ts";
 import { readJsonBody } from "../core/middleware/body.ts";
 import { sendError } from "../core/middleware/respond.ts";
 import { isBound, markBound } from "./bindState.ts";
+import { BIND_CODES_COLLECTION } from "../runtime/context.ts";
 import type { RuntimeContext, StorageAdapter, WebhookConfig } from "../runtime/context.ts";
 import type { FeatureModule } from "../core/registry.ts";
 import type { Context } from "hono";
@@ -57,8 +58,10 @@ async function guardBound(
   return null;
 }
 // Internal collection for one-time bind codes. Underscore-prefixed so it never
-// collides with a real credential collection; TV never lists it.
-const CODE_COLLECTION = "_bind_codes";
+// collides with a real credential collection; TV never lists it. The name lives
+// in context.ts and is registered in INTERNAL_COLLECTIONS so every storage
+// adapter provisions it (the FS adapter rejects unprovisioned collections).
+const CODE_COLLECTION = BIND_CODES_COLLECTION;
 
 // Issue a one-time code into durable storage. (KV set has no native TTL, so the
 // expiry is stored in the doc and enforced on consume; an abandoned code lingers

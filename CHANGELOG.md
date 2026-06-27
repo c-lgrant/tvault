@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.7.1](https://github.com/c-lgrant/tvault-private/compare/v0.7.0...v0.7.1) (2026-06-27)
+
+
+### Bug Fixes
+
+* **webhook:** provision _bind_codes collection on the FS runtime ([e6c74f3](https://github.com/c-lgrant/tvault-private/commit/e6c74f393cd18926ab6f3e508d7089fa06ef567e))
+* **webhook:** provision _bind_codes collection on the FS/Node runtime ([63ceddf](https://github.com/c-lgrant/tvault-private/commit/63ceddfadda042ec53304a719e51d18205b000b0))
+
 ## [0.7.0](https://github.com/c-lgrant/tvault-private/compare/v0.6.0...v0.7.0) (2026-06-27)
 
 
