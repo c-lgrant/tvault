@@ -1,0 +1,33 @@
+# Token Vault webhook (Node runtime) with an optional tunnel.
+#
+#   TUNNEL=none         docker compose up      # local, port 8080 only
+#   TUNNEL=ngrok        docker compose up      # needs NGROK_AUTHTOKEN + NGROK_URL
+#   TUNNEL=cloudflared  docker compose up      # needs CF_TUNNEL_TOKEN
+#
+# The named volume keeps the generated AES key + HMAC secret stable across
+# restarts — without it the webhook would re-provision keys and break its
+# existing Token Vault binding.
+
+services:
+  webhook:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      TUNNEL: ${TUNNEL:-none}
+      PORT: 8080
+      TOKENVAULT_FRONTEND_URL: ${TOKENVAULT_FRONTEND_URL:-https://tokenvault.uk}
+      # TV's egress IP — denied on /v1/credential, /v1/store, /v1/totp-code.
+      TOKENVAULT_IP: ${TOKENVAULT_IP:-}
+      # ngrok (TUNNEL=ngrok)
+      NGROK_AUTHTOKEN: ${NGROK_AUTHTOKEN:-}
+      NGROK_URL: ${NGROK_URL:-}
+      # cloudflared (TUNNEL=cloudflared)
+      CF_TUNNEL_TOKEN: ${CF_TUNNEL_TOKEN:-}
+      # Optional autonomous OAuth refresh: JSON map provider→{clientSecret,…}
+      OAUTH_PROVIDERS_JSON: ${OAUTH_PROVIDERS_JSON:-}
+    volumes:
+      - tvwebhook-data:/data
+
+volumes:
+  tvwebhook-data:
