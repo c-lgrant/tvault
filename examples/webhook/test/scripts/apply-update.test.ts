@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { mkdtemp, mkdir, writeFile, readFile, rm, symlink } from "node:fs/promises";
+import { createServer } from "node:net";
 import { planOverlay, applyOverlay } from "../../scripts/apply-update.mjs";
 
 describe("planOverlay", () => {
@@ -48,6 +49,34 @@ describe("applyOverlay", () => {
       await rm(up, { recursive: true, force: true });
       await rm(tgt, { recursive: true, force: true });
       await rm(outside, { recursive: true, force: true });
+    }
+  });
+
+  it("skips non-regular files (unix socket) and reports them in result.skipped (Copilot review: copyFile only supports regular files)", async () => {
+    const up = await mkdtemp(join(tmpdir(), "up-sock-"));
+    const tgt = await mkdtemp(join(tmpdir(), "tgt-sock-"));
+    const server = createServer();
+    try {
+      // A real file that should be copied.
+      await writeFile(join(up, "real.ts"), "REAL");
+      // A unix-domain socket — a non-regular file copyFile() cannot copy.
+      const sockPath = join(up, "daemon.sock");
+      await new Promise<void>((resolve, reject) => {
+        server.once("error", reject);
+        server.listen(sockPath, resolve);
+      });
+
+      const r = await applyOverlay(up, tgt);
+
+      // Real file copied; socket neither copied nor allowed to crash the overlay.
+      expect(await readFile(join(tgt, "real.ts"), "utf-8")).toBe("REAL");
+      await expect(readFile(join(tgt, "daemon.sock"), "utf-8")).rejects.toThrow();
+      expect(r.skipped).toContain("daemon.sock");
+      expect(r.copied).not.toContain("daemon.sock");
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+      await rm(up, { recursive: true, force: true });
+      await rm(tgt, { recursive: true, force: true });
     }
   });
 

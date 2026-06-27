@@ -24,46 +24,53 @@ export function planOverlay(files) {
 }
 
 /**
- * Recursively collect files under `dir`, relative to `base`.
- * Symlinks are never followed or emitted — they are returned separately in
- * `symlinkPaths` so callers can report them as skipped.
+ * Recursively collect regular files under `dir`, relative to `base`.
+ * Only regular files are emitted in `files`. Symlinks (never followed) and
+ * non-regular special files (FIFO/socket/device, which copyFile() can't copy)
+ * are returned separately in `skipped` so callers can report them.
  */
 async function walk(dir, base = dir) {
-  const out = [];
-  const symlinkPaths = [];
+  const files = [];
+  const skipped = [];
   for (const ent of await readdir(dir, { withFileTypes: true })) {
     const abs = join(dir, ent.name);
     let isSymlink = ent.isSymbolicLink();
     let isDir = ent.isDirectory();
+    let isFile = ent.isFile();
     // On some filesystems readdir() returns Dirents with an unknown type
     // (d_type unknown) — every isX() is false. Fall back to lstat(), which does
     // NOT follow symlinks, so the symlink guard can't be bypassed into the
     // plain-file branch (which would copyFile() the link target).
-    if (!isSymlink && !isDir && !ent.isFile()) {
+    if (!isSymlink && !isDir && !isFile) {
       const st = await lstat(abs);
       isSymlink = st.isSymbolicLink();
       isDir = st.isDirectory();
+      isFile = st.isFile();
     }
     if (isSymlink) {
       // Refuse to follow symlinks: they could point anywhere on the runner
       // filesystem and copyFile() would silently exfiltrate the target.
-      symlinkPaths.push(relative(base, abs));
+      skipped.push(relative(base, abs));
     } else if (isDir) {
       const sub = await walk(abs, base);
-      out.push(...sub.files);
-      symlinkPaths.push(...sub.symlinks);
+      files.push(...sub.files);
+      skipped.push(...sub.skipped);
+    } else if (isFile) {
+      files.push(relative(base, abs));
     } else {
-      out.push(relative(base, abs));
+      // Non-regular file (FIFO/socket/device): copyFile() only supports regular
+      // files, so skip it and report it alongside symlinks rather than failing.
+      skipped.push(relative(base, abs));
     }
   }
-  return { files: out, symlinks: symlinkPaths };
+  return { files, skipped };
 }
 
 export async function applyOverlay(upstreamDir, targetDir) {
-  const { files, symlinks } = await walk(upstreamDir);
+  const { files, skipped: walkSkipped } = await walk(upstreamDir);
   const { copy, skipped } = planOverlay(files);
-  // Symlinks are always skipped — append them to the skipped list.
-  const allSkipped = [...skipped, ...symlinks];
+  // Symlinks and other non-regular files are always skipped — append them.
+  const allSkipped = [...skipped, ...walkSkipped];
   for (const rel of copy) {
     const dest = join(targetDir, rel);
     await mkdir(dirname(dest), { recursive: true });
