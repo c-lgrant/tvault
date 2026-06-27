@@ -16,13 +16,23 @@ export const KNOWN_COLLECTIONS = [
 export type Collection = (typeof KNOWN_COLLECTIONS)[number];
 
 /**
- * Internal collections the webhook persists for its own bookkeeping (e.g. the
- * durable bind-state flag). These are deliberately NOT part of
- * `KNOWN_COLLECTIONS`, so the agent-facing `/v1/storage` endpoint — which gates
- * on `isKnownCollection` — never exposes them. Storage adapters must still
- * initialize them so internal reads/writes work on every runtime.
+ * Internal collection holding one-time bind codes (see the exchange module).
+ * Defined here — not just as a literal in exchange.ts — so it is registered in
+ * `INTERNAL_COLLECTIONS` and every storage adapter provisions it. The FS adapter
+ * rejects writes to collections it didn't provision, so an omission here breaks
+ * the bind flow on the Node runtime (D1 accepts arbitrary collections and hid it).
  */
-export const INTERNAL_COLLECTIONS = ["meta"] as const;
+export const BIND_CODES_COLLECTION = "_bind_codes";
+
+/**
+ * Internal collections the webhook persists for its own bookkeeping (the durable
+ * bind-state flag, schema version, and one-time bind codes). These are
+ * deliberately NOT part of `KNOWN_COLLECTIONS`, so the agent-facing `/v1/storage`
+ * endpoint — which gates on `isKnownCollection` — never exposes them. Storage
+ * adapters must still initialize them so internal reads/writes work on every
+ * runtime.
+ */
+export const INTERNAL_COLLECTIONS = ["meta", BIND_CODES_COLLECTION] as const;
 
 /** Every collection an adapter must provision: agent-facing plus internal. */
 export const ALL_COLLECTIONS = [
