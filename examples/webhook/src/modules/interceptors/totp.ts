@@ -21,7 +21,9 @@ import { readTokenObject } from "../../core/protocol/tokendoc.ts";
 import type { CredentialInterceptor, FeatureModule, InterceptorInput } from "../../core/registry.ts";
 
 // /v1/totp-code accepts the credential purposes plus a dedicated totp_code one.
-const TOTP_PURPOSES = new Set(["agent_credential", "user_reveal", "browser_credential", "totp_code"]);
+// browser_credential is intentionally absent: FIX 4 dropped it as a phantom
+// purpose from /v1/credential, so the totp allowlist mirrors that.
+const TOTP_PURPOSES = new Set(["agent_credential", "user_reveal", "totp_code"]);
 
 const DIGEST_BY_ALGORITHM: Record<string, "SHA-1" | "SHA-256" | "SHA-512"> = {
   SHA1: "SHA-1",

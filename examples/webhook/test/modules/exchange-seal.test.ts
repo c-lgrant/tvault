@@ -154,6 +154,10 @@ describe("bind seal — endpoints locked after first bind", () => {
     // Providing any value still fails because there's no expected secret to compare against.
     const res = await exchange(app, "test-code2", "any-value");
     expect(res.status).toBe(403);
+    // The message must not imply a header can re-bind it — it's permanently sealed.
+    const body = (await res.json()) as { message: string };
+    expect(body.message).toContain("permanently sealed");
+    expect(body.message).toContain("TV_ADMIN_SECRET");
   });
 });
 

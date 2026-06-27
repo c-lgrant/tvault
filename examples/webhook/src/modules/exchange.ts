@@ -45,10 +45,13 @@ async function guardBound(
     const matches = !!expected
       && constantTimeEqual(await sha256Hex(provided), await sha256Hex(expected));
     if (!matches) {
-      return sendError(
-        c,
-        forbidden("Webhook already bound. Provide a valid x-tv-admin-secret header to re-bind."),
-      );
+      // Distinguish the two sealed states so the message isn't misleading: with
+      // no TV_ADMIN_SECRET configured the webhook is permanently sealed (no
+      // header can re-open it) and the operator must set the secret and redeploy.
+      const message = expected
+        ? "Webhook already bound. Provide a valid x-tv-admin-secret header to re-bind."
+        : "Webhook already bound and no admin secret is configured, so it is permanently sealed. Set TV_ADMIN_SECRET and redeploy to re-bind.";
+      return sendError(c, forbidden(message));
     }
   }
   return null;
