@@ -75,3 +75,15 @@ export function constantTimeEqual(a: string, b: string): boolean {
   for (let i = 0; i < ab.length; i++) diff |= ab[i]! ^ bb[i]!;
   return diff === 0;
 }
+
+/**
+ * SHA-256 of a UTF-8 string, hex-encoded (64 chars). Use this to compare two
+ * arbitrary-length secrets in constant time: hash both sides first, then
+ * constantTimeEqual the digests. Because every digest is the same length, the
+ * length-mismatch short-circuit in constantTimeEqual never fires, so the
+ * comparison can't leak the secret's length through timing.
+ */
+export async function sha256Hex(s: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", utf8(s));
+  return bytesToHex(new Uint8Array(digest));
+}

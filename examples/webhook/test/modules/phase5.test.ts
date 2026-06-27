@@ -195,7 +195,7 @@ describe("GCP SA interceptor — scope escalation prevention (FIX 3)", () => {
     try {
       const interceptor = gcpSaModule().interceptor!;
       // Use a unique service name to avoid hitting the in-isolate token cache.
-      const svc = `gcp-scope-fix3-${Math.random()}`;
+      const svc = `gcp-scope-fix3-${crypto.randomUUID()}`;
       // Agent supplies an elevated IAM scope — this must be ignored.
       const query = new URLSearchParams(
         "scopes=https://www.googleapis.com/auth/iam.admin",

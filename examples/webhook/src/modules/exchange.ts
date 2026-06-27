@@ -13,7 +13,7 @@
 // code is invisible to the exchange and TV reports "code expired or already
 // used". A durable store fixes that — any isolate can consume the code.
 
-import { base64Encode, constantTimeEqual, utf8 } from "../core/crypto/encoding.ts";
+import { base64Encode, constantTimeEqual, sha256Hex, utf8 } from "../core/crypto/encoding.ts";
 import { forbidden, invalidRequest } from "../core/protocol/errors.ts";
 import { WEBHOOK_VERSION } from "../core/protocol/types.ts";
 import { readJsonBody } from "../core/middleware/body.ts";
@@ -37,9 +37,14 @@ async function guardBound(
   if (await isBound(ctx.storage)) {
     const provided = c.req.header("x-tv-admin-secret") ?? "";
     const expected = ctx.config.adminSecret ?? "";
-    // If no admin secret is configured, or the provided value does not match
-    // (constant-time to prevent timing attacks), deny the request.
-    if (!expected || !constantTimeEqual(provided, expected)) {
+    // If no admin secret is configured, deny outright (fully sealed). Otherwise
+    // compare SHA-256 digests rather than the raw strings: constantTimeEqual
+    // short-circuits on a length mismatch, which would leak the admin secret's
+    // length for an arbitrary-length TV_ADMIN_SECRET. Hashing both sides first
+    // makes every comparison operate on fixed-length (64-char) digests.
+    const matches = !!expected
+      && constantTimeEqual(await sha256Hex(provided), await sha256Hex(expected));
+    if (!matches) {
       return sendError(
         c,
         forbidden("Webhook already bound. Provide a valid x-tv-admin-secret header to re-bind."),
