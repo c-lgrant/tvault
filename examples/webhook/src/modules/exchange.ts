@@ -205,6 +205,11 @@ export function exchangeModule(): FeatureModule {
     name: "exchange",
     register(app, ctx, registry) {
       app.get("/v1/register-url", async (c) => {
+        // Seal check FIRST: a bound webhook must return 403 before any config
+        // resolution, so an unauthenticated caller can't probe config state
+        // (e.g. a misconfig 400) through a sealed endpoint.
+        const blocked = await guardBound(c, ctx);
+        if (blocked) return blocked;
         const externalUrl = resolveExternalUrl(c, ctx.config);
         if (!externalUrl) {
           return sendError(
@@ -212,8 +217,6 @@ export function exchangeModule(): FeatureModule {
             invalidRequest("Could not determine external URL. Set EXTERNAL_URL."),
           );
         }
-        const blocked = await guardBound(c, ctx);
-        if (blocked) return blocked;
         const code = await issueCode(ctx.storage);
         const hash = await ctx.secrets.hmacSecretHash();
         return c.json({
@@ -252,6 +255,11 @@ export function exchangeModule(): FeatureModule {
       });
 
       app.get("/bind", async (c) => {
+        // Seal check FIRST: a bound webhook stays sealed even if it later loses
+        // its seed (misconfigured). Checking config before the seal would serve
+        // the setup page to unauthenticated callers on a bound-but-broken webhook.
+        const blocked = await guardBound(c, ctx);
+        if (blocked) return blocked;
         const externalUrl = resolveExternalUrl(c, ctx.config);
         if (!externalUrl) {
           return c.html("<h1>Webhook misconfigured</h1><p>EXTERNAL_URL is not set.</p>", 500);
@@ -261,8 +269,6 @@ export function exchangeModule(): FeatureModule {
         if (!(await ctx.secrets.isConfigured())) {
           return c.html(SETUP_PAGE(externalUrl, workerNameFromHost(externalUrl)), 503);
         }
-        const blocked = await guardBound(c, ctx);
-        if (blocked) return blocked;
         const frontend = resolveFrontend(c, ctx.config);
         const code = await issueCode(ctx.storage);
         const hash = await ctx.secrets.hmacSecretHash();
