@@ -3,7 +3,7 @@
 // preserving their config. Used by .github/workflows/update-webhook.yml. Pure
 // helpers are exported for tests; the CLI tail runs the overlay.
 
-import { readdir, mkdir, copyFile, stat } from "node:fs/promises";
+import { readdir, mkdir, copyFile, stat, lstat } from "node:fs/promises";
 import { join, dirname, relative, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -33,11 +33,22 @@ async function walk(dir, base = dir) {
   const symlinkPaths = [];
   for (const ent of await readdir(dir, { withFileTypes: true })) {
     const abs = join(dir, ent.name);
-    if (ent.isSymbolicLink()) {
+    let isSymlink = ent.isSymbolicLink();
+    let isDir = ent.isDirectory();
+    // On some filesystems readdir() returns Dirents with an unknown type
+    // (d_type unknown) — every isX() is false. Fall back to lstat(), which does
+    // NOT follow symlinks, so the symlink guard can't be bypassed into the
+    // plain-file branch (which would copyFile() the link target).
+    if (!isSymlink && !isDir && !ent.isFile()) {
+      const st = await lstat(abs);
+      isSymlink = st.isSymbolicLink();
+      isDir = st.isDirectory();
+    }
+    if (isSymlink) {
       // Refuse to follow symlinks: they could point anywhere on the runner
       // filesystem and copyFile() would silently exfiltrate the target.
       symlinkPaths.push(relative(base, abs));
-    } else if (ent.isDirectory()) {
+    } else if (isDir) {
       const sub = await walk(abs, base);
       out.push(...sub.files);
       symlinkPaths.push(...sub.symlinks);
