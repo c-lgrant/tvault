@@ -20,12 +20,13 @@ import { MemoryReplayGuard } from "../../src/adapters/replay/memory.ts";
 import { runStartup } from "../../src/runtime/startup.ts";
 import { applyPendingMigrations, CURRENT_SCHEMA_VERSION } from "../../src/migrations/index.ts";
 import { isBound, markBound } from "../../src/modules/bindState.ts";
+import { TIMESTAMP_TOLERANCE, WEBHOOK_VERSION } from "../../src/core/protocol/types.ts";
 import type { RuntimeContext, WebhookConfig } from "../../src/runtime/context.ts";
 
 function cfg(adminSecret?: string): WebhookConfig {
   return {
-    version: "2.4.0",
-    timestampTolerance: 300,
+    version: WEBHOOK_VERSION,
+    timestampTolerance: TIMESTAMP_TOLERANCE,
     tokenvaultFrontendUrl: "https://tokenvault.test",
     externalUrl: "https://wh.test",
     denyIps: [],
