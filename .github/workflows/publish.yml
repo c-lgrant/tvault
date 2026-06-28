@@ -95,6 +95,15 @@ jobs:
             # added after the mirror push). The Release step self-guards
             # (skip-if-exists + --verify-tag), so this is safe when it exists.
             echo "No file changes to mirror for ${TAG}; tree already current on public."
+            # Ensure the tag exists on public: a prior run may have pushed main
+            # but died before pushing the tag, which the Release step's
+            # --verify-tag depends on. HEAD here is the already-mirrored
+            # "release: ${TAG}" commit, so tag it and push if it's missing.
+            if ! git ls-remote --exit-code --tags origin "refs/tags/${TAG}" >/dev/null 2>&1; then
+              echo "Public tag ${TAG} missing; tagging current public HEAD and pushing it."
+              git tag -f "${TAG}"
+              git push origin "${TAG}"
+            fi
             echo "published=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
