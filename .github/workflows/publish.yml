@@ -73,6 +73,7 @@ jobs:
           git clone github-public:c-lgrant/tvault.git "$RUNNER_TEMP/public"
 
       - name: Overlay tree (minus .publishignore) and publish squashed release
+        id: overlay
         env:
           TAG: ${{ steps.tag.outputs.ref }}
         run: |
@@ -95,4 +96,35 @@ jobs:
           git tag "${TAG}"
           git push origin HEAD:main
           git push origin "${TAG}"
+          echo "published=true" >> "$GITHUB_OUTPUT"
           echo "Published ${TAG} to public c-lgrant/tvault."
+
+      # Create the public GitHub Release so GoReleaser (release.yml) and the
+      # webhook image build (build-webhook.yml) — both `on: release` — actually
+      # run. The deploy-key push above only moves git refs; it can't create a
+      # Release via the API, which is why this was a manual step. Needs a token
+      # with contents:write on the PUBLIC repo (PUBLISH_PAT). Without the secret
+      # this no-ops with a warning, preserving today's manual flow.
+      - name: Create public GitHub Release
+        if: ${{ steps.overlay.outputs.published == 'true' }}
+        env:
+          GH_TOKEN: ${{ secrets.PUBLISH_PAT }}
+          TAG: ${{ steps.tag.outputs.ref }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::warning::PUBLISH_PAT not set — public Release for ${TAG} not created; GoReleaser + webhook image build will NOT run. Create it manually: gh release create ${TAG} --repo c-lgrant/tvault --verify-tag"
+            exit 0
+          fi
+          if gh release view "$TAG" --repo c-lgrant/tvault >/dev/null 2>&1; then
+            echo "Public Release ${TAG} already exists; nothing to do."
+            exit 0
+          fi
+          # Pull the canonical notes from the private release and strip
+          # tvault-private compare/commit URLs + ([sha](…/commit/…)) trailers —
+          # those SHAs don't exist on the squashed public history.
+          gh release view "$TAG" --repo c-lgrant/tvault-private --json body --jq '.body' \
+            | sed -E 's#/c-lgrant/tvault-private/#/c-lgrant/tvault/#g; s/ \(\[[0-9a-f]{7,}\]\([^)]*\/commit\/[^)]*\)\)//g' \
+            > "$RUNNER_TEMP/notes.md"
+          gh release create "$TAG" --repo c-lgrant/tvault --title "$TAG" \
+            --notes-file "$RUNNER_TEMP/notes.md" --verify-tag
+          echo "Created public Release ${TAG} — GoReleaser + webhook image build will run."

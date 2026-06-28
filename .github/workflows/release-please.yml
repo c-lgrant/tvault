@@ -14,5 +14,12 @@ jobs:
     steps:
       - uses: googleapis/release-please-action@v5
         with:
+          # With PUBLISH_PAT present, release-please creates the release tag as a
+          # real identity, so the tag push triggers publish.yml (on: push tags).
+          # The default GITHUB_TOKEN cannot — a tag it pushes never triggers
+          # other workflows (recursion guard), which is why publish.yml had to be
+          # dispatched by hand. Falls back to github.token (today's manual flow)
+          # when the secret is absent, so this is a zero-regression change.
+          token: ${{ secrets.PUBLISH_PAT || github.token }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
