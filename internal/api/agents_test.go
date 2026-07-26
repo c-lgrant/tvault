@@ -27,6 +27,45 @@ func TestListAgents(t *testing.T) {
 	}
 }
 
+// The prod backend serialises grantCount through Firestore, whose Python
+// client surfaces aggregation counts as floats — the wire carries 0.0/2.0
+// where the contract says integer. That cosmetic field must never abort a
+// command (it killed all six agents subcommands in v0.6.0).
+func TestListAgentsToleratesFractionalGrantCount(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`[{"id":"a1","name":"pi-mixer","status":"active","grantCount":0.0},
+		                 {"id":"a2","name":"nuc-bot","status":"active","grantCount":2.0},
+		                 {"id":"a3","name":"daily-recap","status":"active","grantCount":3}]`))
+	}))
+	defer srv.Close()
+	client := &Client{BaseURL: srv.URL, HTTP: srv.Client()}
+	agents, err := client.ListAgents()
+	if err != nil {
+		t.Fatalf("ListAgents must tolerate fractional grantCount: %v", err)
+	}
+	if got := []int{int(agents[0].GrantCount), int(agents[1].GrantCount), int(agents[2].GrantCount)}; got[0] != 0 || got[1] != 2 || got[2] != 3 {
+		t.Errorf("grant counts = %v, want [0 2 3]", got)
+	}
+}
+
+func TestGetAgentToleratesFractionalGrantCount(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// show-path payloads carry doubles when token_groups wrote the
+		// denormalized count back to Firestore as a float
+		w.Write([]byte(`{"id":"a1","name":"pi-mixer","status":"active","grantCount":1.0,
+		                 "grants":[{"serviceName":"github_ro"}]}`))
+	}))
+	defer srv.Close()
+	client := &Client{BaseURL: srv.URL, HTTP: srv.Client()}
+	a, err := client.GetAgent("a1")
+	if err != nil {
+		t.Fatalf("GetAgent must tolerate fractional grantCount: %v", err)
+	}
+	if int(a.GrantCount) != 1 || len(a.Grants) != 1 {
+		t.Errorf("agent = %+v", a)
+	}
+}
+
 func TestCreateAgentReturnsKey(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		raw, _ := io.ReadAll(r.Body)
