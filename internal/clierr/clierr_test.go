@@ -18,6 +18,7 @@ func TestExitCode(t *testing.T) {
 		{&CLIError{Kind: KindServer}, 4},
 		{&CLIError{Kind: KindVaultLocked}, 5},
 		{&CLIError{Kind: KindEmpty}, 6},
+		{&CLIError{Kind: KindRateLimited}, 7},
 		{errors.New("plain error"), 1},
 	}
 	for _, c := range cases {
