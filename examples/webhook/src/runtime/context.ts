@@ -68,6 +68,14 @@ export interface WebhookConfig {
   /** Origins rejected on the credential + store endpoints. */
   denyOrigins: string[];
   /**
+   * Best-effort per-isolate token bucket over all endpoints, keyed by client
+   * IP. Set via TV_RATE_LIMIT_PER_MINUTE; absent/0 disables. This bounds
+   * damage from a runaway client between CF rate-limiting-rule evaluations
+   * (and is the only limiter on Node) — the durable defense on Workers is a
+   * Cloudflare rate-limiting rule, see wrangler.toml.
+   */
+  rateLimit?: { maxPerMinute: number };
+  /**
    * OAuth client credentials the webhook owns, keyed by lower-cased provider
    * name (e.g. "github", "google"). The refresh-notify path reads the
    * `clientSecret` from HERE and NEVER from the request's refresh hint — the

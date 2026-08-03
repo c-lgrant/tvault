@@ -50,6 +50,9 @@ export const tokenNotFound = (message: string) =>
 export const forbidden = (message: string) =>
   new WebhookError(403, "forbidden", message);
 
+export const tooManyRequests = (message: string) =>
+  new WebhookError(429, "rate_limited", message);
+
 export const internalError = (message: string) =>
   new WebhookError(500, "internal_error", message);
 
