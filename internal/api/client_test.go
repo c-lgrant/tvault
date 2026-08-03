@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/c-lgrant/tvault/internal/clierr"
 )
@@ -19,16 +20,17 @@ func (t *countingTransport) RoundTrip(*http.Request) (*http.Response, error) {
 }
 
 // TestDoRequestRetriesGetButNotPost proves the connection-error retry is
-// restricted to idempotent GETs: a GET makes 2 attempts, a POST makes 1.
+// restricted to idempotent GETs: a GET makes maxGetAttempts attempts, a POST
+// makes 1.
 func TestDoRequestRetriesGetButNotPost(t *testing.T) {
-	t.Run("GET retries once", func(t *testing.T) {
+	t.Run("GET retries", func(t *testing.T) {
 		rt := &countingTransport{}
-		client := &Client{BaseURL: "http://example.invalid", HTTP: &http.Client{Transport: rt}}
+		client := &Client{BaseURL: "http://example.invalid", HTTP: &http.Client{Transport: rt}, sleep: func(time.Duration) {}}
 		if _, err := client.doRequest("GET", "/x", nil, nil); err == nil {
 			t.Fatal("expected error")
 		}
-		if rt.calls != 2 {
-			t.Errorf("GET attempts = %d, want 2", rt.calls)
+		if rt.calls != maxGetAttempts {
+			t.Errorf("GET attempts = %d, want %d", rt.calls, maxGetAttempts)
 		}
 	})
 	t.Run("POST does not retry", func(t *testing.T) {
