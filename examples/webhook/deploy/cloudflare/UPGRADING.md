@@ -5,6 +5,28 @@ no URL change. Your credentials (D1) and your seed (`TV_WEBHOOK_SEED`) are
 preserved across every deploy, and the webhook upconverts its own storage schema
 on boot.
 
+## One-time prerequisite
+
+GitHub blocks Actions from opening pull requests on new repos by default, so the
+**first** run of the update workflow fails with:
+
+```
+GitHub Actions is not permitted to create or approve pull requests.
+```
+
+Enable it once, in **your** webhook repo — Settings → Actions → General →
+Workflow permissions → tick **Allow GitHub Actions to create and approve pull
+requests** → Save. Or with the CLI:
+
+```bash
+gh api -X PUT repos/<you>/<your-webhook-repo>/actions/permissions/workflow \
+  -f default_workflow_permissions=read -F can_approve_pull_request_reviews=true
+```
+
+The workflow requests `pull-requests: write` itself, so leaving the default
+workflow permission at `read` is fine — this repo-level switch is the only thing
+that needs changing.
+
 ## The easy path (recommended)
 
 1. Open your webhook repo on GitHub → **Actions** → **Update webhook** → **Run
@@ -23,11 +45,15 @@ That's it. Same URL, same identity, same data — newer code.
 
 ```bash
 # from a clone of YOUR webhook repo
-curl -fsSL https://codeload.github.com/c-lgrant/tvault/tar.gz/refs/tags/<tag> -o up.tgz
-mkdir up && tar -xzf up.tgz -C up --strip-components=1
-node scripts/apply-update.mjs up/examples/webhook .
+# Stage the download OUTSIDE the repo — `git add -A` below would otherwise
+# commit the tarball and the whole extracted tree into your PR.
+up=$(mktemp -d)
+curl -fsSL https://codeload.github.com/c-lgrant/tvault/tar.gz/refs/tags/<tag> -o "$up/up.tgz"
+tar -xzf "$up/up.tgz" -C "$up" --strip-components=1
+node scripts/apply-update.mjs "$up/examples/webhook" .
 git checkout -b chore/update-webhook && git add -A && git commit -m "chore: update webhook to <tag>"
 git push origin chore/update-webhook   # open a PR, review, merge → auto-deploy
+rm -rf "$up"
 ```
 
 ## What is preserved
