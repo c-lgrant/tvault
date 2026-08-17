@@ -64,6 +64,13 @@ rm -rf "$up"
 | Seed / keys | ✅ | `TV_WEBHOOK_SEED` is a Workers Secret, untouched by deploys |
 | Webhook URL + TV binding | ✅ | Identity is HKDF-derived from the seed; nothing re-registers |
 | `wrangler.toml` / secrets | ✅ | The update Action skips operator config |
+| `.github/workflows/` | ✅ | Skipped — see below; changes are reported, not applied |
+
+> **Workflow files are never auto-updated.** GitHub refuses to let an Actions
+> token write under `.github/workflows/`, and that permission cannot be granted
+> to `GITHUB_TOKEN` at all. So the update skips those files rather than building
+> a commit that could never be pushed. When upstream changes one, the run's
+> summary and the PR body both name it — copy it in by hand.
 
 > **Auto-seal on upgrade.** If you bound your webhook before the bind-seal
 > mechanism shipped and never set `TV_ADMIN_SECRET`, the webhook will

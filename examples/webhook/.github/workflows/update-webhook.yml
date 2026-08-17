@@ -61,10 +61,25 @@ jobs:
             || { echo "upstream tree has no examples/webhook" >&2; exit 1; }
 
       - name: Overlay onto the repo (preserves wrangler.toml + secrets)
+        id: overlay
         run: |
           node scripts/apply-update.mjs \
             "${RUNNER_TEMP}/upstream/examples/webhook" \
             "${GITHUB_WORKSPACE}"
+
+      - name: Warn if upstream changed this workflow
+        if: steps.overlay.outputs.drift == 'true'
+        env:
+          DRIFT_FILES: ${{ steps.overlay.outputs.drift_files }}
+        run: |
+          {
+            echo "### ⚠️ Workflow files changed upstream"
+            echo
+            echo "GitHub Actions cannot push changes under \`.github/workflows/\`,"
+            echo "so these were **skipped** and must be applied by hand:"
+            echo
+            echo "$DRIFT_FILES" | tr ',' '\n' | sed 's/^ *//;s/^/- `/;s/$/`/'
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Open update PR
         uses: peter-evans/create-pull-request@v6
@@ -85,3 +100,5 @@ jobs:
 
             If this release adds new `wrangler.toml` variables, this PR will not
             include them — check the upstream release notes and add them manually.
+
+            ${{ steps.overlay.outputs.drift == 'true' && format('> ⚠️ **Apply by hand:** upstream also changed `{0}`. GitHub Actions cannot push workflow files, so this PR excludes them.', steps.overlay.outputs.drift_files) || '' }}
