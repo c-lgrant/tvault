@@ -1,8 +1,15 @@
 # tvault
 
-The Token Vault command-line interface. Manage credentials, agents, grants, and
-the vault lock from your terminal — with a browser-based login and
-kubectl-style contexts for switching between admin and agent personas.
+**Scoped, revocable API-key access for AI agents. Your keys stay on your own webhook.**
+
+[Token Vault](https://tokenvault.uk) gives your AI agents scoped, revocable, audited access
+to your API keys — and never holds them. Your credentials live on a webhook you deploy in ten
+minutes; Token Vault holds identities, grants, ABAC policies and audit metadata, and brokers
+access without ever seeing a credential.
+
+`tvault` is the terminal interface to it. Manage credentials, agents, grants and the vault
+lock from your shell — with a browser-based login and kubectl-style contexts for switching
+between admin and agent personas.
 
 ## Install
 
