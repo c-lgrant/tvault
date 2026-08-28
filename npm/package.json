@@ -1,0 +1,49 @@
+{
+  "name": "@tvault/cli",
+  "version": "0.7.1",
+  "description": "Scoped, revocable API-key access for AI agents. Your keys stay on your own webhook. This is the Token Vault CLI.",
+  "keywords": [
+    "tokenvault",
+    "tvault",
+    "credentials",
+    "api-keys",
+    "ai-agents",
+    "mcp",
+    "oauth",
+    "secrets",
+    "cli"
+  ],
+  "homepage": "https://tokenvault.uk",
+  "bugs": {
+    "url": "https://github.com/c-lgrant/tvault/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/c-lgrant/tvault.git",
+    "directory": "npm"
+  },
+  "license": "MIT",
+  "author": "Conor Grant",
+  "bin": {
+    "tvault": "bin/tvault"
+  },
+  "files": [
+    "bin/tvault",
+    "install.js",
+    "README.md"
+  ],
+  "scripts": {
+    "postinstall": "node install.js"
+  },
+  "engines": {
+    "node": ">=16"
+  },
+  "os": [
+    "linux",
+    "darwin"
+  ],
+  "cpu": [
+    "x64",
+    "arm64"
+  ]
+}
