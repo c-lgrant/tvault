@@ -47,7 +47,7 @@ TV_RATE_LIMIT_PER_MINUTE = "300"
 # returned id here.)
 [[d1_databases]]
 binding = "DB"
-database_name = "tv-webhook"
+database_name = "tv-webhook-dev"
 
 # ── Observability (Workers Logs + invocation traces) ──────────────────────────
 # Persists structured logs and per-invocation traces, viewable in the dashboard
