@@ -47,7 +47,7 @@ describe("landing page — seed set, not yet bound", () => {
     expect(html).toContain("Seed");
     expect(html).toContain("set");
     expect(html).toContain("not yet");
-    expect(html).toContain('href="/bind"');
+    expect(html).toContain('href="/bind?tv=');
     expect(html).toContain("Binding to: <code>https://tokenvault.test</code>");
   });
 
