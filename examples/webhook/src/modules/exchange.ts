@@ -19,8 +19,10 @@ import { WEBHOOK_VERSION } from "../core/protocol/types.ts";
 import { readJsonBody } from "../core/middleware/body.ts";
 import { sendError } from "../core/middleware/respond.ts";
 import { isBound, markBound } from "./bindState.ts";
+import { pageHead } from "./pageChrome.ts";
+import { resolveExternalUrl, resolveFrontend, seedFix } from "./webhookLinks.ts";
 import { BIND_CODES_COLLECTION } from "../runtime/context.ts";
-import type { RuntimeContext, StorageAdapter, WebhookConfig } from "../runtime/context.ts";
+import type { RuntimeContext, StorageAdapter } from "../runtime/context.ts";
 import type { FeatureModule } from "../core/registry.ts";
 import type { Context } from "hono";
 import type { AppEnv } from "../core/app.ts";
@@ -81,89 +83,14 @@ async function consumeCode(storage: StorageAdapter, code: string): Promise<boole
   return typeof doc.exp === "number" && doc.exp >= Date.now();
 }
 
-function resolveExternalUrl(c: Context<AppEnv>, config: WebhookConfig): string | null {
-  if (config.externalUrl) return config.externalUrl;
-  const host = c.req.header("x-forwarded-host") ?? c.req.header("host");
-  const proto = c.req.header("x-forwarded-proto") ?? "https";
-  return host ? `${proto}://${host}` : null;
-}
-
-// The Token Vault frontend to bind to. A `tv` query param lets the launching TV
-// instance (dev, prod, or a self-host) point the webhook back at itself, so the
-// frontend URL is not hard-coded per deployment. The param is constrained to an
-// https origin (http only for localhost) and is SHOWN on the bind page, because
-// whoever receives the redirect can exchange the one-time code for the HMAC
-// secret — the operator must confirm the destination. No param → the configured
-// TOKENVAULT_FRONTEND_URL (the trusted default).
-function resolveFrontend(c: Context<AppEnv>, config: WebhookConfig): string {
-  const tv = c.req.query("tv");
-  if (tv) {
-    try {
-      const u = new URL(tv);
-      const isLocalhost = u.hostname === "localhost" || u.hostname === "127.0.0.1";
-      if (u.protocol === "https:" || (u.protocol === "http:" && isLocalhost)) {
-        return `${u.protocol}//${u.host}`;
-      }
-    } catch {
-      // malformed tv param → fall through to the configured default
-    }
-  }
-  return config.tokenvaultFrontendUrl;
-}
-
-// Best-effort deep link into the Cloudflare dashboard for THIS worker's settings,
-// where TV_WEBHOOK_SEED is set. The worker name is the first label of a
-// `*.workers.dev` host; behind a custom domain we can't know it, so fall back to
-// the Workers & Pages list. `:account` is a dashboard placeholder Cloudflare
-// resolves to the signed-in account, so we don't need the account id.
-function workerNameFromHost(externalUrl: string): string | null {
-  try {
-    const host = new URL(externalUrl).hostname;
-    if (host.endsWith(".workers.dev")) {
-      const label = host.split(".")[0];
-      return label && label !== "workers" ? label : null;
-    }
-  } catch {
-    /* malformed URL → no name */
-  }
-  return null;
-}
-
-function dashboardSettingsUrl(workerName: string | null): string {
-  return workerName
-    ? `https://dash.cloudflare.com/?to=/:account/workers/services/view/${workerName}/production/settings`
-    : "https://dash.cloudflare.com/?to=/:account/workers-and-pages";
-}
-
 function buildRegUrl(frontend: string, code: string, externalUrl: string, hmacHash: string): string {
   const webhookUrlB64 = base64Encode(utf8(externalUrl));
   const qs = new URLSearchParams({ code, webhook_url: webhookUrlB64, hmac_hash: hmacHash });
   return `${frontend.replace(/\/$/, "")}/vault/webhook-bind?${qs.toString()}`;
 }
 
-const PAGE_HEAD = `<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Connect to Token Vault</title>
-<style>
-  body{font:16px system-ui,sans-serif;max-width:34rem;margin:3rem auto;padding:0 1.5rem;color:#0f172a;line-height:1.5}
-  h1{font-size:1.4rem}
-  h2{font-size:1.1rem}
-  .btn{display:inline-block;margin-top:1.5rem;padding:.7rem 1.25rem;border-radius:.5rem;
-       background:#059669;color:#fff;text-decoration:none;font-weight:600}
-  button.btn{border:0;cursor:pointer;font:inherit}
-  .btn.secondary{background:#475569}
-  code{background:#f1f5f9;padding:.15rem .35rem;border-radius:.25rem;font-size:.85em}
-  pre{background:#0f172a;color:#e2e8f0;padding:.9rem 1rem;border-radius:.5rem;overflow-x:auto;font-size:.85em}
-  .dest{margin-top:1rem;padding:.75rem 1rem;border:1px solid #e2e8f0;border-radius:.5rem;background:#f8fafc}
-  .warn{margin-top:1rem;padding:.75rem 1rem;border:1px solid #fcd34d;border-radius:.5rem;background:#fffbeb}
-  .tip{margin-top:1rem;padding:.75rem 1rem;border:1px solid #bbf7d0;border-radius:.5rem;background:#f0fdf4}
-  .muted{color:#475569;font-size:.9em}
-  hr{margin:1.75rem 0;border:0;border-top:1px solid #e2e8f0}
-  ol{padding-left:1.2rem}
-</style>`;
-
 const BIND_PAGE = (regUrl: string, externalUrl: string, frontend: string) => `<!doctype html>
-<html lang="en"><head>${PAGE_HEAD}</head><body>
+<html lang="en"><head>${pageHead()}</head><body>
 <h1>Connect this webhook to Token Vault</h1>
 <p>This webhook holds your credentials. Click below to complete the secure key
 exchange — your encryption key never leaves this server.</p>
@@ -180,11 +107,10 @@ receives a one-time code that completes the key exchange.</p>
 // provisions it when the build token allows; otherwise set it by hand). The
 // dashboard deep link + `--name` are derived from the worker's *.workers.dev
 // host so the operator needn't know the worker name or be in the project dir.
-const SETUP_PAGE = (externalUrl: string, workerName: string | null) => {
-  const settingsUrl = dashboardSettingsUrl(workerName);
-  const nameFlag = workerName ? ` --name ${workerName}` : "";
+const SETUP_PAGE = (externalUrl: string) => {
+  const { settingsUrl, workerName, command } = seedFix(externalUrl);
   return `<!doctype html>
-<html lang="en"><head>${PAGE_HEAD}</head><body>
+<html lang="en"><head>${pageHead()}</head><body>
 <h1>Setup required — set the seed</h1>
 <p>This webhook (<code>${externalUrl}</code>) can't bind yet. It needs a single
 root secret — <code>TV_WEBHOOK_SEED</code> — before it can derive its encryption
@@ -203,7 +129,7 @@ that step was skipped.</div>
 <li>Value: a fresh 32-byte hex (generate with <code>openssl rand -hex 32</code>). Save.</li>
 </ol>
 <p class="muted">Or via the CLI:</p>
-<pre>openssl rand -hex 32 | npx wrangler secret put TV_WEBHOOK_SEED${nameFlag}</pre>
+<pre>${command}</pre>
 ${workerName ? "" : `<p class="muted">Run from your project directory (where <code>wrangler.toml</code> lives), or add <code>--name &lt;worker-name&gt;</code>.</p>\n`}<div class="warn"><strong>Choose before you bind.</strong> The seed is the root
 key: if you change it <em>after</em> binding, the HMAC secret changes, Token
 Vault's pinned hash no longer matches, and every call fails until you re-bind.</div>
@@ -278,7 +204,7 @@ export function exchangeModule(): FeatureModule {
         // No seed yet → explain how to set the TV_WEBHOOK_SEED Secret instead of
         // failing opaquely.
         if (!(await ctx.secrets.isConfigured())) {
-          return c.html(SETUP_PAGE(externalUrl, workerNameFromHost(externalUrl)), 503);
+          return c.html(SETUP_PAGE(externalUrl), 503);
         }
         const frontend = resolveFrontend(c, ctx.config);
         const code = await issueCode(ctx.storage);

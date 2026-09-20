@@ -17,6 +17,7 @@ import { totpModule } from "./interceptors/totp.ts";
 import { gcpSaModule } from "./interceptors/gcpSa.ts";
 import { healthModule } from "./health.ts";
 import { exchangeModule } from "./exchange.ts";
+import { landingModule } from "./landing.ts";
 
 /** Every feature module, in the order that yields the canonical capability list. */
 export function allModules(): FeatureModule[] {
@@ -34,5 +35,6 @@ export function allModules(): FeatureModule[] {
     // Infra endpoints (no capability).
     healthModule(),
     exchangeModule(),
+    landingModule(),
   ];
 }
