@@ -19,7 +19,7 @@ import { WEBHOOK_VERSION } from "../core/protocol/types.ts";
 import { readJsonBody } from "../core/middleware/body.ts";
 import { sendError } from "../core/middleware/respond.ts";
 import { isBound, markBound } from "./bindState.ts";
-import { pageHead } from "./pageChrome.ts";
+import { pageHead, escapeHtml } from "./pageChrome.ts";
 import { resolveExternalUrl, resolveFrontend, seedFix } from "./webhookLinks.ts";
 import { BIND_CODES_COLLECTION } from "../runtime/context.ts";
 import type { RuntimeContext, StorageAdapter } from "../runtime/context.ts";
@@ -94,8 +94,8 @@ const BIND_PAGE = (regUrl: string, externalUrl: string, frontend: string) => `<!
 <h1>Connect this webhook to Token Vault</h1>
 <p>This webhook holds your credentials. Click below to complete the secure key
 exchange — your encryption key never leaves this server.</p>
-<p>Webhook URL: <code>${externalUrl}</code></p>
-<p class="dest">Binding to: <code>${frontend}</code><br>
+<p>Webhook URL: <code>${escapeHtml(externalUrl)}</code></p>
+<p class="dest">Binding to: <code>${escapeHtml(frontend)}</code><br>
 Only continue if this is your own Token Vault instance — the site you continue to
 receives a one-time code that completes the key exchange.</p>
 <p class="muted">Seed source: Workers Secret (hardened) — HKDF-derived in memory, never persisted.</p>
@@ -112,7 +112,7 @@ const SETUP_PAGE = (externalUrl: string) => {
   return `<!doctype html>
 <html lang="en"><head>${pageHead()}</head><body>
 <h1>Setup required — set the seed</h1>
-<p>This webhook (<code>${externalUrl}</code>) can't bind yet. It needs a single
+<p>This webhook (<code>${escapeHtml(externalUrl)}</code>) can't bind yet. It needs a single
 root secret — <code>TV_WEBHOOK_SEED</code> — before it can derive its encryption
 key and HMAC secret. Set it as a Workers Secret, then reload and the
 <strong>Connect</strong> button appears.</p>

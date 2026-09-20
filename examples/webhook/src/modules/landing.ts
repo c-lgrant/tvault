@@ -12,7 +12,7 @@
 
 import { WEBHOOK_VERSION } from "../core/protocol/types.ts";
 import { isBound } from "./bindState.ts";
-import { pageHead } from "./pageChrome.ts";
+import { pageHead, escapeHtml } from "./pageChrome.ts";
 import { resolveExternalUrl, resolveFrontend, seedFix } from "./webhookLinks.ts";
 import type { FeatureModule } from "../core/registry.ts";
 
@@ -42,22 +42,22 @@ const LANDING_PAGE = (opts: {
     : "This webhook is permanently sealed: no TV_ADMIN_SECRET is configured, so it can't be re-bound to a different Token Vault instance without redeploying with one set. Disconnecting in Token Vault does not unbind this webhook.";
 
   const action = bound
-    ? `<a class="btn" href="${frontend}">Open Token Vault →</a>
+    ? `<a class="btn" href="${escapeHtml(frontend)}">Open Token Vault →</a>
 <p class="muted">Already connected. ${rebindNote}</p>`
     : seedConfigured
       ? `<a class="btn" href="${bindHref}">Connect to Token Vault →</a>
-<p class="muted">Binding to: <code>${frontend}</code></p>`
+<p class="muted">Binding to: <code>${escapeHtml(frontend)}</code></p>`
       : `<span class="btn disabled" aria-disabled="true">Connect to Token Vault →</span>
-<p class="muted">Set the seed below first. Binding to: <code>${frontend}</code></p>`;
+<p class="muted">Set the seed below first. Binding to: <code>${escapeHtml(frontend)}</code></p>`;
 
   return `<!doctype html>
 <html lang="en"><head>${pageHead("Token Vault webhook")}</head><body>
 <h1>Token Vault webhook</h1>
-<p><code>${externalUrl}</code> · v${WEBHOOK_VERSION}</p>
+<p><code>${escapeHtml(externalUrl)}</code> · v${WEBHOOK_VERSION}</p>
 <ul class="status">
 ${statusRow(true, "Deployed", "yes")}
 ${statusRow(seedConfigured, "Seed", seedConfigured ? "set" : "not set")}
-${statusRow(bound, "Connected to Token Vault", bound ? `bound to <code>${frontend}</code>` : "not yet")}
+${statusRow(bound, "Connected to Token Vault", bound ? `bound to <code>${escapeHtml(frontend)}</code>` : "not yet")}
 </ul>
 ${action}
 ${fix

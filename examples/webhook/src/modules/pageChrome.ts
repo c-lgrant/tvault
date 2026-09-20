@@ -31,3 +31,13 @@ export function pageHead(title = "Connect to Token Vault"): string {
   .bad{color:#b45309;font-weight:700}
 </style>`;
 }
+
+/** Escape a string for safe interpolation into HTML text or attribute values. */
+export function escapeHtml(v: string): string {
+  return v
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
