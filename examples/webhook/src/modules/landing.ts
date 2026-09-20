@@ -82,8 +82,10 @@ export function landingModule(): FeatureModule {
         const frontend = resolveFrontend(c, ctx.config);
         const seedConfigured = await ctx.secrets.isConfigured();
         const bound = await isBound(ctx.storage);
-        const tv = c.req.query("tv");
-        const bindHref = tv ? `/bind?tv=${encodeURIComponent(tv)}` : "/bind";
+        // Always spell the destination out in the link itself, exactly as the
+        // console's guided flow does, so the URL a user hovers/copies says
+        // where the bind will land. `frontend` already honours a ?tv= override.
+        const bindHref = `/bind?tv=${encodeURIComponent(frontend)}`;
         const adminSecretConfigured = !!ctx.config.adminSecret;
         const html = LANDING_PAGE({
           externalUrl,
