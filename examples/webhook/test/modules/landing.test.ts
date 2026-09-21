@@ -33,6 +33,7 @@ describe("landing page — seed missing", () => {
     expect(html).toContain("TV_WEBHOOK_SEED");
     expect(html).toContain("wrangler secret put TV_WEBHOOK_SEED");
     expect(html).not.toContain('href="/bind"');
+    expect(html).toContain("<!-- tv-seed:unset -->");
     expect(html).not.toContain('href="/bind?');
   });
 });
@@ -48,6 +49,7 @@ describe("landing page — seed set, not yet bound", () => {
     expect(html).toContain("set");
     expect(html).toContain("not yet");
     expect(html).toContain('href="/bind?tv=');
+    expect(html).not.toContain("tv-seed:unset");
     expect(html).toContain("Binding to: <code>https://tokenvault.test</code>");
   });
 

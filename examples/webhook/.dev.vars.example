@@ -1,3 +1,0 @@
-# Presented by the Deploy-to-Cloudflare dashboard as a Secret field (see package.json "cloudflare.bindings").
-# Locally, copy to .dev.vars (gitignored) and fill in.
-TV_WEBHOOK_SEED=

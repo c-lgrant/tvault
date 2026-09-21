@@ -30,6 +30,8 @@ const LANDING_PAGE = (opts: {
 }) => {
   const { externalUrl, frontend, seedConfigured, bound, adminSecretConfigured, bindHref } = opts;
   const fix = seedConfigured ? null : seedFix(externalUrl);
+  // Build-time ensure-seed greps for this to tell an EMPTY secret from a set one.
+  const marker = seedConfigured ? "" : "<!-- tv-seed:unset -->";
 
   // Disconnecting in Token Vault only forgets the webhook on TV's side — it
   // never calls back here to clear bind state (vault.py's delete_vault leaves
@@ -50,7 +52,7 @@ const LANDING_PAGE = (opts: {
       : `<span class="btn disabled" aria-disabled="true">Connect to Token Vault →</span>
 <p class="muted">Set the seed below first. Binding to: <code>${escapeHtml(frontend)}</code></p>`;
 
-  return `<!doctype html>
+  return `${marker}<!doctype html>
 <html lang="en"><head>${pageHead("Token Vault webhook")}</head><body>
 <h1>Token Vault webhook</h1>
 <p><code>${escapeHtml(externalUrl)}</code> · v${WEBHOOK_VERSION}</p>

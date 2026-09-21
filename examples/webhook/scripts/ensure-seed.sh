@@ -22,6 +22,24 @@ name_arg=""
 # `secret list` prints a JSON array of {name,type}. If our key is already there,
 # leave it untouched.
 if wrangler secret list $name_arg 2>/dev/null | grep -q '"TV_WEBHOOK_SEED"'; then
+  # The name existing is not proof of a value: the Deploy-to-Cloudflare
+  # dashboard can create it EMPTY. Ask the live worker (its landing page
+  # emits <!-- tv-seed:unset --> when the seed is missing or empty). Only an
+  # unset seed is ever overwritten; a real one is never rotated.
+  if [ -n "${WEBHOOK_URL:-}" ]; then
+    i=0
+    while [ $i -lt 6 ]; do
+      body=$(curl -fsS -A "tv-ensure-seed/1.0" "$WEBHOOK_URL/" 2>/dev/null || true)
+      if [ -n "$body" ]; then break; fi
+      i=$((i+1)); sleep 3
+    done
+    if printf "%s" "$body" | grep -q "tv-seed:unset"; then
+      echo "ensure-seed: TV_WEBHOOK_SEED exists but is EMPTY — replacing with a fresh 32-byte seed."
+      openssl rand -hex 32 | wrangler secret put TV_WEBHOOK_SEED $name_arg
+      echo "ensure-seed: done."
+      exit 0
+    fi
+  fi
   echo "ensure-seed: TV_WEBHOOK_SEED already set — leaving as-is."
   exit 0
 fi

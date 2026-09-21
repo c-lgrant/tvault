@@ -14,7 +14,9 @@
 # build variable in CI, or `wrangler login` locally).
 set -eu
 cd "$(dirname "$0")/.."
-wrangler deploy src/runtime/worker.ts
+out=$(wrangler deploy src/runtime/worker.ts 2>&1 | tee /dev/stderr)
+WEBHOOK_URL=$(printf "%s" "$out" | grep -oE "https://[a-z0-9.-]+\.workers\.dev" | head -1)
+export WEBHOOK_URL
 # Seed provisioning is best-effort: if the build's wrangler token lacks Workers
 # Scripts: Edit, the deploy still succeeds and the operator sets the seed by hand
 # (the /bind setup page shows how). Non-fatal so a missing scope never reds the build.
