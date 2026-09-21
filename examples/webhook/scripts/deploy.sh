@@ -13,9 +13,18 @@
 # Requires a wrangler auth context with Workers Scripts: Edit (a CLOUDFLARE_API_TOKEN
 # build variable in CI, or `wrangler login` locally).
 set -eu
+# pipefail is not POSIX sh; the wrangler exit code is checked via the log instead
+
 cd "$(dirname "$0")/.."
-out=$(wrangler deploy src/runtime/worker.ts 2>&1 | tee /dev/stderr)
-WEBHOOK_URL=$(printf "%s" "$out" | grep -oE "https://[a-z0-9.-]+\.workers\.dev" | head -1)
+# Capture wrangler's output to find the deployed URL for ensure-seed, and echo it
+# back. No `tee /dev/stderr` — that path does not exist in the Workers Builds
+# sandbox and, under `set -e`, took the whole deploy down (2026-09-21).
+log=$(mktemp)
+rc=0; wrangler deploy src/runtime/worker.ts > "$log" 2>&1 || rc=$?
+cat "$log"
+[ "$rc" -eq 0 ] || { rm -f "$log"; exit "$rc"; }
+WEBHOOK_URL=$(grep -oE "https://[a-z0-9.-]+\.workers\.dev" "$log" | head -1 || true)
+rm -f "$log"
 export WEBHOOK_URL
 # Seed provisioning is best-effort: if the build's wrangler token lacks Workers
 # Scripts: Edit, the deploy still succeeds and the operator sets the seed by hand
