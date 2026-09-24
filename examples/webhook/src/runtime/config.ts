@@ -53,6 +53,12 @@ export function configFromEnv(get: Getenv): WebhookConfig {
 
   const adminSecret = get("TV_ADMIN_SECRET");
 
+  const ratePerMinute = Number(get("TV_RATE_LIMIT_PER_MINUTE"));
+  const rateLimit =
+    Number.isFinite(ratePerMinute) && ratePerMinute > 0
+      ? { maxPerMinute: Math.floor(ratePerMinute) }
+      : undefined;
+
   return {
     version: WEBHOOK_VERSION,
     timestampTolerance: Number.isFinite(tolerance) && tolerance > 0 ? tolerance : TIMESTAMP_TOLERANCE,
@@ -63,5 +69,6 @@ export function configFromEnv(get: Getenv): WebhookConfig {
     ...(externalUrl ? { externalUrl } : {}),
     ...(oauthProviders ? { oauthProviders } : {}),
     ...(adminSecret ? { adminSecret } : {}),
+    ...(rateLimit ? { rateLimit } : {}),
   };
 }

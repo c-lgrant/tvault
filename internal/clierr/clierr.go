@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 )
 
 type Kind int
@@ -17,6 +18,7 @@ const (
 	KindServer                  // 4 — 5xx
 	KindVaultLocked             // 5 — 423 VAULT_LOCKED
 	KindEmpty                   // 6 — token exists but has no credential value
+	KindRateLimited             // 7 — 429 rate limited / penalty-boxed
 )
 
 func (k Kind) exitCode() int {
@@ -33,6 +35,8 @@ func (k Kind) exitCode() int {
 		return 5
 	case KindEmpty:
 		return 6
+	case KindRateLimited:
+		return 7
 	default:
 		return 1
 	}
@@ -41,13 +45,14 @@ func (k Kind) exitCode() int {
 // CLIError is the canonical error returned by every command. Fields beyond
 // Kind/Message are optional and only render when set.
 type CLIError struct {
-	Kind     Kind
-	Command  string // e.g. "agents create"
-	Message  string // human-readable summary
-	Context  string // e.g. "nuc-admin (admin · conor@example.com)"
-	Request  string // e.g. "POST /api/agents"
-	Response string // e.g. "403 POLICY_DENIED — agent quota exceeded"
-	Hint     string // a likely fix; rendered only when known
+	Kind       Kind
+	Command    string        // e.g. "agents create"
+	Message    string        // human-readable summary
+	Context    string        // e.g. "nuc-admin (admin · conor@example.com)"
+	Request    string        // e.g. "POST /api/agents"
+	Response   string        // e.g. "403 POLICY_DENIED — agent quota exceeded"
+	Hint       string        // a likely fix; rendered only when known
+	RetryAfter time.Duration // server-provided backoff (429 Retry-After); 0 = unknown
 }
 
 func (e *CLIError) Error() string {

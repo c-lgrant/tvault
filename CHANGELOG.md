@@ -1,5 +1,35 @@
 # Changelog
 
+## [0.8.0](https://github.com/c-lgrant/tvault-private/compare/v0.7.1...v0.8.0) (2026-09-24)
+
+
+### Features
+
+* **api:** 429 handling with Retry-After honor + exponential GET backoff ([f0dff54](https://github.com/c-lgrant/tvault-private/commit/f0dff543056d6a21da030d260e33212a078b55b9))
+* **npm:** publish the CLI as @tvault/cli ([68c33a5](https://github.com/c-lgrant/tvault-private/commit/68c33a532ad18c395e1faad18565e99ebd2e28b6))
+* **npm:** publish the CLI as @tvault/cli ([748472a](https://github.com/c-lgrant/tvault-private/commit/748472a840cdc0d4ea2b1a0d519b13e931380765)), closes [#191](https://github.com/c-lgrant/tvault-private/issues/191)
+* **webhook:** add a root landing page reporting live worker state ([5197348](https://github.com/c-lgrant/tvault-private/commit/519734839ddfc5a76266b5c91b91e7e2fda5b087))
+* **webhook:** ask for the seed in the Deploy-to-Cloudflare dashboard ([354ea5b](https://github.com/c-lgrant/tvault-private/commit/354ea5b58fb24e9d1596c1ba63ba2b8a1d33efa9))
+* **webhook:** best-effort per-IP token bucket + CF rate-limit rule guidance ([0f287c9](https://github.com/c-lgrant/tvault-private/commit/0f287c97cb0140851cb376bddadb4464d7da20f1))
+
+
+### Bug Fixes
+
+* **api:** tolerate fractional grantCount from the backend ([98bcfe2](https://github.com/c-lgrant/tvault-private/commit/98bcfe27020e20d6c75491e3be9071e461ec40cb))
+* **webhook:** deploy.sh works in the Workers Builds sandbox ([2b70908](https://github.com/c-lgrant/tvault-private/commit/2b709081c28694fe7318b48358574b4898ad4ba2))
+* **webhook:** HTML-escape URLs interpolated into the landing and bind pages ([f9b6d69](https://github.com/c-lgrant/tvault-private/commit/f9b6d6994a9e020ad50ac7877f55028a66166a4c))
+* **webhook:** landing Connect link always carries ?tv=&lt;frontend&gt; ([2a98126](https://github.com/c-lgrant/tvault-private/commit/2a98126b9037fc2d74815ca8c664f077bd8d4290))
+* **webhook:** never leave the seed unset after a Deploy-button deploy ([3d8c65b](https://github.com/c-lgrant/tvault-private/commit/3d8c65b4161c1160110a9c6a23bafe8ec0e6d768))
+* **webhook:** skip .github/workflows in the update overlay ([7fa32a1](https://github.com/c-lgrant/tvault-private/commit/7fa32a16f75480570b131ca1ee0bdfff85f5a1be))
+* **webhook:** stage update tarball outside the workspace ([c739f1f](https://github.com/c-lgrant/tvault-private/commit/c739f1fc86c5033e4c7c3edce4f8160a40252918))
+
+
+### Documentation
+
+* **readme:** say what Token Vault is, not just what the CLI does ([e3e1692](https://github.com/c-lgrant/tvault-private/commit/e3e16922089d72fb74d2a2957467618b8becc40a))
+* retire the stale preview-branch install caveat ([b41d0bd](https://github.com/c-lgrant/tvault-private/commit/b41d0bda5b48e7df4bf22d9d8294239ea83586ee))
+* retire the stale preview-branch install caveat ([5316e1f](https://github.com/c-lgrant/tvault-private/commit/5316e1f1b6c91b10ece59cc6d6ede935f9cfa78b)), closes [#276](https://github.com/c-lgrant/tvault-private/issues/276)
+
 ## [0.7.1](https://github.com/c-lgrant/tvault-private/compare/v0.7.0...v0.7.1) (2026-06-27)
 
 

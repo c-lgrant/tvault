@@ -38,3 +38,8 @@ firebase-debug.log
 *.test
 coverage.out
 /dist/
+
+# npm wrapper: binary fetched by postinstall
+npm/lib/
+npm/node_modules/
+npm/*.tgz

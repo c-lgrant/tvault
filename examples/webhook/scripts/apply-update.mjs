@@ -3,17 +3,44 @@
 // preserving their config. Used by .github/workflows/update-webhook.yml. Pure
 // helpers are exported for tests; the CLI tail runs the overlay.
 
-import { readdir, mkdir, copyFile, stat, lstat } from "node:fs/promises";
+import { readdir, mkdir, copyFile, stat, lstat, readFile, appendFile } from "node:fs/promises";
 import { join, dirname, relative, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 
 // Paths (relative to the webhook root) that belong to the operator and must
 // never be overwritten by an upstream overlay.
-const SKIP_PREFIXES = ["wrangler.toml", ".dev.vars", ".git", "node_modules", ".wrangler"];
+//
+// `.github/workflows` is here for a different reason than the rest: GitHub
+// refuses to let a GITHUB_TOKEN push changes under .github/workflows/ ("without
+// `workflows` permission"), and that permission cannot be granted to
+// GITHUB_TOKEN at all. Overlaying a changed workflow therefore produces a commit
+// that can never be pushed, failing the whole update. Skip it and report the
+// drift instead — see NOTIFY_DRIFT_PREFIXES.
+const SKIP_PREFIXES = [
+  "wrangler.toml",
+  ".dev.vars",
+  ".git",
+  "node_modules",
+  ".wrangler",
+  ".github/workflows",
+];
+
+// Skipped paths worth telling the operator about when upstream's copy differs
+// from theirs. `wrangler.toml`/`.dev.vars` are deliberately divergent (that's
+// the operator's config), so only the workflow files are watched.
+const NOTIFY_DRIFT_PREFIXES = [".github/workflows"];
+
+function matchesPrefix(rel, prefixes) {
+  const norm = rel.split(sep).join("/");
+  return prefixes.some((p) => norm === p || norm.startsWith(p + "/"));
+}
 
 function isSkipped(rel) {
-  const norm = rel.split(sep).join("/");
-  return SKIP_PREFIXES.some((p) => norm === p || norm.startsWith(p + "/"));
+  return matchesPrefix(rel, SKIP_PREFIXES);
+}
+
+export function isDriftWatched(rel) {
+  return matchesPrefix(rel, NOTIFY_DRIFT_PREFIXES);
 }
 
 export function planOverlay(files) {
@@ -66,6 +93,23 @@ async function walk(dir, base = dir) {
   return { files, skipped };
 }
 
+/** Skipped files the operator should know about because upstream's copy differs
+ * from theirs (or they don't have it at all). Content-compared, so an unchanged
+ * workflow stays silent. */
+async function detectDrift(upstreamDir, targetDir, skipped) {
+  const drifted = [];
+  for (const rel of skipped.filter(isDriftWatched)) {
+    const theirs = await readFile(join(targetDir, rel)).catch(() => null);
+    if (theirs === null) {
+      drifted.push(rel); // upstream added a workflow the operator doesn't have
+      continue;
+    }
+    const ours = await readFile(join(upstreamDir, rel));
+    if (!ours.equals(theirs)) drifted.push(rel);
+  }
+  return drifted;
+}
+
 export async function applyOverlay(upstreamDir, targetDir) {
   const { files, skipped: walkSkipped } = await walk(upstreamDir);
   const { copy, skipped } = planOverlay(files);
@@ -76,7 +120,8 @@ export async function applyOverlay(upstreamDir, targetDir) {
     await mkdir(dirname(dest), { recursive: true });
     await copyFile(join(upstreamDir, rel), dest);
   }
-  return { copied: copy, skipped: allSkipped };
+  const drifted = await detectDrift(upstreamDir, targetDir, allSkipped);
+  return { copied: copy, skipped: allSkipped, drifted };
 }
 
 // CLI: node apply-update.mjs <upstreamDir> <targetDir>
@@ -92,5 +137,18 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   }
   await stat(upstreamDir); // throws if missing
   const r = await applyOverlay(upstreamDir, targetDir);
-  console.log(`overlay: ${r.copied.length} copied, ${r.skipped.length} skipped`);
+  console.log(
+    `overlay: ${r.copied.length} copied, ${r.skipped.length} skipped, ${r.drifted.length} drifted`,
+  );
+  for (const rel of r.drifted) {
+    console.log(`drift: upstream changed ${rel} — apply it by hand`);
+  }
+  // Surface drift to the workflow so the PR body can flag it. GitHub Actions
+  // cannot push workflow files, so this is the only channel the operator gets.
+  if (process.env.GITHUB_OUTPUT) {
+    await appendFile(
+      process.env.GITHUB_OUTPUT,
+      `drift=${r.drifted.length > 0}\ndrift_files=${r.drifted.join(", ")}\n`,
+    );
+  }
 }

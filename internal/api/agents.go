@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -14,11 +15,36 @@ import (
 // the list endpoint returns "grantCount" instead. Grants here is populated
 // from the single-agent GET via GetAgent.
 type Agent struct {
-	ID         string  `json:"id"`
-	Name       string  `json:"name"`
-	Status     string  `json:"status"` // "active" | "suspended"
-	GrantCount int     `json:"grantCount,omitempty"`
-	Grants     []Grant `json:"grants,omitempty"`
+	ID         string   `json:"id"`
+	Name       string   `json:"name"`
+	Status     string   `json:"status"` // "active" | "suspended"
+	GrantCount looseInt `json:"grantCount,omitempty"`
+	Grants     []Grant  `json:"grants,omitempty"`
+}
+
+// looseInt is an int that survives sloppy wire formats. The backend routes
+// grantCount through Firestore, whose Python client returns aggregation
+// counts as floats — so the API emits 0.0/2.0 where the contract says
+// integer, and encoding/json refuses fractional literals into int. This
+// field is display-only; a malformed value must degrade to zero, never
+// abort the whole command (v0.6.0 lost all six agents subcommands to it).
+type looseInt int
+
+func (n *looseInt) UnmarshalJSON(b []byte) error {
+	var v any
+	if err := json.Unmarshal(b, &v); err != nil {
+		return err
+	}
+	switch x := v.(type) {
+	case float64:
+		*n = looseInt(x)
+	case string:
+		f, err := strconv.ParseFloat(x, 64)
+		if err == nil {
+			*n = looseInt(f)
+		}
+	}
+	return nil
 }
 
 // Grant is one credential grant on an agent (subset of the backend grant doc).

@@ -4,6 +4,11 @@
 # .github/workflows/update-webhook.yml. Run it (Actions tab → "Update webhook")
 # to open a PR that pulls the latest RELEASED webhook from upstream. Review the
 # diff, merge, and Workers Builds redeploys against your same D1 + seed.
+#
+# ONE-TIME PREREQUISITE: GitHub blocks Actions from opening PRs on new repos, so
+# the first run fails with "GitHub Actions is not permitted to create or approve
+# pull requests" until you tick Settings → Actions → General → "Allow GitHub
+# Actions to create and approve pull requests". See deploy/cloudflare/UPGRADING.md.
 name: Update webhook
 
 on:
@@ -46,17 +51,35 @@ jobs:
         env:
           TAG: ${{ steps.rel.outputs.tag }}
         run: |
-          curl -fsSL "https://codeload.github.com/${UPSTREAM}/tar.gz/refs/tags/${TAG}" -o upstream.tgz
+          # Stage the tarball OUTSIDE the workspace. Anything left in
+          # GITHUB_WORKSPACE is swept up by create-pull-request's `git add -A`,
+          # which would commit the archive and manufacture a diff on every run.
+          curl -fsSL "https://codeload.github.com/${UPSTREAM}/tar.gz/refs/tags/${TAG}" -o "${RUNNER_TEMP}/upstream.tgz"
           mkdir -p "${RUNNER_TEMP}/upstream"
-          tar -xzf upstream.tgz -C "${RUNNER_TEMP}/upstream" --strip-components=1
+          tar -xzf "${RUNNER_TEMP}/upstream.tgz" -C "${RUNNER_TEMP}/upstream" --strip-components=1
           test -d "${RUNNER_TEMP}/upstream/examples/webhook" \
             || { echo "upstream tree has no examples/webhook" >&2; exit 1; }
 
       - name: Overlay onto the repo (preserves wrangler.toml + secrets)
+        id: overlay
         run: |
           node scripts/apply-update.mjs \
             "${RUNNER_TEMP}/upstream/examples/webhook" \
             "${GITHUB_WORKSPACE}"
+
+      - name: Warn if upstream changed this workflow
+        if: steps.overlay.outputs.drift == 'true'
+        env:
+          DRIFT_FILES: ${{ steps.overlay.outputs.drift_files }}
+        run: |
+          {
+            echo "### ⚠️ Workflow files changed upstream"
+            echo
+            echo "GitHub Actions cannot push changes under \`.github/workflows/\`,"
+            echo "so these were **skipped** and must be applied by hand:"
+            echo
+            echo "$DRIFT_FILES" | tr ',' '\n' | sed 's/^ *//;s/^/- `/;s/$/`/'
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Open update PR
         uses: peter-evans/create-pull-request@v6
@@ -77,3 +100,5 @@ jobs:
 
             If this release adds new `wrangler.toml` variables, this PR will not
             include them — check the upstream release notes and add them manually.
+
+            ${{ steps.overlay.outputs.drift == 'true' && format('> ⚠️ **Apply by hand:** upstream also changed `{0}`. GitHub Actions cannot push workflow files, so this PR excludes them.', steps.overlay.outputs.drift_files) || '' }}

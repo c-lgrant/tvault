@@ -7,6 +7,7 @@ import type { Bytes } from "./crypto/encoding.ts";
 import type { RuntimeContext } from "../runtime/context.ts";
 import { buildRegistryView, type FeatureModule } from "./registry.ts";
 import { rawBody } from "./middleware/rawbody.ts";
+import { rateLimit } from "./middleware/ratelimit.ts";
 import { sendError } from "./middleware/respond.ts";
 
 /** Hono context variables shared across middleware + handlers. */
@@ -21,6 +22,11 @@ export function createApp(ctx: RuntimeContext, modules: FeatureModule[]): Hono<A
 
   // Capture raw bytes for every request before any handler parses them.
   app.use("*", rawBody());
+
+  // Self-protection before any handler work; see rateLimit for scope caveats.
+  if (ctx.config.rateLimit && ctx.config.rateLimit.maxPerMinute > 0) {
+    app.use("*", rateLimit(ctx.config.rateLimit));
+  }
 
   const registry = buildRegistryView(modules);
   for (const m of modules) m.register?.(app, ctx, registry);

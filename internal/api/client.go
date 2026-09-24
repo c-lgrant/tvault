@@ -1,13 +1,15 @@
 // Package api is the typed HTTP client for the Token Vault backend. client.go
 // holds the transport core: request building, auth headers, status→error
-// mapping, timeouts, and the one connection-error retry.
+// mapping, timeouts, and GET retry with exponential backoff.
 package api
 
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"math/rand"
 	"net"
 	"net/http"
 	"os"
@@ -15,6 +17,16 @@ import (
 	"time"
 
 	"github.com/c-lgrant/tvault/internal/clierr"
+)
+
+// GET retry policy: up to maxGetAttempts attempts. Between attempts the client
+// sleeps the server's Retry-After when given (429), else an exponential
+// backoff with jitter. A Retry-After beyond maxRetryWait fails immediately —
+// a CLI must not block for minutes; the caller sees exit code 7 and the hint.
+const (
+	maxGetAttempts = 3
+	baseBackoff    = 500 * time.Millisecond
+	maxRetryWait   = 10 * time.Second
 )
 
 // DefaultUserAgent is sent as the User-Agent header on every request.
@@ -33,6 +45,8 @@ type Client struct {
 
 	DryRun    bool      // when true, mutating requests are printed, not sent
 	DryRunOut io.Writer // where dry-run output goes; defaults to os.Stderr
+
+	sleep func(time.Duration) // retry-backoff sleeper; nil = time.Sleep (tests stub it)
 }
 
 // New builds a Client with sensible timeouts. timeout overrides the default
@@ -98,6 +112,8 @@ func kindForStatus(status int) clierr.Kind {
 	switch {
 	case status == 423:
 		return clierr.KindVaultLocked
+	case status == 429:
+		return clierr.KindRateLimited
 	case status == 401:
 		return clierr.KindAuth
 	case status >= 500:
@@ -110,22 +126,47 @@ func kindForStatus(status int) clierr.Kind {
 // doRequest issues one HTTP request, JSON-encoding body when non-nil, and
 // returns the raw response body on 2xx. Non-2xx becomes a *clierr.CLIError
 // carrying the mapped Kind, the request line, and the response summary.
-// Connection errors are retried once, but only for GET: retrying a POST
-// (e.g. /api/cli/auth/exchange) after a lost response can burn a
-// single-use code the server already processed.
+// Connection errors and 429s are retried with backoff, but only for GET:
+// retrying a POST (e.g. /api/cli/auth/exchange) after a lost response can
+// burn a single-use code the server already processed.
 func (c *Client) doRequest(method, path string, body any, query map[string]string) ([]byte, error) {
 	var lastErr error
-	for attempt := 0; attempt < 2; attempt++ {
+	for attempt := 0; attempt < maxGetAttempts; attempt++ {
 		respBody, retriable, err := c.attempt(method, path, body, query)
 		if err == nil {
 			return respBody, nil
 		}
 		lastErr = err
-		if !retriable || method != http.MethodGet {
+		if !retriable || method != http.MethodGet || attempt == maxGetAttempts-1 {
 			return nil, err
+		}
+		delay, ok := backoffDelay(attempt, err)
+		if !ok {
+			return nil, err
+		}
+		if c.sleep != nil {
+			c.sleep(delay)
+		} else {
+			time.Sleep(delay)
 		}
 	}
 	return nil, lastErr
+}
+
+// backoffDelay picks the pause before retry attempt+1. The server's
+// Retry-After wins when present; past maxRetryWait the second return is
+// false and the caller gives up rather than blocking. Without a server
+// hint: exponential base doubling per attempt plus 0–50% jitter.
+func backoffDelay(attempt int, err error) (time.Duration, bool) {
+	var ce *clierr.CLIError
+	if errors.As(err, &ce) && ce.RetryAfter > 0 {
+		if ce.RetryAfter > maxRetryWait {
+			return 0, false
+		}
+		return ce.RetryAfter, true
+	}
+	d := baseBackoff << attempt
+	return d + time.Duration(rand.Int63n(int64(d/2)+1)), true
 }
 
 func (c *Client) attempt(method, path string, body any, query map[string]string) ([]byte, bool, error) {
@@ -219,10 +260,20 @@ func (c *Client) attempt(method, path string, body any, query map[string]string)
 	if er.Message != "" {
 		respSummary += " — " + er.Message
 	}
-	return nil, false, &clierr.CLIError{
+	cliErr := &clierr.CLIError{
 		Kind:     kindForStatus(resp.StatusCode),
 		Request:  reqLine,
 		Response: respSummary,
 		Message:  er.Message,
 	}
+	if resp.StatusCode == http.StatusTooManyRequests {
+		if secs, err := strconv.Atoi(resp.Header.Get("Retry-After")); err == nil && secs > 0 {
+			cliErr.RetryAfter = time.Duration(secs) * time.Second
+			cliErr.Hint = fmt.Sprintf("rate limited — retry in %ds", secs)
+		} else {
+			cliErr.Hint = "rate limited — back off before retrying"
+		}
+		return nil, true, cliErr
+	}
+	return nil, false, cliErr
 }

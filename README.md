@@ -1,8 +1,15 @@
 # tvault
 
-The Token Vault command-line interface. Manage credentials, agents, grants, and
-the vault lock from your terminal — with a browser-based login and
-kubectl-style contexts for switching between admin and agent personas.
+**Scoped, revocable API-key access for AI agents. Your keys stay on your own webhook.**
+
+[Token Vault](https://tokenvault.uk) gives your AI agents scoped, revocable, audited access
+to your API keys — and never holds them. Your credentials live on a webhook you deploy in ten
+minutes; Token Vault holds identities, grants, ABAC policies and audit metadata, and brokers
+access without ever seeing a credential.
+
+`tvault` is the terminal interface to it. Manage credentials, agents, grants and the vault
+lock from your shell — with a browser-based login and kubectl-style contexts for switching
+between admin and agent personas.
 
 ## Install
 
@@ -18,26 +25,6 @@ your OS/arch, downloads the matching release, and verifies its SHA256:
 ```bash
 curl -fsSL https://raw.githubusercontent.com/c-lgrant/tvault/main/install.sh | bash
 ```
-
-> **Trying the `preview` branch?** The `install.sh` route does **not** work
-> yet on `preview` — it pulls from GitHub Releases and there are no Go
-> releases on this repo until `preview` is merged to `main`. Use one of:
->
-> ```bash
-> # Build straight from the branch (requires Go)
-> go install github.com/c-lgrant/tvault@preview
->
-> # Or download the CI-built preview binary (requires gh CLI, no Go)
-> # Pick the run id from: gh run list --repo c-lgrant/tvault --branch preview --workflow ci.yml
-> gh run download <run-id> --repo c-lgrant/tvault -n tvault-preview-darwin-arm64
-> # asset name: tvault-preview-{linux|darwin}-{amd64|arm64}
-> chmod +x tvault-darwin-arm64
-> xattr -d com.apple.quarantine tvault-darwin-arm64 2>/dev/null  # macOS
-> sudo install -m 0755 tvault-darwin-arm64 /usr/local/bin/tvault
-> ```
->
-> `tvault version` will print `preview-<sha>` so you can tell preview builds
-> from real releases.
 
 ## Quick start
 

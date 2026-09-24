@@ -1,0 +1,35 @@
+#!/usr/bin/env node
+/*
+ * Shim: exec the real Go binary that postinstall placed in ../lib.
+ *
+ * A shim rather than pointing `bin` straight at the binary, because npm links
+ * bin entries before postinstall runs — so the target has to exist at pack time.
+ */
+"use strict";
+
+const path = require("path");
+const fs = require("fs");
+const { spawnSync } = require("child_process");
+
+const binary = path.join(__dirname, "..", "lib", "tvault");
+
+if (!fs.existsSync(binary)) {
+  console.error(
+    "\ntvault: the binary is missing — postinstall did not complete.\n\n" +
+      "Re-run it with:\n" +
+      "  node " + path.join(__dirname, "..", "install.js") + "\n\n" +
+      "Or install directly:\n" +
+      "  curl -fsSL https://raw.githubusercontent.com/c-lgrant/tvault/main/install.sh | bash\n"
+  );
+  process.exit(1);
+}
+
+const res = spawnSync(binary, process.argv.slice(2), { stdio: "inherit" });
+
+if (res.error) {
+  console.error(`tvault: ${res.error.message}`);
+  process.exit(1);
+}
+// Preserve signal deaths as the conventional 128+n so `$(tvault get x)` callers
+// and CI see the real outcome, not a flattened 0.
+process.exit(res.status === null ? 128 + (res.signal ? 1 : 0) : res.status);
