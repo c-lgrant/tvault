@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.2](https://github.com/c-lgrant/tvault-private/compare/v0.8.1...v0.8.2) (2026-10-06)
+
+
+### Bug Fixes
+
+* **deps:** clear all Dependabot alerts in the webhook examples ([5a7b1a6](https://github.com/c-lgrant/tvault-private/commit/5a7b1a62c2f46acf1a22c477bc5607f42d0d1031))
+
 ## [0.8.1](https://github.com/c-lgrant/tvault-private/compare/v0.8.0...v0.8.1) (2026-10-06)
 
 
