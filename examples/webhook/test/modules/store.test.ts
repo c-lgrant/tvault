@@ -121,3 +121,34 @@ describe("/v1/store — ticket auth", () => {
     expect(JSON.stringify(stored)).not.toContain("super-secret-access-token");
   });
 });
+
+describe("/v1/store — createdAt", () => {
+  it("re-storing a service keeps the original createdAt and stamps updatedAt", async () => {
+    const ctx = makeContext({ hmacSecret: hmac });
+    const app = createApp(ctx, [storeModule()]);
+
+    const first = await postStore(app, await signTicket(hmac, storePayload()));
+    const firstMeta = ((await first.json()) as { meta: Record<string, unknown> }).meta;
+    expect(typeof firstMeta.createdAt).toBe("string");
+    expect(firstMeta).not.toHaveProperty("updatedAt");
+
+    // Backdate the stored createdAt so a same-second re-store can't mask a reset.
+    const stored = (await ctx.storage.get("tokens", "github")) as Record<string, unknown>;
+    const backdated = "2026-01-01T00:00:00Z";
+    await ctx.storage.set("tokens", "github", {
+      ...stored,
+      meta: { ...(stored.meta as Record<string, unknown>), createdAt: backdated },
+    });
+
+    const second = await postStore(app, await signTicket(hmac, storePayload()), "github", {
+      accessToken: "tok456",
+      createdAt: "2030-01-01T00:00:00Z", // client-supplied value must not win
+    });
+    const secondMeta = ((await second.json()) as { meta: Record<string, unknown> }).meta;
+    expect(secondMeta.createdAt).toBe(backdated);
+    expect(typeof secondMeta.updatedAt).toBe("string");
+
+    const after = (await ctx.storage.get("tokens", "github")) as { meta: Record<string, unknown> };
+    expect(after.meta.createdAt).toBe(backdated);
+  });
+});

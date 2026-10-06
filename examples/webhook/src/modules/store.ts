@@ -61,7 +61,20 @@ export function storeModule(): FeatureModule {
           }
           meta.serviceName = service;
           if (!("tokenType" in meta)) meta.tokenType = "oauth";
-          meta.createdAt = nowIso();
+          // Re-storing an existing service keeps its original createdAt (TV
+          // sorts tokens newest-first on it) and stamps updatedAt instead.
+          const existing = await ctx.storage.get("tokens", service);
+          const existingMeta =
+            existing?.meta && typeof existing.meta === "object"
+              ? (existing.meta as Record<string, unknown>)
+              : {};
+          const now = nowIso();
+          if (typeof existingMeta.createdAt === "string") {
+            meta.createdAt = existingMeta.createdAt;
+            meta.updatedAt = now;
+          } else {
+            meta.createdAt = now;
+          }
           meta.hasRefreshToken = refreshToken != null && refreshToken.length > 0;
           if (!meta.expiryTime && typeof tokenData.expiresAt === "string") {
             const t = Date.parse(tokenData.expiresAt);
