@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.1](https://github.com/c-lgrant/tvault-private/compare/v0.8.0...v0.8.1) (2026-10-06)
+
+
+### Bug Fixes
+
+* **webhook:** keep createdAt when a token is re-stored ([d4a4d4f](https://github.com/c-lgrant/tvault-private/commit/d4a4d4fe1437e7eb7322d5fa869b987f7ec25e1b))
+
 ## [0.8.0](https://github.com/c-lgrant/tvault-private/compare/v0.7.1...v0.8.0) (2026-09-24)
 
 
