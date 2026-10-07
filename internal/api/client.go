@@ -127,6 +127,12 @@ func kindForError(status int, code string) clierr.Kind {
 		return clierr.KindHumanOnly
 	case "KEY_EXPIRED":
 		return clierr.KindKeyExpired
+	case "KEY_SUSPENDED":
+		return clierr.KindKeySuspended
+	case "INVALID_KEY":
+		return clierr.KindInvalidKey
+	case "VAULT_LOCKED":
+		return clierr.KindVaultLocked
 	}
 	return kindForStatus(status)
 }
@@ -307,6 +313,29 @@ func (c *Client) attempt(method, path string, body any, query map[string]string)
 		cliErr.Hint = "this operation needs a signed-in human — run `tvault login` and switch to the admin context"
 	case clierr.KindKeyExpired:
 		cliErr.Hint = "rotate the key (tvault keys rotate / tvault agents rotate-key) or log in with a new one"
+	case clierr.KindKeySuspended:
+		cliErr.Hint = "the key is suspended — ask the owner to resume it, or use another key"
+	case clierr.KindInvalidKey:
+		cliErr.Hint = "the key is unknown or was revoked — check it, or log in with a valid key (tvault login --key)"
+	}
+	// Code-specific guidance for codes that keep their status-derived Kind
+	// (and so their exit code: 1 for 4xx, 2 for 401).
+	if cliErr.Hint == "" {
+		switch er.Code {
+		case "REAUTH_REQUIRED":
+			cliErr.Kind = clierr.KindAuth
+			cliErr.Hint = "this action needs a fresh sign-in — run `tvault login` again, then retry"
+		case "NOT_OWNER":
+			cliErr.Hint = "only the owner of this key/agent can do that"
+		case "GRANT_REQUIRED":
+			cliErr.Hint = "the principal creating this must already hold the grant — grant it first (tvault keys grant <key> <service>)"
+		case "NO_GRANT":
+			cliErr.Hint = "no such grant — see `tvault keys show <key>`"
+		case "UNKNOWN_SCOPE":
+			cliErr.Hint = "see the scope list in the README (Keys section)"
+		case "INVALID_EXPIRY":
+			cliErr.Hint = "use --expires 30d|90d|365d|YYYY-MM-DD|never (must be in the future)"
+		}
 	}
 	if resp.StatusCode == http.StatusTooManyRequests {
 		if secs, err := strconv.Atoi(resp.Header.Get("Retry-After")); err == nil && secs > 0 {

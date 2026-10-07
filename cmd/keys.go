@@ -220,6 +220,96 @@ var keysRevokeCmd = &cobra.Command{
 	},
 }
 
+var keysShowCmd = &cobra.Command{
+	Use:     "show <id-or-name>",
+	Aliases: []string{"info"},
+	Short:   "Show a key's details and grants",
+	Args:    cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		cc, err := resolve(cmd)
+		if err != nil {
+			return err
+		}
+		id, err := resolveKeyRef(cc.Client, args[0])
+		if err != nil {
+			return enrich(cmd, cc, err)
+		}
+		k, err := cc.Client.GetKey(id)
+		if err != nil {
+			return enrich(cmd, cc, err)
+		}
+		last := "never"
+		if k.LastUsedAt != nil && *k.LastUsedAt != "" {
+			last = *k.LastUsedAt
+		}
+		grants := make([]string, len(k.Grants))
+		for i, g := range k.Grants {
+			grants[i] = g.ServiceName
+			if g.Source != "" {
+				grants[i] += " (" + g.Source + ")"
+			}
+			if g.ExpiresAt != nil && *g.ExpiresAt != "" {
+				grants[i] += " until " + *g.ExpiresAt
+			}
+		}
+		rows := []map[string]string{{
+			"id": k.ID, "name": k.Name, "status": k.Status,
+			"scopes":  strings.Join(k.Scopes, ","),
+			"expires": expiryLabel(k.ExpiresAt), "last_used": last,
+			"created_by": k.CreatedBy.Type + ":" + k.CreatedBy.ID,
+			"grants":     strings.Join(grants, ", "),
+		}}
+		return output.Render(os.Stdout, cc.Format,
+			[]string{"id", "name", "status", "scopes", "expires", "last_used", "created_by", "grants"}, rows)
+	},
+}
+
+var keysGrantCmd = &cobra.Command{
+	Use:   "grant <key> <service>",
+	Short: "Grant a service to a key",
+	Args:  cobra.ExactArgs(2),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		hours, _ := cmd.Flags().GetInt("expires-in-hours")
+		if hours < 0 {
+			return &clierr.CLIError{Kind: clierr.KindUser, Command: "keys grant", Message: "--expires-in-hours must be positive"}
+		}
+		cc, err := resolve(cmd)
+		if err != nil {
+			return err
+		}
+		id, err := resolveKeyRef(cc.Client, args[0])
+		if err != nil {
+			return enrich(cmd, cc, err)
+		}
+		if err := cc.Client.GrantKey(id, args[1], hours); err != nil {
+			return enrich(cmd, cc, err)
+		}
+		cmd.PrintErrf("Granted %q to key %s.\n", args[1], id)
+		return nil
+	},
+}
+
+var keysUngrantCmd = &cobra.Command{
+	Use:   "ungrant <key> <service>",
+	Short: "Remove a service grant from a key",
+	Args:  cobra.ExactArgs(2),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		cc, err := resolve(cmd)
+		if err != nil {
+			return err
+		}
+		id, err := resolveKeyRef(cc.Client, args[0])
+		if err != nil {
+			return enrich(cmd, cc, err)
+		}
+		if err := cc.Client.UngrantKey(id, args[1]); err != nil {
+			return enrich(cmd, cc, err)
+		}
+		cmd.PrintErrf("Removed grant %q from key %s.\n", args[1], id)
+		return nil
+	},
+}
+
 // enrichCmd fills in the command path on a CLIError raised before a context
 // was resolved (flag validation).
 func enrichCmd(cmd *cobra.Command, err error) error {
@@ -232,6 +322,8 @@ func init() {
 	keysCreateCmd.Flags().String("expires", defaultKeyExpiry, "expiry: 30d | 90d | 365d | YYYY-MM-DD | never")
 	keysRevokeCmd.Flags().BoolP("yes", "y", false, "skip the confirmation prompt (required in a non-interactive shell)")
 
-	keysCmd.AddCommand(keysCreateCmd, keysListCmd, keysRotateCmd, keysRevokeCmd)
+	keysGrantCmd.Flags().Int("expires-in-hours", 0, "expire the grant after N hours (default: no grant expiry)")
+
+	keysCmd.AddCommand(keysCreateCmd, keysListCmd, keysShowCmd, keysGrantCmd, keysUngrantCmd, keysRotateCmd, keysRevokeCmd)
 	rootCmd.AddCommand(keysCmd)
 }

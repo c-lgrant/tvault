@@ -52,6 +52,50 @@ type Key struct {
 	CreatedBy  CreatedBy `json:"createdBy"`
 }
 
+// KeyGrant is one service grant on a key. Source says how the grant came to
+// exist (e.g. directly granted vs. inherited), as reported by the server.
+type KeyGrant struct {
+	ServiceName string  `json:"serviceName"`
+	Source      string  `json:"source"`
+	ExpiresAt   *string `json:"expiresAt"`
+}
+
+// KeyDetail is GET /api/keys/{id}: the list item plus its grants.
+type KeyDetail struct {
+	Key
+	Grants []KeyGrant `json:"grants"`
+}
+
+// GetKey returns one key with its grants.
+func (c *Client) GetKey(id string) (*KeyDetail, error) {
+	body, err := c.doRequest("GET", "/api/keys/"+url.PathEscape(id), nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	var res KeyDetail
+	if err := json.Unmarshal(body, &res); err != nil {
+		return nil, err
+	}
+	return &res, nil
+}
+
+// GrantKey grants a service to a key. expiresInHours <= 0 omits the field
+// (no grant expiry).
+func (c *Client) GrantKey(id, service string, expiresInHours int) error {
+	payload := map[string]any{"serviceName": service}
+	if expiresInHours > 0 {
+		payload["expiresInHours"] = expiresInHours
+	}
+	_, err := c.doRequest("POST", "/api/keys/"+url.PathEscape(id)+"/grants", payload, nil)
+	return err
+}
+
+// UngrantKey removes a service grant from a key.
+func (c *Client) UngrantKey(id, service string) error {
+	_, err := c.doRequest("DELETE", "/api/keys/"+url.PathEscape(id)+"/grants/"+url.PathEscape(service), nil, nil)
+	return err
+}
+
 // CreateKeyResult carries the freshly minted key — shown to the user once.
 type CreateKeyResult struct {
 	ID        string   `json:"id"`

@@ -116,6 +116,9 @@ is printed **once, on stdout only**; all metadata goes to stderr, so
 |---------|---------|
 | `keys create` (`new`) | `--name <n> --scopes a,b,c [--expires 30d\|90d\|365d\|YYYY-MM-DD\|never]`. Default expiry is `90d`; a date expires at 23:59:59 UTC that day. |
 | `keys ls` (`list`) | List keys: id, name, status, scopes, expiry, last use. The secret is never shown. |
+| `keys show <id-or-name>` (`info`) | Key details plus its grants (service, source, expiry). |
+| `keys grant <key> <service>` | Grant a service to a key. `--expires-in-hours N` makes the grant temporary. |
+| `keys ungrant <key> <service>` | Remove a service grant from a key. |
 | `keys rotate <id-or-name>` | Replace the secret; the new key is printed once on stdout and the old one stops working. |
 | `keys revoke <id-or-name>` (`rm`) | Permanently revoke a key. Asks for confirmation; `--yes` skips it, and a non-interactive shell refuses without `--yes`. |
 
@@ -236,6 +239,18 @@ parsing text.
 | 8 | `SCOPE_DENIED` — the key lacks a required scope; the message names it. |
 | 9 | `HUMAN_ONLY` — the operation needs a signed-in human, not an API key. |
 | 10 | `KEY_EXPIRED` — the API key is past its expiry. |
+| 11 | `KEY_SUSPENDED` — the API key is suspended. |
+| 12 | `INVALID_KEY` — the API key is unknown, malformed, or revoked. |
+
+Other server codes keep the code of their HTTP class and add a hint to the
+message (see `tvault explain <code>`):
+
+| Server code | Exit | Notes |
+|-------------|------|-------|
+| `VAULT_LOCKED` (423) | 5 | Same as the locked-vault code above. |
+| `REAUTH_REQUIRED` (401) | 2 | Creating a key as a human needs a fresh sign-in: run `tvault login` again. |
+| `NOT_OWNER`, `GRANT_REQUIRED` (403), `NO_GRANT` (404) | 1 | User errors; hints say what to do. |
+| `UNKNOWN_SCOPE`, `INVALID_EXPIRY` (400/422) | 1 | Bad `--scopes` / `--expires`. |
 
 ## Other commands
 

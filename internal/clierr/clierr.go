@@ -12,16 +12,18 @@ import (
 type Kind int
 
 const (
-	KindUser        Kind = iota // 1 — bad args, validation, not found
-	KindAuth                    // 2 — no context, expired, refresh failed
-	KindNetwork                 // 3 — connect timeout, DNS, no route
-	KindServer                  // 4 — 5xx
-	KindVaultLocked             // 5 — 423 VAULT_LOCKED
-	KindEmpty                   // 6 — token exists but has no credential value
-	KindRateLimited             // 7 — 429 rate limited / penalty-boxed
-	KindScopeDenied             // 8 — 403 SCOPE_DENIED: the key lacks a required scope
-	KindHumanOnly               // 9 — 403 HUMAN_ONLY: operation needs a signed-in human
-	KindKeyExpired              // 10 — 401 KEY_EXPIRED: the API key is past its expiry
+	KindUser         Kind = iota // 1 — bad args, validation, not found
+	KindAuth                     // 2 — no context, expired, refresh failed
+	KindNetwork                  // 3 — connect timeout, DNS, no route
+	KindServer                   // 4 — 5xx
+	KindVaultLocked              // 5 — 423 VAULT_LOCKED
+	KindEmpty                    // 6 — token exists but has no credential value
+	KindRateLimited              // 7 — 429 rate limited / penalty-boxed
+	KindScopeDenied              // 8 — 403 SCOPE_DENIED: the key lacks a required scope
+	KindHumanOnly                // 9 — 403 HUMAN_ONLY: operation needs a signed-in human
+	KindKeyExpired               // 10 — 401 KEY_EXPIRED: the API key is past its expiry
+	KindKeySuspended             // 11 — 403 KEY_SUSPENDED: the key is suspended
+	KindInvalidKey               // 12 — 401 INVALID_KEY: the key is unknown or malformed
 )
 
 func (k Kind) exitCode() int {
@@ -46,6 +48,10 @@ func (k Kind) exitCode() int {
 		return 9
 	case KindKeyExpired:
 		return 10
+	case KindKeySuspended:
+		return 11
+	case KindInvalidKey:
+		return 12
 	default:
 		return 1
 	}
