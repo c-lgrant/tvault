@@ -26,7 +26,9 @@ func (cc *cmdContext) label() string {
 }
 
 // resolve loads the active context, builds an authenticated API client, and
-// resolves the output format. adminOnly rejects agent contexts up front.
+// resolves the output format. Every context type (admin, agent, key) is
+// accepted: the server is the sole enforcer of what a principal may do, and
+// its SCOPE_DENIED / HUMAN_ONLY answers map to distinct exit codes.
 // contextOverride reads --context, falling back to its --ctx alias.
 // Both set → --context wins.
 func contextOverride(cmd *cobra.Command) string {
@@ -38,7 +40,7 @@ func contextOverride(cmd *cobra.Command) string {
 	return v
 }
 
-func resolve(cmd *cobra.Command, adminOnly bool) (*cmdContext, error) {
+func resolve(cmd *cobra.Command) (*cmdContext, error) {
 	override := contextOverride(cmd)
 	debug, _ := cmd.Flags().GetBool("debug")
 	formatFlag, _ := cmd.Flags().GetString("format")
@@ -50,13 +52,6 @@ func resolve(cmd *cobra.Command, adminOnly bool) (*cmdContext, error) {
 	ctx, name, err := cfg.ActiveContext(override)
 	if err != nil {
 		return nil, err
-	}
-	if adminOnly && ctx.Type != "admin" {
-		return nil, &clierr.CLIError{
-			Kind:    clierr.KindUser,
-			Command: cmd.CommandPath(),
-			Message: fmt.Sprintf("requires an admin context — %q is an agent context; switch with `tvault ctx use <admin-ctx>`", name),
-		}
 	}
 	client, err := auth.ClientFor(ctx, debug)
 	if err != nil {

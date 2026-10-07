@@ -48,6 +48,18 @@ var errorExplanations = map[string]struct {
 		What: "Token Vault could not reach the user's webhook.",
 		Fix:  "Check that the webhook service is running and reachable from Token Vault.",
 	},
+	"SCOPE_DENIED": {
+		What: "The API key is valid but lacks a scope this operation requires (exit code 8). The error names the missing scope.",
+		Fix:  "Create or rotate a key that includes the scope: `tvault keys create --scopes <scope>,...`.",
+	},
+	"HUMAN_ONLY": {
+		What: "This operation is reserved for a signed-in human and cannot be done with an API key (exit code 9).",
+		Fix:  "Run `tvault login` (browser) and use the admin context: `tvault ctx use <admin-ctx>`.",
+	},
+	"KEY_EXPIRED": {
+		What: "The API key is past its expiry (exit code 10).",
+		Fix:  "Rotate it (`tvault keys rotate <id>` / `tvault agents rotate-key <agent>`) or log in with a new key.",
+	},
 	"WEBHOOK_AUTH_FAILED": {
 		What: "The webhook rejected Token Vault's HMAC authentication.",
 		Fix:  "The HMAC secret is out of sync — re-run the vault webhook setup to rotate it.",

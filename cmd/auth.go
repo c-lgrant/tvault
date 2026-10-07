@@ -32,7 +32,8 @@ var authPrintTokenCmd = &cobra.Command{
 			return &clierr.CLIError{
 				Kind:    clierr.KindUser,
 				Command: "auth print-token",
-				Message: "print-token requires an admin context; " + name + " is an agent context",
+				Message: fmt.Sprintf("print-token prints a Firebase ID token, which only admin contexts have — %q is a %s context and authenticates with its %s key instead", name, ctx.Type, ctx.Type),
+				Hint:    "log in as a human with `tvault login`, then `tvault ctx use <admin-ctx>`",
 			}
 		}
 		client, err := auth.ClientFor(ctx, false)

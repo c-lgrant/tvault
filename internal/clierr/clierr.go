@@ -19,6 +19,9 @@ const (
 	KindVaultLocked             // 5 — 423 VAULT_LOCKED
 	KindEmpty                   // 6 — token exists but has no credential value
 	KindRateLimited             // 7 — 429 rate limited / penalty-boxed
+	KindScopeDenied             // 8 — 403 SCOPE_DENIED: the key lacks a required scope
+	KindHumanOnly               // 9 — 403 HUMAN_ONLY: operation needs a signed-in human
+	KindKeyExpired              // 10 — 401 KEY_EXPIRED: the API key is past its expiry
 )
 
 func (k Kind) exitCode() int {
@@ -37,6 +40,12 @@ func (k Kind) exitCode() int {
 		return 6
 	case KindRateLimited:
 		return 7
+	case KindScopeDenied:
+		return 8
+	case KindHumanOnly:
+		return 9
+	case KindKeyExpired:
+		return 10
 	default:
 		return 1
 	}
@@ -46,6 +55,8 @@ func (k Kind) exitCode() int {
 // Kind/Message are optional and only render when set.
 type CLIError struct {
 	Kind       Kind
+	Code       string        // server error code, e.g. "SCOPE_DENIED"; empty when none
+	Scope      string        // missing scope for SCOPE_DENIED, e.g. "tokens:create"
 	Command    string        // e.g. "agents create"
 	Message    string        // human-readable summary
 	Context    string        // e.g. "nuc-admin (admin · conor@example.com)"

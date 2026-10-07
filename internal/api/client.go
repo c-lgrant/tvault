@@ -34,12 +34,14 @@ const (
 var DefaultUserAgent = "tvault"
 
 // Client talks to one Token Vault API base URL with one set of credentials.
-// Exactly one of BearerToken (admin) or AgentKey (agent) is set.
+// Exactly one of BearerToken (admin), AgentKey (agent) or APIKey (scoped key)
+// is set; all three are sent as Authorization: Bearer.
 type Client struct {
 	BaseURL     string
 	HTTP        *http.Client
-	BearerToken string // admin: Firebase ID token → Authorization: Bearer
-	AgentKey    string // agent: tvagent_* → X-Agent-Key
+	BearerToken string // admin: Firebase ID token
+	AgentKey    string // agent: tvagent_*
+	APIKey      string // key: tvkey_* scoped key
 	UserAgent   string // sent as User-Agent; defaults to DefaultUserAgent when New() is used
 	Debug       bool
 
@@ -81,8 +83,9 @@ func New(baseURL string, timeout time.Duration) *Client {
 // "detail" field is either a string or an object {code, message}; it is
 // decoded procedurally in parseErrorBody.
 type errorResponse struct {
-	Code    string
-	Message string
+	Code         string
+	Message      string
+	MissingScope string
 }
 
 func parseErrorBody(body []byte) errorResponse {
@@ -99,13 +102,33 @@ func parseErrorBody(body []byte) errorResponse {
 	}
 	// … or an object {code, message}
 	var obj struct {
-		Code    string `json:"code"`
-		Message string `json:"message"`
+		Code         string  `json:"code"`
+		Message      string  `json:"message"`
+		MissingScope *string `json:"missingScope"`
 	}
 	if err := json.Unmarshal(probe.Detail, &obj); err == nil {
-		return errorResponse{Code: obj.Code, Message: obj.Message}
+		er := errorResponse{Code: obj.Code, Message: obj.Message}
+		if obj.MissingScope != nil {
+			er.MissingScope = *obj.MissingScope
+		}
+		return er
 	}
 	return errorResponse{Message: string(probe.Detail)}
+}
+
+// kindForError maps a response to a Kind. The scoped-key error codes win over
+// the plain status mapping so scripts can tell "missing scope" from "bad
+// request" by exit code alone.
+func kindForError(status int, code string) clierr.Kind {
+	switch code {
+	case "SCOPE_DENIED":
+		return clierr.KindScopeDenied
+	case "HUMAN_ONLY":
+		return clierr.KindHumanOnly
+	case "KEY_EXPIRED":
+		return clierr.KindKeyExpired
+	}
+	return kindForStatus(status)
 }
 
 func kindForStatus(status int) clierr.Kind {
@@ -212,11 +235,15 @@ func (c *Client) attempt(method, path string, body any, query map[string]string)
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	if c.BearerToken != "" {
+	// Admin ID tokens, tvkey_* keys and tvagent_* keys all travel as a Bearer
+	// token; the server tells them apart by prefix.
+	switch {
+	case c.BearerToken != "":
 		req.Header.Set("Authorization", "Bearer "+c.BearerToken)
-	}
-	if c.AgentKey != "" {
-		req.Header.Set("X-Agent-Key", c.AgentKey)
+	case c.APIKey != "":
+		req.Header.Set("Authorization", "Bearer "+c.APIKey)
+	case c.AgentKey != "":
+		req.Header.Set("Authorization", "Bearer "+c.AgentKey)
 	}
 	if c.UserAgent != "" {
 		req.Header.Set("User-Agent", c.UserAgent)
@@ -261,10 +288,25 @@ func (c *Client) attempt(method, path string, body any, query map[string]string)
 		respSummary += " — " + er.Message
 	}
 	cliErr := &clierr.CLIError{
-		Kind:     kindForStatus(resp.StatusCode),
+		Kind:     kindForError(resp.StatusCode, er.Code),
+		Code:     er.Code,
+		Scope:    er.MissingScope,
 		Request:  reqLine,
 		Response: respSummary,
 		Message:  er.Message,
+	}
+	switch cliErr.Kind {
+	case clierr.KindScopeDenied:
+		if er.MissingScope != "" {
+			cliErr.Message = fmt.Sprintf("missing scope %q — %s", er.MissingScope, er.Message)
+			cliErr.Hint = fmt.Sprintf("use a key that carries %s (tvault keys create --scopes %s)", er.MissingScope, er.MissingScope)
+		} else if er.Message == "" {
+			cliErr.Message = "this key lacks a required scope"
+		}
+	case clierr.KindHumanOnly:
+		cliErr.Hint = "this operation needs a signed-in human — run `tvault login` and switch to the admin context"
+	case clierr.KindKeyExpired:
+		cliErr.Hint = "rotate the key (tvault keys rotate / tvault agents rotate-key) or log in with a new one"
 	}
 	if resp.StatusCode == http.StatusTooManyRequests {
 		if secs, err := strconv.Atoi(resp.Header.Get("Retry-After")); err == nil && secs > 0 {

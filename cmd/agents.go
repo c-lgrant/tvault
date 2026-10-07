@@ -53,7 +53,7 @@ var agentsListCmd = &cobra.Command{
 	Short:   "List agents",
 	Args:    cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		cc, err := resolve(cmd, true)
+		cc, err := resolve(cmd)
 		if err != nil {
 			return err
 		}
@@ -80,7 +80,7 @@ var agentsShowCmd = &cobra.Command{
 	Args:              cobra.ExactArgs(1),
 	ValidArgsFunction: completeAgents,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		cc, err := resolve(cmd, true)
+		cc, err := resolve(cmd)
 		if err != nil {
 			return err
 		}
@@ -110,13 +110,31 @@ var agentsCreateCmd = &cobra.Command{
 	Short:   "Create an agent (interactive wizard, or flag-driven)",
 	Args:    cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		cc, err := resolve(cmd, true)
+		cc, err := resolve(cmd)
 		if err != nil {
 			return err
 		}
 		name, _ := cmd.Flags().GetString("name")
 		grants, _ := cmd.Flags().GetStringSlice("grants")
 		nonInteractive, _ := cmd.Flags().GetBool("non-interactive")
+		kind, _ := cmd.Flags().GetString("kind")
+		scopes, _ := cmd.Flags().GetStringSlice("scopes")
+
+		switch kind {
+		case "", "classic":
+			if len(scopes) > 0 {
+				return &clierr.CLIError{Kind: clierr.KindUser, Command: "agents create",
+					Message: "--scopes only applies to --kind scoped"}
+			}
+		case "scoped":
+			if len(scopes) == 0 {
+				return &clierr.CLIError{Kind: clierr.KindUser, Command: "agents create",
+					Message: "--kind scoped needs --scopes (comma-separated, e.g. credentials:read)"}
+			}
+		default:
+			return &clierr.CLIError{Kind: clierr.KindUser, Command: "agents create",
+				Message: fmt.Sprintf("invalid --kind %q — use classic or scoped", kind)}
+		}
 
 		if name == "" {
 			if nonInteractive || !cc.IsTTY {
@@ -139,7 +157,7 @@ var agentsCreateCmd = &cobra.Command{
 
 		// The backend has no grants field on POST /api/agents — create the
 		// agent first, then apply grants via the grants endpoint.
-		res, err := cc.Client.CreateAgent(name)
+		res, err := cc.Client.CreateAgentWithKind(name, kind, scopes)
 		if err != nil {
 			return enrich(cmd, cc, err)
 		}
@@ -159,6 +177,35 @@ var agentsCreateCmd = &cobra.Command{
 	},
 }
 
+var agentsRotateKeyCmd = &cobra.Command{
+	Use:               "rotate-key <name-or-id>",
+	Short:             "Rotate an agent's API key (the new key is printed once, to stdout)",
+	Args:              cobra.ExactArgs(1),
+	ValidArgsFunction: completeAgents,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		cc, err := resolve(cmd)
+		if err != nil {
+			return err
+		}
+		ids, err := resolveAgentRefs(cc.Client, args[:1])
+		if err != nil {
+			return enrich(cmd, cc, err)
+		}
+		res, err := cc.Client.RotateAgentKey(ids[0])
+		if err != nil {
+			return enrich(cmd, cc, err)
+		}
+		if res.APIKey == "" { // --dry-run
+			return nil
+		}
+		cmd.PrintErrf("Rotated key for agent %q — the old key no longer works.\n", args[0])
+		cmd.PrintErrln("API key (shown once — store it now):")
+		// stdout: scripts capture KEY=$(tvault agents rotate-key ...).
+		fmt.Println(res.APIKey)
+		return nil
+	},
+}
+
 var agentsRmCmd = &cobra.Command{
 	Use:               "rm <name-or-id> [<name-or-id>...]",
 	Aliases:           []string{"del", "d"},
@@ -167,7 +214,7 @@ var agentsRmCmd = &cobra.Command{
 	ValidArgsFunction: completeAgents,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		force, _ := cmd.Flags().GetBool("force")
-		cc, err := resolve(cmd, true)
+		cc, err := resolve(cmd)
 		if err != nil {
 			return err
 		}
@@ -194,7 +241,7 @@ func agentStatusCmd(use, alias, status, verb string) *cobra.Command {
 		Args:              cobra.ExactArgs(1),
 		ValidArgsFunction: completeAgents,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cc, err := resolve(cmd, true)
+			cc, err := resolve(cmd)
 			if err != nil {
 				return err
 			}
@@ -215,10 +262,12 @@ func init() {
 	agentsCreateCmd.Flags().String("name", "", "agent name")
 	agentsCreateCmd.Flags().StringSlice("grants", nil, "comma-separated services to grant")
 	agentsCreateCmd.Flags().Bool("non-interactive", false, "fail instead of prompting")
+	agentsCreateCmd.Flags().String("kind", "", "agent kind: classic (default) or scoped")
+	agentsCreateCmd.Flags().StringSlice("scopes", nil, "comma-separated scopes for --kind scoped, e.g. credentials:read")
 	agentsRmCmd.Flags().Bool("force", false, "skip the confirmation prompt")
 
 	agentsCmd.AddCommand(
-		agentsListCmd, agentsShowCmd, agentsCreateCmd, agentsRmCmd,
+		agentsListCmd, agentsShowCmd, agentsCreateCmd, agentsRotateKeyCmd, agentsRmCmd,
 		agentStatusCmd("suspend", "off", "suspended", "Suspend"),
 		agentStatusCmd("resume", "on", "active", "Resume"),
 	)

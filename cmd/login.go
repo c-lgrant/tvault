@@ -12,20 +12,20 @@ const (
 
 var loginCmd = &cobra.Command{
 	Use:   "login",
-	Short: "Log in to Token Vault (browser-based admin login, or --key for an agent)",
+	Short: "Log in to Token Vault (browser-based admin login, or --key for a tvagent_/tvkey_ key)",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		asName, _ := cmd.Flags().GetString("as")
-		agentKey, _ := cmd.Flags().GetString("key")
+		apiKey, _ := cmd.Flags().GetString("key")
 		noBrowser, _ := cmd.Flags().GetBool("no-launch-browser")
 		apiURL, _ := cmd.Flags().GetString("api-url")
 		frontendURL, _ := cmd.Flags().GetString("frontend-url")
 
-		if agentKey != "" {
-			if err := auth.LoginAgent(asName, apiURL, agentKey); err != nil {
+		if apiKey != "" {
+			if err := auth.LoginKey(asName, apiURL, apiKey); err != nil {
 				return err
 			}
-			cmd.Printf("Logged in as agent — context %q is now active.\n", asName)
+			cmd.Printf("Logged in as %s — context %q is now active.\n", auth.KeyContextType(apiKey), asName)
 			return nil
 		}
 
@@ -49,7 +49,7 @@ var loginCmd = &cobra.Command{
 
 func init() {
 	loginCmd.Flags().String("as", "", "context name to store the login under")
-	loginCmd.Flags().String("key", "", "tvagent_* key for non-interactive agent login")
+	loginCmd.Flags().String("key", "", "tvagent_* (agent) or tvkey_* (scoped key) for non-interactive login; the type is detected from the prefix")
 	loginCmd.Flags().Bool("no-launch-browser", false, "use the manual code-paste flow instead of the loopback browser redirect (for SSH/headless sessions)")
 	loginCmd.Flags().String("api-url", defaultAPIURL, "API base URL")
 	loginCmd.Flags().String("frontend-url", defaultFrontendURL, "frontend base URL (hosts /cli/auth)")

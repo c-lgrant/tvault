@@ -29,7 +29,7 @@ var tokensListCmd = &cobra.Command{
 // runTokensList renders the token list. It backs both `tvault tokens list` and
 // the top-level `tvault list` shortcut.
 func runTokensList(cmd *cobra.Command, _ []string) error {
-	cc, err := resolve(cmd, false)
+	cc, err := resolve(cmd)
 	if err != nil {
 		return err
 	}
@@ -60,7 +60,7 @@ var tokensGetCmd = &cobra.Command{
 }
 
 func runTokensGet(cmd *cobra.Command, args []string) error {
-	cc, err := resolve(cmd, false)
+	cc, err := resolve(cmd)
 	if err != nil {
 		return err
 	}
@@ -105,7 +105,7 @@ var tokensShowCmd = &cobra.Command{
 }
 
 func runTokensShow(cmd *cobra.Command, args []string) error {
-	cc, err := resolve(cmd, false)
+	cc, err := resolve(cmd)
 	if err != nil {
 		return err
 	}
@@ -136,7 +136,7 @@ func runTokensSet(cmd *cobra.Command, args []string) error {
 	if value == "" {
 		return &clierr.CLIError{Kind: clierr.KindUser, Command: "tokens set", Message: "--value is required"}
 	}
-	cc, err := resolve(cmd, true)
+	cc, err := resolve(cmd)
 	if err != nil {
 		return err
 	}
@@ -153,7 +153,7 @@ var tokensEditCmd = &cobra.Command{
 	Args:              cobra.ExactArgs(1),
 	ValidArgsFunction: completeServices,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		cc, err := resolve(cmd, true)
+		cc, err := resolve(cmd)
 		if err != nil {
 			return err
 		}
@@ -192,7 +192,7 @@ var tokensRmCmd = &cobra.Command{
 
 func runTokensRm(cmd *cobra.Command, args []string) error {
 	force, _ := cmd.Flags().GetBool("force")
-	cc, err := resolve(cmd, true)
+	cc, err := resolve(cmd)
 	if err != nil {
 		return err
 	}
@@ -213,7 +213,7 @@ var tokensRefreshCmd = &cobra.Command{
 	Args:              cobra.ExactArgs(1),
 	ValidArgsFunction: completeServices,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		cc, err := resolve(cmd, true)
+		cc, err := resolve(cmd)
 		if err != nil {
 			return err
 		}
@@ -232,7 +232,7 @@ var tokensHistoryCmd = &cobra.Command{
 	Short:             "Show a token's usage history",
 	Args:              cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		cc, err := resolve(cmd, false)
+		cc, err := resolve(cmd)
 		if err != nil {
 			return err
 		}
@@ -272,7 +272,7 @@ var tokensCreateCmd = &cobra.Command{
 }
 
 func runTokensCreate(cmd *cobra.Command, _ []string) error {
-	cc, err := resolve(cmd, true)
+	cc, err := resolve(cmd)
 	if err != nil {
 		return err
 	}
@@ -331,7 +331,7 @@ var tokensStoreTicketCmd = &cobra.Command{
 			typ = "PlainText"
 		}
 
-		cc, err := resolve(cmd, true)
+		cc, err := resolve(cmd)
 		if err != nil {
 			return err
 		}

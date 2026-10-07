@@ -12,7 +12,7 @@ var vaultLockCmd = &cobra.Command{
 	Short: "Lock the vault — blocks all mutating operations",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		cc, err := resolve(cmd, true)
+		cc, err := resolve(cmd)
 		if err != nil {
 			return err
 		}
@@ -29,7 +29,7 @@ var vaultUnlockCmd = &cobra.Command{
 	Short: "Unlock the vault",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		cc, err := resolve(cmd, true)
+		cc, err := resolve(cmd)
 		if err != nil {
 			return err
 		}
@@ -47,7 +47,7 @@ var vaultStatusCmd = &cobra.Command{
 	Short:   "Show whether the vault is locked",
 	Args:    cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		cc, err := resolve(cmd, true)
+		cc, err := resolve(cmd)
 		if err != nil {
 			return err
 		}
