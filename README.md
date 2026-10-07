@@ -40,24 +40,36 @@ The most common token verbs are also available at the top level: `get`, `set`,
 `show`, `rm`, `add`, `ls`. They're shortcuts for the equivalent `tokens …`
 commands; see [Top-level shortcuts](#top-level-shortcuts) below.
 
-## Contexts: admin vs. agent
+## Contexts: admin, agent, key
 
-`tvault` stores one or more *contexts*, each holding either an admin login
-(Firebase identity, full console access) or an agent login (a `tvagent_*` key,
-scoped to its grants). Commands resolve the active context automatically;
-override it per-invocation with `--context <name>`.
+`tvault` stores one or more *contexts*, each holding one of:
+
+- **admin** — a browser login (Firebase identity, full console access).
+- **agent** — a `tvagent_*` key, limited to its grants (or, for a scoped agent, its scopes).
+- **key** — a `tvkey_*` scoped key (see [Keys](#keys--tvault-keys)), limited to the scopes it was minted with.
+
+Agent and key contexts authenticate with the key itself as a bearer token (no
+Firebase session, nothing to refresh). The CLI does **not** pre-check what a
+context may do: every command sends its request and the server is the sole
+enforcer, answering `SCOPE_DENIED` / `HUMAN_ONLY` (see [Exit codes](#exit-codes)).
+The one local exception is `tvault auth print-token`, which prints a Firebase ID
+token and so only works in an admin context.
+
+Commands resolve the active context automatically; override it
+per-invocation with `--context <name>`.
 
 | Command | Purpose |
 |---------|---------|
-| `tvault login` | Browser-based admin login. `--as <name>` names the context; `--key <tvagent_*>` does a non-interactive agent login; `--no-launch-browser` uses the manual code-paste flow for SSH/headless sessions. |
+| `tvault login` | Browser-based admin login. `--as <name>` names the context; `--key <tvagent_*|tvkey_*>` does a non-interactive login (agent or key context, detected from the prefix; needs `--as`); `--no-launch-browser` uses the manual code-paste flow for SSH/headless sessions. |
 | `tvault logout` | Remove the stored credentials for a context. |
-| `tvault whoami` (`who`) | Show the active context's identity. |
+| `tvault whoami` (`who`) | Show the active context and the server's view of it: principal type/name, kind (classic/scoped), scopes, and key expiry. `--format json` for machine output. |
 | `tvault context` (`ctx`) | `list`/`ls`, `use <name>`, `current`, `rm <name>` — manage stored contexts. |
 
 ## Commands
 
-Most groups have a short alias (shown in parentheses). Admin-only commands
-require an admin context.
+Most groups have a short alias (shown in parentheses). Every command can be
+run from any context type; whether it succeeds depends on the principal's
+scopes, enforced by the server (`SCOPE_DENIED` → exit 8, `HUMAN_ONLY` → exit 9).
 
 ### Tokens — `tvault tokens` (`tk`)
 
@@ -67,10 +79,10 @@ require an admin context.
 | `tk get <service>` | Print a credential value to stdout — safe for `$(...)`. `--check` exits 0/6 without printing (presence probe). |
 | `tk show <service>` (`info`) | Show token metadata (no secret). |
 | `tk create` (`new`) | Create a token — interactive type-picker wizard, or fully flag-driven with `--type`/`--service`/`--value`. In webhook-mode vaults the secret auto-routes to the user's webhook (TV never sees it). |
-| `tk set <service>` (`up`) | Rotate a credential value (`--value`). Admin only. Auto-routes through the store-ticket flow in webhook-mode vaults. |
-| `tk edit <service>` | Edit metadata: `--name`, `--notes`, `--tags`. Admin only. |
-| `tk rm <service>...` (`del`, `d`) | Delete one or more tokens. Admin only. |
-| `tk refresh <service>` (`ref`) | Force an OAuth token refresh. Admin only. |
+| `tk set <service>` (`up`) | Rotate a credential value (`--value`). Auto-routes through the store-ticket flow in webhook-mode vaults. |
+| `tk edit <service>` | Edit metadata: `--name`, `--notes`, `--tags`. |
+| `tk rm <service>...` (`del`, `d`) | Delete one or more tokens. |
+| `tk refresh <service>` (`ref`) | Force an OAuth token refresh. |
 | `tk history <service>` (`hist`) | Show a token's usage history. |
 | `tk store-ticket <service>` | Webhook-mode escape hatch: store a secret on the user's webhook via a signed ticket. `set`/`create` use this automatically — call directly for power-user scripts or to print the raw ticket envelope. |
 
@@ -88,10 +100,38 @@ the backend-assigned ID — the CLI resolves names through `agents list`.
 |---------|---------|
 | `ag list` (`ls`) | List agents. |
 | `ag show <name-or-id>` (`info`) | Show agent details and grants. |
-| `ag create` (`new`) | Create an agent — interactive name + grants wizard, or `--name`/`--grants`. The API key is shown once. |
+| `ag create` (`new`) | Create an agent — interactive name + grants wizard, or `--name`/`--grants`. `--kind scoped --scopes a,b` creates a scoped agent. The API key is shown once. |
+| `ag rotate-key <name-or-id>` | Replace an agent's API key. The new key is printed once, on stdout (status goes to stderr). |
 | `ag rm <name-or-id>...` (`del`, `d`) | Delete one or more agents. |
 | `ag suspend <name-or-id>` (`off`) | Suspend an agent. |
 | `ag resume <name-or-id>` (`on`) | Resume a suspended agent. |
+
+### Keys — `tvault keys`
+
+Scoped keys (`tvkey_*`) carry an explicit scope list and an expiry. The secret
+is printed **once, on stdout only**; all metadata goes to stderr, so
+`KEY=$(tvault keys create ...)` captures just the secret.
+
+| Command | Purpose |
+|---------|---------|
+| `keys create` (`new`) | `--name <n> --scopes a,b,c [--expires 30d\|90d\|365d\|YYYY-MM-DD\|never]`. Default expiry is `90d`; a date expires at 23:59:59 UTC that day. |
+| `keys ls` (`list`) | List keys: id, name, status, scopes, expiry, last use. The secret is never shown. |
+| `keys rotate <id-or-name>` | Replace the secret; the new key is printed once on stdout and the old one stops working. |
+| `keys revoke <id-or-name>` (`rm`) | Permanently revoke a key. Asks for confirmation; `--yes` skips it, and a non-interactive shell refuses without `--yes`. |
+
+Scopes: `credentials:read`, `mcp:use`, `tokens:list`, `tokens:create`,
+`tokens:create-read`, `tokens:update`, `tokens:delete`, `agents:read`,
+`agents:create`, `agents:manage`, `grants:write`, `proxies:read`,
+`proxies:write`, `policies:read`, `policies:write`, `keys:manage`.
+
+```bash
+KEY=$(tvault keys create --name ci --scopes credentials:read,tokens:list --expires 30d)
+tvault login --key "$KEY" --as ci      # tvkey_ prefix → a key context
+tvault --context ci whoami             # principal, kind, scopes, expiry
+```
+
+Token writes from a key or agent context still use the store-ticket flow: the
+metadata goes to Token Vault, and the value is POSTed straight to your webhook.
 
 ### Grants — `tvault grants` (`gr`)
 
@@ -110,7 +150,7 @@ The top-level `tvault grant <agent> <service>...` is a flat-verb shortcut for
 |---------|---------|
 | `vault status` (`stat`) | Show the vault lock state. |
 | `vault lock` | Lock the vault — blocks all mutating operations. |
-| `vault unlock` | Unlock the vault. Admin only. |
+| `vault unlock` | Unlock the vault. |
 
 ### Webhook — `tvault webhook` (`wh`)
 
@@ -122,8 +162,8 @@ vault **without a browser**, reusing your admin context's session.
 |---------|---------|
 | `wh init` | Generate a `docker-compose.yml` + `.env` for a webhook deployment. Interactive method picker, or `--method` + `--set KEY=VALUE`. Methods: `ngrok`, `cloudflare`, `tailscale`, `custom`. `--dir` sets the target (default `./tvault-webhook`); `--image` overrides the webhook image. |
 | `wh up` | `docker compose up -d`, then wait for the webhook to report healthy. |
-| `wh bind` | Fetch the one-time code from the running webhook and bind it to your vault — no browser. Admin only. |
-| `wh status` (`stat`) | Show local container state next to the backend's view of the webhook. Admin only. |
+| `wh bind` | Fetch the one-time code from the running webhook and bind it to your vault — no browser. |
+| `wh status` (`stat`) | Show local container state next to the backend's view of the webhook. |
 | `wh down` | `docker compose down`. |
 
 Typical first run:
@@ -177,6 +217,25 @@ that credential — equivalent to `tvault tk get <service>`.
 | `--no-color` | Disable colored output. |
 | `--debug` | Print HTTP request/response diagnostics to stderr. |
 | `--dry-run` | On write commands, print the request that would be sent without sending it. |
+
+## Exit codes
+
+Every failure maps to a distinct exit code, so scripts can branch without
+parsing text.
+
+| Code | Meaning |
+|------|---------|
+| 0 | Success. |
+| 1 | User error — bad arguments, validation, not found, other 4xx. |
+| 2 | Auth — no context, session expired, bad credentials (401). |
+| 3 | Network — could not reach the API. |
+| 4 | Server error (5xx). |
+| 5 | Vault locked (`VAULT_LOCKED`). |
+| 6 | Token exists but has no credential value. |
+| 7 | Rate limited (429). |
+| 8 | `SCOPE_DENIED` — the key lacks a required scope; the message names it. |
+| 9 | `HUMAN_ONLY` — the operation needs a signed-in human, not an API key. |
+| 10 | `KEY_EXPIRED` — the API key is past its expiry. |
 
 ## Other commands
 
