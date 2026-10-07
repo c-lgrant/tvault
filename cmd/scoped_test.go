@@ -256,6 +256,59 @@ func TestLoginKeyStdin(t *testing.T) {
 	}
 }
 
+// Admin whoami against a server that predates scoped keys falls back to the
+// local report instead of failing.
+func TestWhoami_AdminFallsBackOnLegacyServer(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		status int
+		body   string
+	}{
+		{"403 INVALID_KEY", 403, `{"detail":{"code":"INVALID_KEY","message":"Invalid agent API key format"}}`},
+		{"401 INVALID_KEY", 401, `{"detail":{"code":"INVALID_KEY","message":"Invalid agent API key format"}}`},
+		{"404", 404, `{"detail":"Not Found"}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				// ID tokens are never persisted, so resolve() refreshes first.
+				if r.URL.Path == "/api/cli/auth/refresh" {
+					w.Write([]byte(`{"id_token":"idt","expires_in":3600}`))
+					return
+				}
+				w.WriteHeader(tc.status)
+				w.Write([]byte(tc.body))
+			}))
+			defer srv.Close()
+			setupContext(t, &config.Context{Type: "admin", APIURL: srv.URL, Identity: "me@example.com", RefreshToken: "rt"})
+
+			stdout, stderr, err := runCLI(t, "whoami", "--format", "table")
+			if err != nil {
+				t.Fatalf("whoami should fall back, got %v", err)
+			}
+			out := stdout + stderr
+			for _, want := range []string{"me@example.com", "user (server predates scoped keys)", "scopes   : none", "token    : expires in"} {
+				if !strings.Contains(out, want) {
+					t.Errorf("output missing %q:\n%s", want, out)
+				}
+			}
+		})
+	}
+}
+
+// Key contexts never fall back: INVALID_KEY is a real answer for them.
+func TestWhoami_KeyContextInvalidKeyIsAnError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(401)
+		w.Write([]byte(`{"detail":{"code":"INVALID_KEY","message":"bad key"}}`))
+	}))
+	defer srv.Close()
+	setupContext(t, &config.Context{Type: "key", APIURL: srv.URL, Identity: "k", APIKey: "tvkey_bad"})
+	_, _, err := runCLI(t, "whoami", "--format", "table")
+	if clierr.ExitCode(err) != 12 {
+		t.Errorf("exit = %d, want 12 (%v)", clierr.ExitCode(err), err)
+	}
+}
+
 func TestParseExpiry(t *testing.T) {
 	now := time.Date(2026, 10, 7, 12, 0, 0, 0, time.UTC)
 	got, err := parseExpiry("30d", now)
