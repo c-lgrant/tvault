@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"regexp"
 
 	"github.com/c-lgrant/tvault/internal/api"
 	"github.com/c-lgrant/tvault/internal/clierr"
@@ -13,25 +14,43 @@ import (
 
 // resolveAgentRefs accepts a mix of agent IDs and names and returns the
 // corresponding IDs in input order. The backend's /api/agents/{id} routes
-// expect an ID, so names are looked up via ListAgents. Refs that match a
-// name win; unmatched refs pass through unchanged so real IDs and brand-new
-// agents (created after ListAgents) still work.
+// expect an ID. A ref shaped like a backend agent ID (a 20-character
+// Firestore auto-ID) is used as-is with no lookup — listing agents needs the
+// agents:read scope, which a key limited to e.g. grants:write doesn't have.
+// Any other ref is treated as a name and resolved via ListAgents; a name that
+// matches nothing passes through unchanged so the server reports not-found.
 //
-// We always make the round-trip — distinguishing a 20-char Firestore ID from
-// a 20-char human name reliably is hard, and ListAgents is cheap (one GET,
-// admin-only). One extra request is preferable to a 404 on a name that
-// happens to fit the ID shape.
+// Edge case: a human name that is exactly 20 alphanumeric characters is
+// indistinguishable from an ID and is treated as one; pass the real ID.
 func resolveAgentRefs(client *api.Client, refs []string) ([]string, error) {
-	agents, err := client.ListAgents()
-	if err != nil {
-		return nil, err
-	}
-	byName := make(map[string]string, len(agents))
-	for _, a := range agents {
-		byName[a.Name] = a.ID
-	}
 	out := make([]string, len(refs))
+	var byName map[string]string
 	for i, r := range refs {
+		if agentIDPattern.MatchString(r) {
+			out[i] = r
+			continue
+		}
+		if byName == nil {
+			agents, err := client.ListAgents()
+			if err != nil {
+				var ce *clierr.CLIError
+				if asCLIErr(err, &ce) && ce.Kind == clierr.KindScopeDenied {
+					return nil, &clierr.CLIError{
+						Kind:    clierr.KindScopeDenied,
+						Code:    ce.Code,
+						Scope:   ce.Scope,
+						Request: ce.Request,
+						Message: fmt.Sprintf("cannot look up agent %q by name — listing agents needs the agents:read scope; pass the agent ID instead", r),
+						Hint:    "use the agent's ID (shown by `tvault agents ls` in an admin context) in place of its name",
+					}
+				}
+				return nil, err
+			}
+			byName = make(map[string]string, len(agents))
+			for _, a := range agents {
+				byName[a.Name] = a.ID
+			}
+		}
 		if id, ok := byName[r]; ok {
 			out[i] = id
 		} else {
@@ -40,6 +59,10 @@ func resolveAgentRefs(client *api.Client, refs []string) ([]string, error) {
 	}
 	return out, nil
 }
+
+// agentIDPattern matches the IDs the backend issues for agents: Firestore
+// auto-IDs, 20 alphanumeric characters.
+var agentIDPattern = regexp.MustCompile(`^[A-Za-z0-9]{20}$`)
 
 var agentsCmd = &cobra.Command{
 	Use:     "agents",

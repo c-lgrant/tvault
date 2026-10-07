@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/c-lgrant/tvault/internal/api"
 	"github.com/c-lgrant/tvault/internal/clierr"
 	"github.com/c-lgrant/tvault/internal/config"
 )
@@ -154,6 +155,53 @@ func TestWhoami_KeyContext(t *testing.T) {
 	}
 	if doc["kind"] != "scoped" || doc["expiresAt"] != "2027-01-01T00:00:00Z" {
 		t.Errorf("unexpected whoami json: %v", doc)
+	}
+}
+
+// A key limited to grants:write must be able to grant by agent ID without the
+// CLI listing agents (which needs agents:read).
+func TestGrantsAdd_AgentIDSkipsAgentList(t *testing.T) {
+	const agentID = "aB3dE5gH7jK9mN1pQ2rS" // 20-char Firestore-style ID
+	var calls []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls = append(calls, r.Method+" "+r.URL.Path)
+		if r.Method == "GET" && r.URL.Path == "/api/agents" {
+			w.WriteHeader(403)
+			w.Write([]byte(`{"detail":{"code":"SCOPE_DENIED","message":"denied","missingScope":"agents:read"}}`))
+			return
+		}
+		w.WriteHeader(201)
+		w.Write([]byte(`{}`))
+	}))
+	defer srv.Close()
+	setupContext(t, &config.Context{Type: "key", APIURL: srv.URL, Identity: "k", APIKey: "tvkey_gw"})
+
+	_, stderr, err := runCLI(t, "agents", "grants", "add", agentID, "github")
+	if err != nil {
+		t.Fatalf("grants add errored: %v", err)
+	}
+	if len(calls) != 1 || calls[0] != "POST /api/agents/"+agentID+"/grants" {
+		t.Errorf("calls = %v, want a single POST (no GET /api/agents)", calls)
+	}
+	if !strings.Contains(stderr, "Granted 1") {
+		t.Errorf("stderr = %q", stderr)
+	}
+}
+
+func TestResolveAgentRefs_NameLookupScopeDenied(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(403)
+		w.Write([]byte(`{"detail":{"code":"SCOPE_DENIED","message":"denied","missingScope":"agents:read"}}`))
+	}))
+	defer srv.Close()
+	client := &api.Client{BaseURL: srv.URL, HTTP: srv.Client(), APIKey: "tvkey_gw"}
+
+	_, err := resolveAgentRefs(client, []string{"my-agent"})
+	if err == nil || clierr.ExitCode(err) != 8 {
+		t.Fatalf("want scope-denied exit 8, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "agent ID") {
+		t.Errorf("error should suggest passing the agent ID: %v", err)
 	}
 }
 
