@@ -83,23 +83,27 @@ func TestKeyGrantsAndShow(t *testing.T) {
 			n, _ := r.Body.Read(b)
 			grantBody = string(b[:n])
 			w.WriteHeader(201)
-			w.Write([]byte(`{}`))
+			w.Write([]byte(`{"success":true,"serviceName":"github","grantExpiresAt":"2026-10-08T00:00:00Z","refreshPolicy":"auto","source":"key"}`))
 		case r.Method == "DELETE":
 			w.WriteHeader(204)
 		default:
-			w.Write([]byte(`{"id":"k1","name":"ci","scopes":["a"],"status":"active","expiresAt":null,"createdAt":"x","lastUsedAt":null,"createdBy":{"type":"user","id":"u"},"grants":[{"serviceName":"github","source":"direct","expiresAt":null}]}`))
+			w.Write([]byte(`{"id":"k1","name":"ci","scopes":["a"],"status":"active","expiresAt":null,"createdAt":"x","lastUsedAt":null,"createdBy":{"type":"user","id":"u"},"grants":[{"serviceName":"github","refreshPolicy":"auto","source":"key","grantedAt":"2026-10-07T00:00:00Z","grantExpiresAt":"2026-10-08T00:00:00Z"}]}`))
 		}
 	}))
 	defer srv.Close()
 	c := &Client{BaseURL: srv.URL, HTTP: srv.Client(), APIKey: "tvkey_x"}
 
-	if err := c.GrantKey("k1", "github", 24); err != nil {
+	gr, err := c.GrantKey("k1", "github", 24)
+	if err != nil {
 		t.Fatal(err)
+	}
+	if !gr.Success || gr.GrantExpiresAt == nil || *gr.GrantExpiresAt != "2026-10-08T00:00:00Z" || gr.RefreshPolicy != "auto" || gr.Source != "key" {
+		t.Errorf("GrantKey result = %+v", gr)
 	}
 	if !strings.Contains(grantBody, `"serviceName":"github"`) || !strings.Contains(grantBody, `"expiresInHours":24`) {
 		t.Errorf("grant body = %s", grantBody)
 	}
-	if err := c.GrantKey("k1", "github", 0); err != nil {
+	if _, err := c.GrantKey("k1", "github", 0); err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(grantBody, "expiresInHours") {
@@ -109,7 +113,9 @@ func TestKeyGrantsAndShow(t *testing.T) {
 		t.Fatal(err)
 	}
 	d, err := c.GetKey("k1")
-	if err != nil || len(d.Grants) != 1 || d.Grants[0].Source != "direct" || d.Name != "ci" {
+	if err != nil || len(d.Grants) != 1 || d.Grants[0].Source != "key" || d.Name != "ci" ||
+		d.Grants[0].GrantExpiresAt == nil || *d.Grants[0].GrantExpiresAt != "2026-10-08T00:00:00Z" ||
+		d.Grants[0].RefreshPolicy != "auto" || d.Grants[0].GrantedAt == "" {
 		t.Fatalf("GetKey = %+v, %v", d, err)
 	}
 	want := []string{"POST /api/keys/k1/grants", "POST /api/keys/k1/grants", "DELETE /api/keys/k1/grants/github", "GET /api/keys/k1"}

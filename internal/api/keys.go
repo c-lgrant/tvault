@@ -55,9 +55,20 @@ type Key struct {
 // KeyGrant is one service grant on a key. Source says how the grant came to
 // exist (e.g. directly granted vs. inherited), as reported by the server.
 type KeyGrant struct {
-	ServiceName string  `json:"serviceName"`
-	Source      string  `json:"source"`
-	ExpiresAt   *string `json:"expiresAt"`
+	ServiceName    string  `json:"serviceName"`
+	RefreshPolicy  string  `json:"refreshPolicy"`
+	Source         string  `json:"source"`
+	GrantedAt      string  `json:"grantedAt"`
+	GrantExpiresAt *string `json:"grantExpiresAt"`
+}
+
+// GrantKeyResult is the POST /api/keys/{id}/grants response.
+type GrantKeyResult struct {
+	Success        bool    `json:"success"`
+	ServiceName    string  `json:"serviceName"`
+	GrantExpiresAt *string `json:"grantExpiresAt"`
+	RefreshPolicy  string  `json:"refreshPolicy"`
+	Source         string  `json:"source"`
 }
 
 // KeyDetail is GET /api/keys/{id}: the list item plus its grants.
@@ -81,13 +92,20 @@ func (c *Client) GetKey(id string) (*KeyDetail, error) {
 
 // GrantKey grants a service to a key. expiresInHours <= 0 omits the field
 // (no grant expiry).
-func (c *Client) GrantKey(id, service string, expiresInHours int) error {
+func (c *Client) GrantKey(id, service string, expiresInHours int) (*GrantKeyResult, error) {
 	payload := map[string]any{"serviceName": service}
 	if expiresInHours > 0 {
 		payload["expiresInHours"] = expiresInHours
 	}
-	_, err := c.doRequest("POST", "/api/keys/"+url.PathEscape(id)+"/grants", payload, nil)
-	return err
+	body, err := c.doRequest("POST", "/api/keys/"+url.PathEscape(id)+"/grants", payload, nil)
+	if err != nil {
+		return nil, err
+	}
+	var res GrantKeyResult
+	if err := json.Unmarshal(body, &res); err != nil {
+		return nil, err
+	}
+	return &res, nil
 }
 
 // UngrantKey removes a service grant from a key.

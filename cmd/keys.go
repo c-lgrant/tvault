@@ -248,8 +248,8 @@ var keysShowCmd = &cobra.Command{
 			if g.Source != "" {
 				grants[i] += " (" + g.Source + ")"
 			}
-			if g.ExpiresAt != nil && *g.ExpiresAt != "" {
-				grants[i] += " until " + *g.ExpiresAt
+			if g.GrantExpiresAt != nil && *g.GrantExpiresAt != "" {
+				grants[i] += " until " + *g.GrantExpiresAt
 			}
 		}
 		rows := []map[string]string{{
@@ -281,10 +281,15 @@ var keysGrantCmd = &cobra.Command{
 		if err != nil {
 			return enrich(cmd, cc, err)
 		}
-		if err := cc.Client.GrantKey(id, args[1], hours); err != nil {
+		res, err := cc.Client.GrantKey(id, args[1], hours)
+		if err != nil {
 			return enrich(cmd, cc, err)
 		}
-		cmd.PrintErrf("Granted %q to key %s.\n", args[1], id)
+		msg := fmt.Sprintf("Granted %q to key %s", args[1], id)
+		if res.GrantExpiresAt != nil && *res.GrantExpiresAt != "" {
+			msg += " until " + *res.GrantExpiresAt
+		}
+		cmd.PrintErrln(msg + ".")
 		return nil
 	},
 }
