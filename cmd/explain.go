@@ -66,7 +66,7 @@ var errorExplanations = map[string]struct {
 	},
 	"INVALID_KEY": {
 		What: "The API key is unknown, malformed, or already revoked (exit code 12).",
-		Fix:  "Check the key value; log in with a valid one via `tvault login --key <key> --as <name>`.",
+		Fix:  "Check the key value; log in with a valid one: `printf %s \"$TVAULT_KEY\" | tvault login --key-stdin --as <name>`.",
 	},
 	"NOT_OWNER": {
 		What: "Only the owner of this key or agent may perform this action.",

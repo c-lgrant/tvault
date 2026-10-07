@@ -60,7 +60,7 @@ per-invocation with `--context <name>`.
 
 | Command | Purpose |
 |---------|---------|
-| `tvault login` | Browser-based admin login. `--as <name>` names the context; `--key <tvagent_*|tvkey_*>` does a non-interactive login (agent or key context, detected from the prefix; needs `--as`); `--no-launch-browser` uses the manual code-paste flow for SSH/headless sessions. |
+| `tvault login` | Browser-based admin login. `--as <name>` names the context; `--key-stdin` reads a `tvagent_*`/`tvkey_*` key from a pipe for a non-interactive login (agent or key context, detected from the prefix; needs `--as`) — `printf %s "$TVAULT_KEY" \| tvault login --key-stdin --as ci`. `--key <key>` does the same but leaves the key in your shell history and process list, so prefer `--key-stdin`; `--no-launch-browser` uses the manual code-paste flow for SSH/headless sessions. |
 | `tvault logout` | Remove the stored credentials for a context. |
 | `tvault whoami` (`who`) | Show the active context and the server's view of it: principal type/name, kind (classic/scoped), scopes, and key expiry. `--format json` for machine output. |
 | `tvault context` (`ctx`) | `list`/`ls`, `use <name>`, `current`, `rm <name>` — manage stored contexts. |
@@ -129,7 +129,7 @@ Scopes: `credentials:read`, `mcp:use`, `tokens:list`, `tokens:create`,
 
 ```bash
 KEY=$(tvault keys create --name ci --scopes credentials:read,tokens:list --expires 30d)
-tvault login --key "$KEY" --as ci      # tvkey_ prefix → a key context
+printf %s "$KEY" | tvault login --key-stdin --as ci   # tvkey_ prefix → a key context
 tvault --context ci whoami             # principal, kind, scopes, expiry
 ```
 

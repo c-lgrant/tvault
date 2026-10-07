@@ -205,6 +205,57 @@ func TestResolveAgentRefs_NameLookupScopeDenied(t *testing.T) {
 	}
 }
 
+func TestLoginKeyStdin(t *testing.T) {
+	var auth string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		auth = r.Header.Get("Authorization")
+		w.Write([]byte(`{"principal":{"type":"key","id":"k1","name":"ci-key"},"userId":"u","kind":"scoped","scopes":[],"expiresAt":null}`))
+	}))
+	defer srv.Close()
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	t.Setenv("HOME", dir)
+
+	origIn, origTTY := loginStdin, loginStdinIsTTY
+	t.Cleanup(func() { loginStdin, loginStdinIsTTY = origIn, origTTY })
+
+	// Piped key with surrounding whitespace/newline: trimmed, prefix-detected.
+	loginStdin, loginStdinIsTTY = strings.NewReader("  tvkey_piped\n"), func() bool { return false }
+	_, _, err := runCLI(t, "login", "--key-stdin", "--as", "k", "--api-url", srv.URL)
+	if err != nil {
+		t.Fatalf("login --key-stdin errored: %v", err)
+	}
+	if auth != "Bearer tvkey_piped" {
+		t.Errorf("validated with Authorization %q, want the trimmed key", auth)
+	}
+	cfg, _ := config.Load()
+	if c := cfg.Contexts["k"]; c == nil || c.Type != "key" || c.APIKey != "tvkey_piped" {
+		t.Errorf("stored context wrong: %+v", c)
+	}
+
+	// Empty pipe.
+	loginStdin = strings.NewReader("\n")
+	if _, _, err := runCLI(t, "login", "--key-stdin", "--as", "e", "--api-url", srv.URL); err == nil || !strings.Contains(err.Error(), "no key on stdin") {
+		t.Errorf("empty stdin should error, got %v", err)
+	}
+
+	// Interactive terminal: refuse with a pipe hint.
+	loginStdinIsTTY = func() bool { return true }
+	_, _, err = runCLI(t, "login", "--key-stdin", "--as", "t", "--api-url", srv.URL)
+	if err == nil || !strings.Contains(err.Error(), "terminal") || !strings.Contains(err.Error(), "--key-stdin") {
+		t.Errorf("TTY stdin should be refused with a hint, got %v", err)
+	}
+	if clierr.ExitCode(err) != 1 {
+		t.Errorf("exit = %d", clierr.ExitCode(err))
+	}
+
+	// --key and --key-stdin together.
+	loginStdinIsTTY = func() bool { return false }
+	if _, _, err := runCLI(t, "login", "--key-stdin", "--key", "tvkey_x", "--as", "m", "--api-url", srv.URL); err == nil || !strings.Contains(err.Error(), "mutually exclusive") {
+		t.Errorf("want mutual-exclusion error, got %v", err)
+	}
+}
+
 func TestParseExpiry(t *testing.T) {
 	now := time.Date(2026, 10, 7, 12, 0, 0, 0, time.UTC)
 	got, err := parseExpiry("30d", now)
