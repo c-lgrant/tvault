@@ -362,3 +362,48 @@ func TestAgentsCreate_GrantFailureIsNonZero(t *testing.T) {
 		t.Errorf("exit code = %d, want 8 (err=%v)", code, err)
 	}
 }
+
+// --self rotates the context's own key (found via whoami, no keys:manage
+// lookup) and switches the stored context to the new key.
+func TestKeysRotateSelf_UpdatesContext(t *testing.T) {
+	var paths []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.Method+" "+r.URL.Path)
+		switch {
+		case r.Method == "GET" && r.URL.Path == "/api/agents/whoami":
+			w.Write([]byte(`{"principal":{"type":"api_key","id":"k1","name":"ci"},"kind":"api_key","scopes":["tokens:list"]}`))
+		case r.Method == "POST" && r.URL.Path == "/api/keys/k1/rotate":
+			w.Write([]byte(`{"id":"k1","key":"tvkey_new"}`))
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(500)
+		}
+	}))
+	defer srv.Close()
+	setupContext(t, &config.Context{Type: "key", APIURL: srv.URL, Identity: "ci", APIKey: "tvkey_old"})
+
+	stdout, _, err := runCLI(t, "keys", "rotate", "--self")
+	if err != nil {
+		t.Fatalf("rotate --self errored: %v (requests %v)", err, paths)
+	}
+	if stdout != "tvkey_new\n" {
+		t.Errorf("stdout = %q", stdout)
+	}
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.Contexts["t"].APIKey; got != "tvkey_new" {
+		t.Errorf("context key = %q, want the rotated key", got)
+	}
+}
+
+func TestKeysRotate_NeedsArgOrSelf(t *testing.T) {
+	setupContext(t, &config.Context{Type: "key", APIURL: "http://127.0.0.1:1", Identity: "ci", APIKey: "tvkey_k"})
+	for _, args := range [][]string{{"keys", "rotate"}, {"keys", "rotate", "k1", "--self"}} {
+		keysRotateCmd.Flags().Set("self", "false") // cobra keeps flag values between Execute calls
+		if _, _, err := runCLI(t, args...); clierr.ExitCode(err) != 1 {
+			t.Errorf("%v: want a usage error, got %v", args, err)
+		}
+	}
+}

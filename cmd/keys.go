@@ -168,15 +168,26 @@ var keysListCmd = &cobra.Command{
 }
 
 var keysRotateCmd = &cobra.Command{
-	Use:   "rotate <id-or-name>",
+	Use:   "rotate <id-or-name> | --self",
 	Short: "Rotate a key (the new secret is printed once, to stdout)",
-	Args:  cobra.ExactArgs(1),
+	Long: `Rotate a key. Rotating another key needs a signed-in human; any key can
+rotate itself with --self, which also switches the active context to the new key.`,
+	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		self, _ := cmd.Flags().GetBool("self")
+		if self == (len(args) == 1) {
+			return &clierr.CLIError{Kind: clierr.KindUser, Command: "keys rotate", Message: "pass either a key id/name or --self"}
+		}
 		cc, err := resolve(cmd)
 		if err != nil {
 			return err
 		}
-		id, err := resolveKeyRef(cc.Client, args[0])
+		var id string
+		if self {
+			id, _, err = selfPrincipal(cc, "key", "keys rotate")
+		} else {
+			id, err = resolveKeyRef(cc.Client, args[0])
+		}
 		if err != nil {
 			return enrich(cmd, cc, err)
 		}
@@ -188,6 +199,13 @@ var keysRotateCmd = &cobra.Command{
 			return nil
 		}
 		cmd.PrintErrf("Rotated key %s — the old secret no longer works.\n", res.ID)
+		if self {
+			if err := storeRotatedKey(cc, res.Key); err != nil {
+				fmt.Println(res.Key)
+				return err
+			}
+			cmd.PrintErrf("Context %q now uses the new key.\n", cc.ContextName)
+		}
 		cmd.PrintErrln("New key (shown once — store it now):")
 		fmt.Println(res.Key)
 		return nil
@@ -327,6 +345,7 @@ func init() {
 	keysCreateCmd.Flags().String("name", "", "key name (required)")
 	keysCreateCmd.Flags().StringSlice("scopes", nil, "comma-separated scopes, e.g. credentials:read,tokens:list (required)")
 	keysCreateCmd.Flags().String("expires", defaultKeyExpiry, "expiry: 30d | 90d | 365d | YYYY-MM-DD | never")
+	keysRotateCmd.Flags().Bool("self", false, "rotate the key this context is logged in with, and switch the context to the new key")
 	keysRevokeCmd.Flags().Bool("force", false, "skip the confirmation prompt (required in a non-interactive shell)")
 	keysRevokeCmd.Flags().BoolP("yes", "y", false, "alias for --force")
 

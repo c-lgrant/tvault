@@ -218,27 +218,49 @@ var agentsCreateCmd = &cobra.Command{
 }
 
 var agentsRotateKeyCmd = &cobra.Command{
-	Use:               "rotate-key <name-or-id>",
-	Short:             "Rotate an agent's API key (the new key is printed once, to stdout)",
-	Args:              cobra.ExactArgs(1),
+	Use:   "rotate-key <name-or-id> | --self",
+	Short: "Rotate an agent's API key (the new key is printed once, to stdout)",
+	Long: `Rotate an agent's key. Rotating another agent's key needs a signed-in human;
+an agent can rotate itself with --self, which also switches the active context to the new key.`,
+	Args:              cobra.MaximumNArgs(1),
 	ValidArgsFunction: completeAgents,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		self, _ := cmd.Flags().GetBool("self")
+		if self == (len(args) == 1) {
+			return &clierr.CLIError{Kind: clierr.KindUser, Command: "agents rotate-key", Message: "pass either an agent name/id or --self"}
+		}
 		cc, err := resolve(cmd)
 		if err != nil {
 			return err
 		}
-		ids, err := resolveAgentRefs(cc.Client, args[:1])
+		var id, label string
+		if self {
+			id, label, err = selfPrincipal(cc, "agent", "agents rotate-key")
+		} else {
+			var ids []string
+			ids, err = resolveAgentRefs(cc.Client, args[:1])
+			if err == nil {
+				id, label = ids[0], args[0]
+			}
+		}
 		if err != nil {
 			return enrich(cmd, cc, err)
 		}
-		res, err := cc.Client.RotateAgentKey(ids[0])
+		res, err := cc.Client.RotateAgentKey(id)
 		if err != nil {
 			return enrich(cmd, cc, err)
 		}
 		if res.APIKey == "" { // --dry-run
 			return nil
 		}
-		cmd.PrintErrf("Rotated key for agent %q — the old key no longer works.\n", args[0])
+		cmd.PrintErrf("Rotated key for agent %q — the old key no longer works.\n", label)
+		if self {
+			if err := storeRotatedKey(cc, res.APIKey); err != nil {
+				fmt.Println(res.APIKey)
+				return err
+			}
+			cmd.PrintErrf("Context %q now uses the new key.\n", cc.ContextName)
+		}
 		cmd.PrintErrln("API key (shown once — store it now):")
 		// stdout: scripts capture KEY=$(tvault agents rotate-key ...).
 		fmt.Println(res.APIKey)
@@ -299,6 +321,7 @@ func agentStatusCmd(use, alias, status, verb string) *cobra.Command {
 }
 
 func init() {
+	agentsRotateKeyCmd.Flags().Bool("self", false, "rotate the key this agent context is logged in with, and switch the context to the new key")
 	agentsCreateCmd.Flags().String("name", "", "agent name")
 	agentsCreateCmd.Flags().StringSlice("grants", nil, "comma-separated services to grant")
 	agentsCreateCmd.Flags().Bool("non-interactive", false, "fail instead of prompting")
