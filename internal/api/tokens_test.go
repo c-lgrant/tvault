@@ -423,7 +423,7 @@ func TestStoreTokenViaWebhook(t *testing.T) {
 
 // TestGetTokenValue_AgentPath verifies an agent-persona client routes to
 // /api/agents/credentials (not /api/tokens/{svc}, which requires admin auth
-// and returns 422 for agents) and sends X-Agent-Key, not Authorization.
+// and returns 422 for agents) and sends the key as a Bearer token.
 func TestGetTokenValue_AgentPath(t *testing.T) {
 	var sawAuth, sawAgentKey string
 	var sawPath, sawQuery string
@@ -450,11 +450,11 @@ func TestGetTokenValue_AgentPath(t *testing.T) {
 	if sawQuery != "svc" {
 		t.Errorf("service query = %q", sawQuery)
 	}
-	if sawAgentKey != "tvagent_abc" {
-		t.Errorf("X-Agent-Key = %q, want tvagent_abc", sawAgentKey)
+	if sawAuth != "Bearer tvagent_abc" {
+		t.Errorf("Authorization = %q, want Bearer tvagent_abc", sawAuth)
 	}
-	if sawAuth != "" {
-		t.Errorf("Authorization header was set for agent (%q) — must use X-Agent-Key only", sawAuth)
+	if sawAgentKey != "" {
+		t.Errorf("legacy X-Agent-Key header still sent (%q)", sawAgentKey)
 	}
 }
 

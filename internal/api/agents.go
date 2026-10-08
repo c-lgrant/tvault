@@ -91,7 +91,20 @@ func (c *Client) GetAgent(id string) (*Agent, error) {
 // grants cannot be set at creation time. Callers that want grants must follow
 // up with AddGrants once the agent exists.
 func (c *Client) CreateAgent(name string) (*CreateAgentResult, error) {
+	return c.CreateAgentWithKind(name, "", nil)
+}
+
+// CreateAgentWithKind is CreateAgent plus the optional scoped-principal
+// fields. An empty kind is omitted so the server applies its default
+// ("classic"); scopes are only sent when non-empty.
+func (c *Client) CreateAgentWithKind(name, kind string, scopes []string) (*CreateAgentResult, error) {
 	payload := map[string]any{"name": name}
+	if kind != "" {
+		payload["kind"] = kind
+	}
+	if len(scopes) > 0 {
+		payload["scopes"] = scopes
+	}
 	body, err := c.doRequest("POST", "/api/agents", payload, nil)
 	if err != nil {
 		return nil, err

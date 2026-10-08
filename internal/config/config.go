@@ -12,13 +12,14 @@ import (
 )
 
 // Context is one stored persona — either an admin (Firebase refresh token)
-// or an agent (tvagent_* key).
+// an agent (tvagent_* key), or a scoped key (tvkey_*).
 type Context struct {
-	Type         string `yaml:"type"`                    // "admin" | "agent"
+	Type         string `yaml:"type"`                    // "admin" | "agent" | "key"
 	APIURL       string `yaml:"api_url"`                 // base API URL
-	Identity     string `yaml:"identity"`                // email or agent name
+	Identity     string `yaml:"identity"`                // email, agent name, or key name
 	RefreshToken string `yaml:"refresh_token,omitempty"` // admin only
 	AgentKey     string `yaml:"agent_key,omitempty"`     // agent only
+	APIKey       string `yaml:"api_key,omitempty"`       // key only (tvkey_*)
 
 	// Process-only — never persisted. Populated by the refresh loop.
 	idToken          string `yaml:"-"`

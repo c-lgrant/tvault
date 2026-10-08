@@ -21,7 +21,7 @@ var grantsListCmd = &cobra.Command{
 	Args:              cobra.ExactArgs(1),
 	ValidArgsFunction: completeAgents,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		cc, err := resolve(cmd, true)
+		cc, err := resolve(cmd)
 		if err != nil {
 			return err
 		}
@@ -51,7 +51,7 @@ var grantsAddCmd = &cobra.Command{
 	Args:              cobra.MinimumNArgs(2),
 	ValidArgsFunction: completeAgentThenServices,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		cc, err := resolve(cmd, true)
+		cc, err := resolve(cmd)
 		if err != nil {
 			return err
 		}
@@ -78,7 +78,7 @@ var grantsRmCmd = &cobra.Command{
 	ValidArgsFunction: completeAgentThenServices,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		force, _ := cmd.Flags().GetBool("force")
-		cc, err := resolve(cmd, true)
+		cc, err := resolve(cmd)
 		if err != nil {
 			return err
 		}

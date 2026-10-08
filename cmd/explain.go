@@ -48,6 +48,50 @@ var errorExplanations = map[string]struct {
 		What: "Token Vault could not reach the user's webhook.",
 		Fix:  "Check that the webhook service is running and reachable from Token Vault.",
 	},
+	"SCOPE_DENIED": {
+		What: "The API key is valid but lacks a scope this operation requires (exit code 8). The error names the missing scope.",
+		Fix:  "Create or rotate a key that includes the scope: `tvault keys create --scopes <scope>,...`.",
+	},
+	"HUMAN_ONLY": {
+		What: "This operation is reserved for a signed-in human and cannot be done with an API key (exit code 9).",
+		Fix:  "Run `tvault login` (browser) and use the admin context: `tvault ctx use <admin-ctx>`.",
+	},
+	"KEY_EXPIRED": {
+		What: "The API key is past its expiry (exit code 10).",
+		Fix:  "Rotate it (`tvault keys rotate <id>` / `tvault agents rotate-key <agent>`) or log in with a new key.",
+	},
+	"KEY_SUSPENDED": {
+		What: "The API key is suspended and refused until it is resumed (exit code 11).",
+		Fix:  "Ask the key's owner to resume it, or use a different key.",
+	},
+	"INVALID_KEY": {
+		What: "The API key is unknown, malformed, or already revoked (exit code 12).",
+		Fix:  "Check the key value; log in with a valid one: `printf %s \"$TVAULT_KEY\" | tvault login --key-stdin --as <name>`.",
+	},
+	"NOT_OWNER": {
+		What: "Only the owner of this key or agent may perform this action.",
+		Fix:  "Switch to the owning account/context (`tvault ctx use <ctx>`).",
+	},
+	"GRANT_REQUIRED": {
+		What: "A principal can only hand out access it already holds, and it lacks the grant it tried to pass on.",
+		Fix:  "Grant the service to the acting principal first (`tvault keys grant <key> <service>`), then retry.",
+	},
+	"NO_GRANT": {
+		What: "The key has no grant for that service (or the key does not exist).",
+		Fix:  "List what it holds with `tvault keys show <key>`.",
+	},
+	"UNKNOWN_SCOPE": {
+		What: "A requested scope name is not recognised.",
+		Fix:  "Use scopes from the README's Keys section, e.g. credentials:read,tokens:list.",
+	},
+	"INVALID_EXPIRY": {
+		What: "The requested expiry is malformed or not in the future.",
+		Fix:  "Use --expires 30d|90d|365d|YYYY-MM-DD|never.",
+	},
+	"REAUTH_REQUIRED": {
+		What: "Creating a key as a human needs a fresh browser sign-in (exit code 2).",
+		Fix:  "Run `tvault login` again, then retry the command.",
+	},
 	"WEBHOOK_AUTH_FAILED": {
 		What: "The webhook rejected Token Vault's HMAC authentication.",
 		Fix:  "The HMAC secret is out of sync — re-run the vault webhook setup to rotate it.",
