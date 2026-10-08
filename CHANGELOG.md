@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.10.0](https://github.com/c-lgrant/tvault-private/compare/v0.9.0...v0.10.0) (2026-10-08)
+
+
+### Features
+
+* **webhook:** heal legacy plaintext totpUri on read/list, add /v1/admin/migrate ([d9dff13](https://github.com/c-lgrant/tvault-private/commit/d9dff13193b1b6a383e1fccae044b013c43a66d9))
+* **webhook:** totpUri as sensitive on store; ticketConstraints (mode, cid) ([bc76b4e](https://github.com/c-lgrant/tvault-private/commit/bc76b4e39e4bc99ff2012595d88c18abdb7df800))
+
 ## [0.9.0](https://github.com/c-lgrant/tvault-private/compare/v0.8.2...v0.9.0) (2026-10-08)
 
 

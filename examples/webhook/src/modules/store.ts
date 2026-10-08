@@ -11,6 +11,8 @@ import { invalidRequest, setupRequired, ticketInvalid } from "../core/protocol/e
 import { verifyTicket } from "../core/protocol/tickets.ts";
 import { buildEncryptedTokenDocument, EXTRA_SENSITIVE_FIELDS } from "../core/protocol/tokendoc.ts";
 import { SENSITIVE_FIELDS } from "../core/protocol/types.ts";
+import { parseTotpUri, totpDescriptors } from "../core/protocol/totpUri.ts";
+import { assertStoreConstraints } from "../core/protocol/constraints.ts";
 import type { FeatureModule } from "../core/registry.ts";
 
 function nowIso(): string {
@@ -51,6 +53,22 @@ export function storeModule(): FeatureModule {
             return sendError(c, ticketInvalid(`Ticket is for service '${payload.svc}', not '${service}'`), cors);
           }
 
+          // Existing doc (create-only conflict, createdAt preservation).
+          const existing = await ctx.storage.get("tokens", service);
+          assertStoreConstraints(payload, existing);
+
+          // A TOTP link embeds the seed: parse it into an encrypted totpSecret
+          // plus meta descriptors; the URI itself is never stored. Explicit
+          // tokenData fields win over URI-derived ones. Malformed -> 400.
+          const uriDerived: Record<string, unknown> = {};
+          if (tokenData.totpUri != null && tokenData.totpUri !== "") {
+            if (typeof tokenData.totpUri !== "string") {
+              return sendError(c, invalidRequest("totpUri must be a string"), cors);
+            }
+            const parsed = parseTotpUri(tokenData.totpUri);
+            Object.assign(uriDerived, totpDescriptors(parsed), { totpSecret: parsed.secret });
+          }
+
           const accessToken = tokenData.accessToken != null ? String(tokenData.accessToken) : null;
           const refreshToken = tokenData.refreshToken != null ? String(tokenData.refreshToken) : null;
 
@@ -59,11 +77,14 @@ export function storeModule(): FeatureModule {
           for (const [k, v] of Object.entries(tokenData)) {
             if (!SENSITIVE_FIELDS.has(k) && v != null) meta[k] = v;
           }
+          for (const [k, v] of Object.entries(uriDerived)) {
+            if (k !== "totpSecret" && !(k in meta)) meta[k] = v;
+          }
           meta.serviceName = service;
-          if (!("tokenType" in meta)) meta.tokenType = "oauth";
+          if (!("tokenType" in meta)) meta.tokenType = uriDerived.totpSecret ? "TOTP" : "oauth";
+          if (payload.cid) meta.creationId = payload.cid;
           // Re-storing an existing service keeps its original createdAt (TV
           // sorts tokens newest-first on it) and stamps updatedAt instead.
-          const existing = await ctx.storage.get("tokens", service);
           const existingMeta =
             existing?.meta && typeof existing.meta === "object"
               ? (existing.meta as Record<string, unknown>)
@@ -82,6 +103,7 @@ export function storeModule(): FeatureModule {
           }
 
           const extraSensitive: Record<string, unknown> = {};
+          if (uriDerived.totpSecret && !tokenData.totpSecret) extraSensitive.totpSecret = uriDerived.totpSecret;
           for (const sf of EXTRA_SENSITIVE_FIELDS) {
             const val = tokenData[sf];
             if (val) extraSensitive[sf] = val;
