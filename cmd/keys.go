@@ -7,7 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/c-lgrant/tvault/internal/api"
 	"github.com/c-lgrant/tvault/internal/clierr"
 	"github.com/c-lgrant/tvault/internal/output"
 	"github.com/spf13/cobra"
@@ -52,51 +51,8 @@ func parseExpiry(s string, now time.Time) (*string, error) {
 	return &out, nil
 }
 
-// resolveKeyRef accepts a key ID or name and returns the ID. IDs win; a name
-// that matches exactly one key is resolved via ListKeys; anything else passes
-// through unchanged so the server produces the not-found error.
-//
-// A ref shaped like a key ID (a 20-character auto-ID) is used as-is with no
-// lookup: listing keys needs keys:manage, which a key limited to e.g.
-// keys:revoke or grants:write doesn't have.
-func resolveKeyRef(client *api.Client, ref string) (string, error) {
-	if agentIDPattern.MatchString(ref) {
-		return ref, nil
-	}
-	keys, err := client.ListKeys()
-	if err != nil {
-		var ce *clierr.CLIError
-		if asCLIErr(err, &ce) && ce.Kind == clierr.KindScopeDenied {
-			return "", &clierr.CLIError{
-				Kind:    clierr.KindScopeDenied,
-				Code:    ce.Code,
-				Scope:   ce.Scope,
-				Request: ce.Request,
-				Message: fmt.Sprintf("cannot look up key %q by name — listing keys needs the keys:manage scope; pass the key ID instead", ref),
-				Hint:    "use the key's ID (shown by `tvault keys ls` in an admin context) in place of its name",
-			}
-		}
-		return "", err
-	}
-	var byName []string
-	for _, k := range keys {
-		if k.ID == ref {
-			return ref, nil
-		}
-		if k.Name == ref {
-			byName = append(byName, k.ID)
-		}
-	}
-	switch len(byName) {
-	case 0:
-		return ref, nil
-	case 1:
-		return byName[0], nil
-	default:
-		return "", &clierr.CLIError{Kind: clierr.KindUser,
-			Message: fmt.Sprintf("%d keys are named %q — use the key ID (tvault keys ls)", len(byName), ref)}
-	}
-}
+// Key refs (names or IDs) are resolved by resolveKey in refs.go. When listing
+// is denied (a key without keys:manage), ID-shaped refs are used as IDs.
 
 var keysCmd = &cobra.Command{
 	Use:     "keys",
@@ -204,7 +160,9 @@ rotate itself with --self, which also switches the active context to the new key
 		if self {
 			id, _, err = selfPrincipal(cc, "key", "keys rotate")
 		} else {
-			id, err = resolveKeyRef(cc.Client, args[0])
+			var r resolved
+			r, err = resolveKey(cc.Client, args[0], true)
+			id = r.ID
 		}
 		if err != nil {
 			return enrich(cmd, cc, err)
@@ -243,13 +201,17 @@ var keysRevokeCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		if !confirmDestructive(cmd, cc, "revoke key", args, yes) {
-			return &clierr.CLIError{Kind: clierr.KindUser, Command: "keys revoke", Message: "aborted — pass --force to confirm"}
-		}
-		id, err := resolveKeyRef(cc.Client, args[0])
+		r, err := resolveKey(cc.Client, args[0], true)
 		if err != nil {
 			return enrich(cmd, cc, err)
 		}
+		if !confirmDestructive(cmd, cc, "revoke key", []string{r.label()}, yes) {
+			return &clierr.CLIError{Kind: clierr.KindUser, Command: "keys revoke", Message: "aborted — pass --force to confirm"}
+		}
+		if yes {
+			cmd.PrintErrf("Revoking key %s\n", r.label())
+		}
+		id := r.ID
 		if err := cc.Client.RevokeKey(id); err != nil {
 			return enrich(cmd, cc, err)
 		}
@@ -271,11 +233,11 @@ var keysShowCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		id, err := resolveKeyRef(cc.Client, args[0])
+		r, err := resolveKey(cc.Client, args[0], false)
 		if err != nil {
 			return enrich(cmd, cc, err)
 		}
-		k, err := cc.Client.GetKey(id)
+		k, err := cc.Client.GetKey(r.ID)
 		if err != nil {
 			return enrich(cmd, cc, err)
 		}
@@ -318,10 +280,11 @@ var keysGrantCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		id, err := resolveKeyRef(cc.Client, args[0])
+		r, err := resolveKey(cc.Client, args[0], true)
 		if err != nil {
 			return enrich(cmd, cc, err)
 		}
+		id := r.ID
 		res, err := cc.Client.GrantKey(id, args[1], hours)
 		if err != nil {
 			return enrich(cmd, cc, err)
@@ -347,10 +310,11 @@ var keysUngrantCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		id, err := resolveKeyRef(cc.Client, args[0])
+		r, err := resolveKey(cc.Client, args[0], true)
 		if err != nil {
 			return enrich(cmd, cc, err)
 		}
+		id := r.ID
 		if err := cc.Client.UngrantKey(id, args[1]); err != nil {
 			return enrich(cmd, cc, err)
 		}

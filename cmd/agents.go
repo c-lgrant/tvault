@@ -14,81 +14,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// resolveAgentRefs accepts a mix of agent IDs and names and returns the
-// corresponding IDs in input order. The backend's /api/agents/{id} routes
-// expect an ID. A ref shaped like a backend agent ID (a 20-character
-// Firestore auto-ID) is used as-is with no lookup — listing agents needs the
-// agents:read scope, which a key limited to e.g. grants:write doesn't have.
-// Any other ref is treated as a name and resolved via ListAgents; a name that
-// matches nothing passes through unchanged so the server reports not-found.
-//
-// Edge case: a human name that is exactly 20 alphanumeric characters is
-// indistinguishable from an ID and is treated as one first; commands retry it
-// as a name if the server answers 404 (see withNameFallback).
-func resolveAgentRefs(client *api.Client, refs []string) ([]string, error) {
-	out := make([]string, len(refs))
-	var byName map[string]string
-	for i, r := range refs {
-		if agentIDPattern.MatchString(r) {
-			out[i] = r
-			continue
-		}
-		if byName == nil {
-			agents, err := client.ListAgents()
-			if err != nil {
-				var ce *clierr.CLIError
-				if asCLIErr(err, &ce) && ce.Kind == clierr.KindScopeDenied {
-					return nil, &clierr.CLIError{
-						Kind:    clierr.KindScopeDenied,
-						Code:    ce.Code,
-						Scope:   ce.Scope,
-						Request: ce.Request,
-						Message: fmt.Sprintf("cannot look up agent %q by name — listing agents needs the agents:read scope; pass the agent ID instead", r),
-						Hint:    "use the agent's ID (shown by `tvault agents ls` in an admin context) in place of its name",
-					}
-				}
-				return nil, err
-			}
-			byName = make(map[string]string, len(agents))
-			for _, a := range agents {
-				byName[a.Name] = a.ID
-			}
-		}
-		if id, ok := byName[r]; ok {
-			out[i] = id
-		} else {
-			out[i] = r
-		}
-	}
-	return out, nil
-}
-
-// isNotFound reports whether err is the server's 404 for a missing resource.
-func isNotFound(err error) bool {
-	var ce *clierr.CLIError
-	return asCLIErr(err, &ce) && strings.HasPrefix(ce.Response, "404")
-}
-
-// withNameFallback runs op(id). When ref was used as an ID without a lookup
-// (id == ref) and the server answers 404, ref may instead be an agent name
-// that happens to look like an ID (exactly 20 letters/digits): look it up by
-// name and retry once. Any lookup failure returns the original error.
-func withNameFallback(client *api.Client, ref, id string, op func(id string) error) error {
-	err := op(id)
-	if err == nil || id != ref || !agentIDPattern.MatchString(ref) || !isNotFound(err) {
-		return err
-	}
-	agents, lerr := client.ListAgents()
-	if lerr != nil {
-		return err
-	}
-	for _, a := range agents {
-		if a.Name == ref && a.ID != id {
-			return op(a.ID)
-		}
-	}
-	return err
-}
+// Agent refs (names or IDs) are resolved in refs.go; see pickRef for the rules.
 
 // agentIDPattern matches the IDs the backend issues for agents: Firestore
 // auto-IDs, 20 alphanumeric characters.
@@ -137,15 +63,11 @@ var agentsShowCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		ids, err := resolveAgentRefs(cc.Client, args[:1])
+		rs, err := resolveAgents(cc.Client, args[:1], false)
 		if err != nil {
 			return enrich(cmd, cc, err)
 		}
-		var a *api.Agent
-		err = withNameFallback(cc.Client, args[0], ids[0], func(id string) (e error) {
-			a, e = cc.Client.GetAgent(id)
-			return e
-		})
+		a, err := cc.Client.GetAgent(rs[0].ID)
 		if err != nil {
 			return enrich(cmd, cc, err)
 		}
@@ -285,27 +207,23 @@ an agent can rotate itself with --self, which also switches the active context t
 		if self {
 			id, label, err = selfPrincipal(cc, "agent", "agents rotate-key")
 		} else {
-			var ids []string
-			ids, err = resolveAgentRefs(cc.Client, args[:1])
+			var rs []resolved
+			rs, err = resolveAgents(cc.Client, args[:1], true)
 			if err == nil {
-				id, label = ids[0], args[0]
+				id, label = rs[0].ID, rs[0].label()
 			}
 		}
 		if err != nil {
 			return enrich(cmd, cc, err)
 		}
-		var res *api.RotateAgentKeyResult
-		err = withNameFallback(cc.Client, label, id, func(id string) (e error) {
-			res, e = cc.Client.RotateAgentKey(id)
-			return e
-		})
+		res, err := cc.Client.RotateAgentKey(id)
 		if err != nil {
 			return enrich(cmd, cc, err)
 		}
 		if res.APIKey == "" { // --dry-run
 			return nil
 		}
-		cmd.PrintErrf("Rotated key for agent %q — the old key no longer works.\n", label)
+		cmd.PrintErrf("Rotated key for agent %s —the old key no longer works.\n", label)
 		if self {
 			if err := storeRotatedKey(cc, res.APIKey); err != nil {
 				fmt.Println(res.APIKey)
@@ -332,24 +250,20 @@ var agentsRmCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		if !confirmDestructive(cmd, cc, "delete agent(s)", args, force) {
+		rs, err := resolveAgents(cc.Client, args, true)
+		if err != nil {
+			return enrich(cmd, cc, err)
+		}
+		if !confirmDestructive(cmd, cc, "delete agent(s)", labels(rs), force) {
 			return &clierr.CLIError{Kind: clierr.KindUser, Command: "agents rm", Message: "aborted"}
 		}
-		ids, err := resolveAgentRefs(cc.Client, args)
-		if err != nil {
+		if force {
+			cmd.PrintErrf("Deleting agent(s): %s\n", strings.Join(labels(rs), ", "))
+		}
+		if err := cc.Client.DeleteAgents(idsOf(rs)); err != nil {
 			return enrich(cmd, cc, err)
 		}
-		if len(ids) == 1 {
-			err = withNameFallback(cc.Client, args[0], ids[0], func(id string) error {
-				return cc.Client.DeleteAgents([]string{id})
-			})
-		} else {
-			err = cc.Client.DeleteAgents(ids)
-		}
-		if err != nil {
-			return enrich(cmd, cc, err)
-		}
-		cmd.PrintErrf("Deleted %d agent(s).\n", len(args))
+		cmd.PrintErrf("Deleted %d agent(s).\n", len(rs))
 		return nil
 	},
 }
@@ -366,16 +280,14 @@ func agentStatusCmd(use, alias, status, verb string) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			ids, err := resolveAgentRefs(cc.Client, args[:1])
+			rs, err := resolveAgents(cc.Client, args[:1], true)
 			if err != nil {
 				return enrich(cmd, cc, err)
 			}
-			if err := withNameFallback(cc.Client, args[0], ids[0], func(id string) error {
-				return cc.Client.SetAgentStatus(id, status)
-			}); err != nil {
+			if err := cc.Client.SetAgentStatus(rs[0].ID, status); err != nil {
 				return enrich(cmd, cc, err)
 			}
-			cmd.PrintErrf("%s agent %q.\n", strings.TrimSuffix(verb, "e")+"ed", args[0])
+			cmd.PrintErrf("%s agent %s.\n", strings.TrimSuffix(verb, "e")+"ed", rs[0].label())
 			return nil
 		},
 	}
