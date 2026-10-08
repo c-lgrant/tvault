@@ -18,6 +18,7 @@ import {
 } from "../../core/protocol/errors.ts";
 import { verifyTicket } from "../../core/protocol/tickets.ts";
 import { readTokenObject } from "../../core/protocol/tokendoc.ts";
+import { assertCreationMatches } from "../../core/protocol/constraints.ts";
 import type { CredentialInterceptor, FeatureModule, InterceptorInput } from "../../core/registry.ts";
 
 // /v1/totp-code accepts the credential purposes plus a dedicated totp_code one.
@@ -169,6 +170,8 @@ export function totpModule(): FeatureModule {
 
           const storedDoc = await ctx.storage.get("tokens", service);
           if (!storedDoc) return sendError(c, tokenNotFound(`No token stored for service '${service}'`), cors);
+
+          assertCreationMatches(payload, storedDoc);
 
           const meta = (storedDoc.meta ?? {}) as Record<string, unknown>;
           const tokenType = meta.tokenType ?? (storedDoc as Record<string, unknown>).tokenType ?? "";
