@@ -53,7 +53,8 @@ type Key struct {
 }
 
 // KeyGrant is one service grant on a key. Source says how the grant came to
-// exist (e.g. directly granted vs. inherited), as reported by the server.
+// exist (granted directly, or "auto:create" from tokens:create-read), as
+// reported by the server.
 type KeyGrant struct {
 	ServiceName    string  `json:"serviceName"`
 	RefreshPolicy  string  `json:"refreshPolicy"`
