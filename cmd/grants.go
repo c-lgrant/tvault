@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"os"
+	"strings"
 
 	"github.com/c-lgrant/tvault/internal/clierr"
 	"github.com/c-lgrant/tvault/internal/output"
@@ -21,15 +22,15 @@ var grantsListCmd = &cobra.Command{
 	Args:              cobra.ExactArgs(1),
 	ValidArgsFunction: completeAgents,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		cc, err := resolve(cmd, true)
+		cc, err := resolve(cmd)
 		if err != nil {
 			return err
 		}
-		ids, err := resolveAgentRefs(cc.Client, args[:1])
+		rs, err := resolveAgents(cc.Client, args[:1], false)
 		if err != nil {
 			return enrich(cmd, cc, err)
 		}
-		grants, err := cc.Client.ListGrants(ids[0])
+		grants, err := cc.Client.ListGrants(rs[0].ID)
 		if err != nil {
 			return enrich(cmd, cc, err)
 		}
@@ -51,22 +52,22 @@ var grantsAddCmd = &cobra.Command{
 	Args:              cobra.MinimumNArgs(2),
 	ValidArgsFunction: completeAgentThenServices,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		cc, err := resolve(cmd, true)
+		cc, err := resolve(cmd)
 		if err != nil {
 			return err
 		}
-		ids, err := resolveAgentRefs(cc.Client, args[:1])
+		rs, err := resolveAgents(cc.Client, args[:1], true)
 		if err != nil {
 			return enrich(cmd, cc, err)
 		}
-		res := cc.Client.AddGrants(ids[0], args[1:])
+		res := cc.Client.AddGrants(rs[0].ID, args[1:])
 		if err := res.Err(); err != nil {
 			if len(res.OK) > 0 {
-				cmd.PrintErrf("Granted %d service(s) to %q before the failure.\n", len(res.OK), args[0])
+				cmd.PrintErrf("Granted %d service(s) to %s before the failure.\n", len(res.OK), rs[0].label())
 			}
 			return enrich(cmd, cc, err)
 		}
-		cmd.PrintErrf("Granted %d service(s) to %q.\n", len(res.OK), args[0])
+		cmd.PrintErrf("Granted %d service(s) to %s.\n", len(res.OK), rs[0].label())
 		return nil
 	},
 }
@@ -78,25 +79,29 @@ var grantsRmCmd = &cobra.Command{
 	ValidArgsFunction: completeAgentThenServices,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		force, _ := cmd.Flags().GetBool("force")
-		cc, err := resolve(cmd, true)
+		cc, err := resolve(cmd)
 		if err != nil {
 			return err
 		}
-		if !confirmDestructive(cmd, cc, "revoke grant(s)", args[1:], force) {
-			return &clierr.CLIError{Kind: clierr.KindUser, Command: "agents grants rm", Message: "aborted"}
-		}
-		ids, err := resolveAgentRefs(cc.Client, args[:1])
+		rs, err := resolveAgents(cc.Client, args[:1], true)
 		if err != nil {
 			return enrich(cmd, cc, err)
 		}
-		res := cc.Client.RemoveGrants(ids[0], args[1:])
+		items := append([]string{"from agent " + rs[0].label() + ":"}, args[1:]...)
+		if !confirmDestructive(cmd, cc, "revoke grant(s)", items, force) {
+			return &clierr.CLIError{Kind: clierr.KindUser, Command: "agents grants rm", Message: "aborted"}
+		}
+		if force {
+			cmd.PrintErrf("Revoking %s from agent %s\n", strings.Join(args[1:], ", "), rs[0].label())
+		}
+		res := cc.Client.RemoveGrants(rs[0].ID, args[1:])
 		if err := res.Err(); err != nil {
 			if len(res.OK) > 0 {
-				cmd.PrintErrf("Revoked %d grant(s) from %q before the failure.\n", len(res.OK), args[0])
+				cmd.PrintErrf("Revoked %d grant(s) from %s before the failure.\n", len(res.OK), rs[0].label())
 			}
 			return enrich(cmd, cc, err)
 		}
-		cmd.PrintErrf("Revoked %d grant(s) from %q.\n", len(res.OK), args[0])
+		cmd.PrintErrf("Revoked %d grant(s) from %s.\n", len(res.OK), rs[0].label())
 		return nil
 	},
 }

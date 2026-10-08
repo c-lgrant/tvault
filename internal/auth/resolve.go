@@ -16,8 +16,8 @@ const refreshSkew = 5 * time.Minute
 
 // ClientFor returns an api.Client ready to make authenticated requests for
 // the given context. For admin contexts it refreshes the in-memory ID token
-// when absent or within refreshSkew of expiry; for agent contexts it attaches
-// the stored key. debug toggles HTTP request logging.
+// when absent or within refreshSkew of expiry; for agent and key contexts it
+// attaches the stored key as the bearer credential. debug toggles HTTP request logging.
 func ClientFor(ctx *config.Context, debug bool) (*api.Client, error) {
 	client := api.New(ctx.APIURL, 0)
 	client.Debug = debug
@@ -25,6 +25,12 @@ func ClientFor(ctx *config.Context, debug bool) (*api.Client, error) {
 	switch ctx.Type {
 	case "agent":
 		client.AgentKey = ctx.AgentKey
+		return client, nil
+
+	case "key":
+		// Scoped keys authenticate with the bearer key itself — no Firebase
+		// session, nothing to refresh.
+		client.APIKey = ctx.APIKey
 		return client, nil
 
 	case "admin":

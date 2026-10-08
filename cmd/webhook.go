@@ -197,7 +197,7 @@ var webhookBindCmd = &cobra.Command{
 
 func runWebhookBind(cmd *cobra.Command, _ []string) error {
 	dir, _ := cmd.Flags().GetString("dir")
-	cc, err := resolve(cmd, true)
+	cc, err := resolve(cmd)
 	if err != nil {
 		return err
 	}
@@ -232,7 +232,7 @@ var webhookStatusCmd = &cobra.Command{
 
 func runWebhookStatus(cmd *cobra.Command, _ []string) error {
 	dir, _ := cmd.Flags().GetString("dir")
-	cc, err := resolve(cmd, true)
+	cc, err := resolve(cmd)
 	if err != nil {
 		return err
 	}
