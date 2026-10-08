@@ -235,8 +235,7 @@ an agent can rotate itself with --self, which also switches the active context t
 		}
 		var id, label string
 		if self {
-			id, err = selfPrincipalID(cc, "agent", "agents rotate-key")
-			label = cc.Ctx.Identity
+			id, label, err = selfPrincipal(cc, "agent", "agents rotate-key")
 		} else {
 			var ids []string
 			ids, err = resolveAgentRefs(cc.Client, args[:1])

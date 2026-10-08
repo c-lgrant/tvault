@@ -184,7 +184,7 @@ rotate itself with --self, which also switches the active context to the new key
 		}
 		var id string
 		if self {
-			id, err = selfPrincipalID(cc, "key", "keys rotate")
+			id, _, err = selfPrincipal(cc, "key", "keys rotate")
 		} else {
 			id, err = resolveKeyRef(cc.Client, args[0])
 		}
