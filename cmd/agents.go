@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"strings"
 
 	"github.com/c-lgrant/tvault/internal/api"
 	"github.com/c-lgrant/tvault/internal/clierr"
@@ -314,7 +315,7 @@ func agentStatusCmd(use, alias, status, verb string) *cobra.Command {
 			if err := cc.Client.SetAgentStatus(ids[0], status); err != nil {
 				return enrich(cmd, cc, err)
 			}
-			cmd.PrintErrf("%s agent %q.\n", verb+"d", args[0])
+			cmd.PrintErrf("%s agent %q.\n", strings.TrimSuffix(verb, "e")+"ed", args[0])
 			return nil
 		},
 	}
