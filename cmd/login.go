@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"io"
+	"net/url"
 	"os"
 	"strings"
 
@@ -49,6 +50,16 @@ var loginCmd = &cobra.Command{
 			return nil
 		}
 
+		if cmd.Flags().Changed("api-url") && !cmd.Flags().Changed("frontend-url") {
+			derived, ok := deriveFrontendURL(apiURL)
+			if !ok {
+				return &clierr.CLIError{Kind: clierr.KindUser, Command: "login",
+					Message: "cannot derive the frontend URL from --api-url " + apiURL,
+					Hint:    "pass --frontend-url too (the site that hosts /cli/auth)"}
+			}
+			frontendURL = derived
+		}
+
 		err := auth.Login(auth.LoginOptions{
 			ContextName: asName,
 			APIURL:      apiURL,
@@ -65,6 +76,18 @@ var loginCmd = &cobra.Command{
 		cmd.Printf("Logged in — context %q is now active.\n", name)
 		return nil
 	},
+}
+
+// deriveFrontendURL maps an API base URL to the frontend that issued its login
+// codes (https://api.tokenvault.one → https://tokenvault.one). A code minted by
+// one environment is rejected by another, so a custom --api-url must never
+// fall back to the prod frontend.
+func deriveFrontendURL(apiURL string) (string, bool) {
+	u, err := url.Parse(strings.TrimRight(apiURL, "/"))
+	if err != nil || u.Host == "" || !strings.HasPrefix(u.Host, "api.") {
+		return "", false
+	}
+	return u.Scheme + "://" + strings.TrimPrefix(u.Host, "api."), true
 }
 
 // Seams for tests: where --key-stdin reads from, and whether that is a TTY.
