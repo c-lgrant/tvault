@@ -46,5 +46,11 @@ func storeRotatedKey(cc *cmdContext, newKey string) error {
 	} else {
 		ctx.APIKey = newKey
 	}
-	return cfg.Save()
+	if err := cfg.Save(); err != nil {
+		return &clierr.CLIError{Kind: clierr.KindUser,
+			Message: "the rotation succeeded and the new key is printed on stdout, but saving it to context " +
+				cc.ContextName + " failed: " + err.Error(),
+			Hint: "the old key no longer works — store the new key now: `printf %s \"$KEY\" | tvault login --key-stdin --as " + cc.ContextName + "`"}
+	}
+	return nil
 }

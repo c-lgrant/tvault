@@ -3,12 +3,24 @@ package cmd
 import (
 	"os"
 
+	"github.com/c-lgrant/tvault/internal/api"
 	"github.com/c-lgrant/tvault/internal/clierr"
 	"github.com/c-lgrant/tvault/internal/output"
 	"github.com/spf13/cobra"
 )
 
-var grantsCmd = &cobra.Command{
+// grantNotFound returns the first 404 among a grant operation's failures (so
+// withNameFallback can retry), or the aggregate error otherwise.
+func grantNotFound(res api.GrantResult) error {
+	for _, e := range res.Failed {
+		if isNotFound(e) {
+			return e
+		}
+	}
+	return res.Err()
+}
+
+var grantsCmd =&cobra.Command{
 	Use:     "grants",
 	Aliases: []string{"gr"},
 	Short:   "Manage an agent's token grants",
@@ -29,7 +41,11 @@ var grantsListCmd = &cobra.Command{
 		if err != nil {
 			return enrich(cmd, cc, err)
 		}
-		grants, err := cc.Client.ListGrants(ids[0])
+		var grants []string
+		err = withNameFallback(cc.Client, args[0], ids[0], func(id string) (e error) {
+			grants, e = cc.Client.ListGrants(id)
+			return e
+		})
 		if err != nil {
 			return enrich(cmd, cc, err)
 		}
@@ -59,7 +75,11 @@ var grantsAddCmd = &cobra.Command{
 		if err != nil {
 			return enrich(cmd, cc, err)
 		}
-		res := cc.Client.AddGrants(ids[0], args[1:])
+		var res api.GrantResult
+		_ = withNameFallback(cc.Client, args[0], ids[0], func(id string) error {
+			res = cc.Client.AddGrants(id, args[1:])
+			return grantNotFound(res)
+		})
 		if err := res.Err(); err != nil {
 			if len(res.OK) > 0 {
 				cmd.PrintErrf("Granted %d service(s) to %q before the failure.\n", len(res.OK), args[0])
@@ -89,7 +109,11 @@ var grantsRmCmd = &cobra.Command{
 		if err != nil {
 			return enrich(cmd, cc, err)
 		}
-		res := cc.Client.RemoveGrants(ids[0], args[1:])
+		var res api.GrantResult
+		_ = withNameFallback(cc.Client, args[0], ids[0], func(id string) error {
+			res = cc.Client.RemoveGrants(id, args[1:])
+			return grantNotFound(res)
+		})
 		if err := res.Err(); err != nil {
 			if len(res.OK) > 0 {
 				cmd.PrintErrf("Revoked %d grant(s) from %q before the failure.\n", len(res.OK), args[0])

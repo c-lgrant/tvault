@@ -341,7 +341,7 @@ func TestAgentsCreate_GrantFailureIsNonZero(t *testing.T) {
 		switch {
 		case r.Method == "POST" && r.URL.Path == "/api/agents":
 			w.WriteHeader(201)
-			w.Write([]byte(`{"id":"a1","name":"child","apiKey":"tvagent_child"}`))
+			w.Write([]byte(`{"id":"a1","name":"child","apiKey":"tvagent_child","kind":"scoped"}`))
 		case r.Method == "POST" && r.URL.Path == "/api/agents/a1/grants":
 			w.WriteHeader(403)
 			w.Write([]byte(`{"detail":{"code":"SCOPE_DENIED","message":"no","missingScope":"grants:write"}}`))

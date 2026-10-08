@@ -55,9 +55,27 @@ func parseExpiry(s string, now time.Time) (*string, error) {
 // resolveKeyRef accepts a key ID or name and returns the ID. IDs win; a name
 // that matches exactly one key is resolved via ListKeys; anything else passes
 // through unchanged so the server produces the not-found error.
+//
+// A ref shaped like a key ID (a 20-character auto-ID) is used as-is with no
+// lookup: listing keys needs keys:manage, which a key limited to e.g.
+// keys:revoke or grants:write doesn't have.
 func resolveKeyRef(client *api.Client, ref string) (string, error) {
+	if agentIDPattern.MatchString(ref) {
+		return ref, nil
+	}
 	keys, err := client.ListKeys()
 	if err != nil {
+		var ce *clierr.CLIError
+		if asCLIErr(err, &ce) && ce.Kind == clierr.KindScopeDenied {
+			return "", &clierr.CLIError{
+				Kind:    clierr.KindScopeDenied,
+				Code:    ce.Code,
+				Scope:   ce.Scope,
+				Request: ce.Request,
+				Message: fmt.Sprintf("cannot look up key %q by name — listing keys needs the keys:manage scope; pass the key ID instead", ref),
+				Hint:    "use the key's ID (shown by `tvault keys ls` in an admin context) in place of its name",
+			}
+		}
 		return "", err
 	}
 	var byName []string
@@ -235,6 +253,9 @@ var keysRevokeCmd = &cobra.Command{
 		if err := cc.Client.RevokeKey(id); err != nil {
 			return enrich(cmd, cc, err)
 		}
+		if cc.Client.DryRun {
+			return nil
+		}
 		cmd.PrintErrf("Revoked key %s.\n", id)
 		return nil
 	},
@@ -305,6 +326,9 @@ var keysGrantCmd = &cobra.Command{
 		if err != nil {
 			return enrich(cmd, cc, err)
 		}
+		if cc.Client.DryRun {
+			return nil
+		}
 		msg := fmt.Sprintf("Granted %q to key %s", args[1], id)
 		if res.GrantExpiresAt != nil && *res.GrantExpiresAt != "" {
 			msg += " until " + *res.GrantExpiresAt
@@ -329,6 +353,9 @@ var keysUngrantCmd = &cobra.Command{
 		}
 		if err := cc.Client.UngrantKey(id, args[1]); err != nil {
 			return enrich(cmd, cc, err)
+		}
+		if cc.Client.DryRun {
+			return nil
 		}
 		cmd.PrintErrf("Removed grant %q from key %s.\n", args[1], id)
 		return nil

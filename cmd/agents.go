@@ -23,7 +23,8 @@ import (
 // matches nothing passes through unchanged so the server reports not-found.
 //
 // Edge case: a human name that is exactly 20 alphanumeric characters is
-// indistinguishable from an ID and is treated as one; pass the real ID.
+// indistinguishable from an ID and is treated as one first; commands retry it
+// as a name if the server answers 404 (see withNameFallback).
 func resolveAgentRefs(client *api.Client, refs []string) ([]string, error) {
 	out := make([]string, len(refs))
 	var byName map[string]string
@@ -60,6 +61,33 @@ func resolveAgentRefs(client *api.Client, refs []string) ([]string, error) {
 		}
 	}
 	return out, nil
+}
+
+// isNotFound reports whether err is the server's 404 for a missing resource.
+func isNotFound(err error) bool {
+	var ce *clierr.CLIError
+	return asCLIErr(err, &ce) && strings.HasPrefix(ce.Response, "404")
+}
+
+// withNameFallback runs op(id). When ref was used as an ID without a lookup
+// (id == ref) and the server answers 404, ref may instead be an agent name
+// that happens to look like an ID (exactly 20 letters/digits): look it up by
+// name and retry once. Any lookup failure returns the original error.
+func withNameFallback(client *api.Client, ref, id string, op func(id string) error) error {
+	err := op(id)
+	if err == nil || id != ref || !agentIDPattern.MatchString(ref) || !isNotFound(err) {
+		return err
+	}
+	agents, lerr := client.ListAgents()
+	if lerr != nil {
+		return err
+	}
+	for _, a := range agents {
+		if a.Name == ref && a.ID != id {
+			return op(a.ID)
+		}
+	}
+	return err
 }
 
 // agentIDPattern matches the IDs the backend issues for agents: Firestore
@@ -113,7 +141,11 @@ var agentsShowCmd = &cobra.Command{
 		if err != nil {
 			return enrich(cmd, cc, err)
 		}
-		a, err := cc.Client.GetAgent(ids[0])
+		var a *api.Agent
+		err = withNameFallback(cc.Client, args[0], ids[0], func(id string) (e error) {
+			a, e = cc.Client.GetAgent(id)
+			return e
+		})
 		if err != nil {
 			return enrich(cmd, cc, err)
 		}
@@ -186,6 +218,21 @@ var agentsCreateCmd = &cobra.Command{
 		if err != nil {
 			return enrich(cmd, cc, err)
 		}
+		// A server that predates scoped agents silently drops kind/scopes and
+		// mints a classic agent, which can read credentials — not what was
+		// asked for. Refuse, print no key, and clean up the stray agent.
+		if kind == "scoped" && res.Kind != "scoped" && !cc.Client.DryRun {
+			msg := "this server doesn't support scoped agents yet; an unscoped agent was NOT what you asked for"
+			hint := ""
+			if derr := cc.Client.DeleteAgents([]string{res.ID}); derr != nil {
+				msg += " — delete it with `tvault agents rm " + res.ID + "`"
+				hint = "automatic cleanup failed: " + api.BriefError(derr)
+			} else {
+				hint = "the unscoped agent that was just created has been deleted again"
+			}
+			return enrich(cmd, cc, &clierr.CLIError{Kind: clierr.KindUser, Command: "agents create",
+				Message: msg, Hint: hint})
+		}
 		cmd.PrintErrf("Created agent %q.\n", res.Name)
 		var gr api.GrantResult
 		var grantErr error
@@ -212,7 +259,7 @@ var agentsCreateCmd = &cobra.Command{
 			}
 			return &clierr.CLIError{Kind: kind, Command: "agents create",
 				Message: "agent created (key printed above), but granting services failed: " + grantErr.Error(),
-				Hint:    "retry with `tvault grant " + res.Name + " <service>` once the cause is fixed"}
+				Hint:    "retry with `tvault grant " + res.ID + " <service>` once the cause is fixed"}
 		}
 		return nil
 	},
@@ -247,7 +294,11 @@ an agent can rotate itself with --self, which also switches the active context t
 		if err != nil {
 			return enrich(cmd, cc, err)
 		}
-		res, err := cc.Client.RotateAgentKey(id)
+		var res *api.RotateAgentKeyResult
+		err = withNameFallback(cc.Client, label, id, func(id string) (e error) {
+			res, e = cc.Client.RotateAgentKey(id)
+			return e
+		})
 		if err != nil {
 			return enrich(cmd, cc, err)
 		}
@@ -288,7 +339,14 @@ var agentsRmCmd = &cobra.Command{
 		if err != nil {
 			return enrich(cmd, cc, err)
 		}
-		if err := cc.Client.DeleteAgents(ids); err != nil {
+		if len(ids) == 1 {
+			err = withNameFallback(cc.Client, args[0], ids[0], func(id string) error {
+				return cc.Client.DeleteAgents([]string{id})
+			})
+		} else {
+			err = cc.Client.DeleteAgents(ids)
+		}
+		if err != nil {
 			return enrich(cmd, cc, err)
 		}
 		cmd.PrintErrf("Deleted %d agent(s).\n", len(args))
@@ -312,7 +370,9 @@ func agentStatusCmd(use, alias, status, verb string) *cobra.Command {
 			if err != nil {
 				return enrich(cmd, cc, err)
 			}
-			if err := cc.Client.SetAgentStatus(ids[0], status); err != nil {
+			if err := withNameFallback(cc.Client, args[0], ids[0], func(id string) error {
+				return cc.Client.SetAgentStatus(id, status)
+			}); err != nil {
 				return enrich(cmd, cc, err)
 			}
 			cmd.PrintErrf("%s agent %q.\n", strings.TrimSuffix(verb, "e")+"ed", args[0])
