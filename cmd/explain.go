@@ -84,6 +84,14 @@ var errorExplanations = map[string]struct {
 		What: "Only a signed-in human can give this scope to a key or agent (keys:manage, keys:revoke, agents:manage, agents:delete, policies:write, grants:write, tokens:update, tokens:delete, proxies:write).",
 		Fix:  "Create or edit the key/agent from the console, or from an admin context (`tvault ctx use <admin-ctx>`).",
 	},
+	"AUTO_GRANT_IN_PLACE": {
+		What: "The target holds a grant that came from tokens:create-read; a regular grant can't silently replace it.",
+		Fix:  "Remove the target's grant first, then grant again, or have a human replace it.",
+	},
+	"MANUAL_GRANT_IN_PLACE": {
+		What: "The target holds a regular grant; a key or agent can't replace it with a copy of its tokens:create-read grant.",
+		Fix:  "Leave the existing grant in place, or have a human replace it.",
+	},
 	"SELF_CHANGE_FORBIDDEN": {
 		What: "A key or agent can't loosen its own controls: its own scopes, MCP switch, status, grants, or the policies attached to it.",
 		Fix:  "Make the change from the console or an admin context. A key may still rotate itself (`--self`), suspend itself, or add a policy to itself.",

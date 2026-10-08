@@ -333,6 +333,8 @@ func (c *Client) attempt(method, path string, body any, query map[string]string)
 			cliErr.Hint = "this principal has no grant for that service — ask the owner to grant it (`tvault grant <agent> <service>` or `tvault keys grant <key> <service>`)"
 		case "SCOPE_NOT_DELEGABLE":
 			cliErr.Hint = "only a signed-in human can give that scope — create the key or agent from the console or an admin context"
+		case "AUTO_GRANT_IN_PLACE", "MANUAL_GRANT_IN_PLACE":
+			cliErr.Hint = "the target already holds a different kind of grant on this service — remove it first (`tvault ag gr rm <agent> <service>` or `tvault keys ungrant <key> <service>`), or have a human replace it"
 		case "SELF_CHANGE_FORBIDDEN":
 			cliErr.Hint = "a key or agent can't loosen its own controls — ask the account owner to make this change"
 		case "ROTATION_CONFLICT":
