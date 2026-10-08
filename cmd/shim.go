@@ -23,7 +23,7 @@ func runShim(cmd *cobra.Command, args []string) error {
 		return cmd.Help()
 	}
 
-	cc, err := resolve(cmd, false)
+	cc, err := resolve(cmd)
 	if err != nil {
 		return err
 	}

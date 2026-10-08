@@ -100,7 +100,9 @@ func credentialFieldForType(typ string) string {
 //     /api/vault/credential-ticket → GET <webhook>/v1/credential, bypassing
 //     TV's backend on the credential leg).
 func (c *Client) GetTokenValue(service string) (string, error) {
-	if c.AgentKey != "" {
+	// Agents and scoped keys (credentials:read) both read through the
+	// agent-credentials endpoint; only the admin persona uses /api/tokens.
+	if c.AgentKey != "" || c.APIKey != "" {
 		return c.getTokenValueAgent(service)
 	}
 	body, err := c.doRequest("GET", "/api/tokens/"+service, nil, nil)

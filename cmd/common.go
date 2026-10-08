@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/c-lgrant/tvault/internal/api"
 	"github.com/c-lgrant/tvault/internal/auth"
@@ -26,7 +27,9 @@ func (cc *cmdContext) label() string {
 }
 
 // resolve loads the active context, builds an authenticated API client, and
-// resolves the output format. adminOnly rejects agent contexts up front.
+// resolves the output format. Every context type (admin, agent, key) is
+// accepted: the server is the sole enforcer of what a principal may do, and
+// its SCOPE_DENIED / HUMAN_ONLY answers map to distinct exit codes.
 // contextOverride reads --context, falling back to its --ctx alias.
 // Both set → --context wins.
 func contextOverride(cmd *cobra.Command) string {
@@ -38,7 +41,7 @@ func contextOverride(cmd *cobra.Command) string {
 	return v
 }
 
-func resolve(cmd *cobra.Command, adminOnly bool) (*cmdContext, error) {
+func resolve(cmd *cobra.Command) (*cmdContext, error) {
 	override := contextOverride(cmd)
 	debug, _ := cmd.Flags().GetBool("debug")
 	formatFlag, _ := cmd.Flags().GetString("format")
@@ -50,13 +53,6 @@ func resolve(cmd *cobra.Command, adminOnly bool) (*cmdContext, error) {
 	ctx, name, err := cfg.ActiveContext(override)
 	if err != nil {
 		return nil, err
-	}
-	if adminOnly && ctx.Type != "admin" {
-		return nil, &clierr.CLIError{
-			Kind:    clierr.KindUser,
-			Command: cmd.CommandPath(),
-			Message: fmt.Sprintf("requires an admin context — %q is an agent context; switch with `tvault ctx use <admin-ctx>`", name),
-		}
 	}
 	client, err := auth.ClientFor(ctx, debug)
 	if err != nil {
@@ -88,6 +84,17 @@ func enrich(cmd *cobra.Command, cc *cmdContext, err error) error {
 		}
 		if ce.Context == "" && cc != nil {
 			ce.Context = cc.label()
+		}
+		// A classic tvagent_ key on a management route gets a bare 401
+		// "Invalid or expired token" (no code) from the server. That is not a
+		// session expiry: classic agents can only read credentials.
+		if cc != nil && cc.Ctx.Type == "agent" && ce.Kind == clierr.KindAuth && ce.Code == "" &&
+			strings.HasPrefix(ce.Response, "401") &&
+			!strings.HasSuffix(ce.Request, "/api/agents/credentials") &&
+			!strings.HasSuffix(ce.Request, "/api/agents/whoami") {
+			ce.Kind = clierr.KindHumanOnly
+			ce.Message = "classic agents can only read credentials — use an admin context or a scoped agent"
+			ce.Hint = "switch context with `tvault ctx use <admin-ctx>`, or create a scoped agent (`tvault agents create --kind scoped`)"
 		}
 		if ce.Kind == clierr.KindVaultLocked && ce.Hint == "" && cc != nil && cc.Ctx.Type == "admin" {
 			ce.Hint = "tvault vault unlock"

@@ -1,6 +1,8 @@
 package auth
 
 import (
+	"errors"
+	"strings"
 	"time"
 
 	"github.com/c-lgrant/tvault/internal/api"
@@ -54,28 +56,63 @@ func Login(opts LoginOptions) error {
 	return cfg.Save()
 }
 
-// LoginAgent validates a tvagent_* key and persists it as an agent context.
-func LoginAgent(contextName, apiURL, agentKey string) error {
+// KeyContextType returns the context type implied by an API key's prefix:
+// "agent" for tvagent_*, "key" for tvkey_*, "" for anything else.
+func KeyContextType(key string) string {
+	switch {
+	case strings.HasPrefix(key, "tvagent_"):
+		return "agent"
+	case strings.HasPrefix(key, "tvkey_"):
+		return "key"
+	default:
+		return ""
+	}
+}
+
+// LoginKey validates an API key and persists it as a context, detecting the
+// type from the prefix: tvagent_* → agent context, tvkey_* → key context.
+func LoginKey(contextName, apiURL, key string) error {
 	if contextName == "" {
-		return &clierr.CLIError{Kind: clierr.KindUser, Message: "agent login needs a context name (--as <name>)"}
+		return &clierr.CLIError{Kind: clierr.KindUser, Message: "key login needs a context name (--as <name>)"}
+	}
+	typ := KeyContextType(key)
+	if typ == "" {
+		return &clierr.CLIError{Kind: clierr.KindUser, Message: "unrecognized key — expected a tvagent_* or tvkey_* key"}
 	}
 	client := api.New(apiURL, 0)
-	client.AgentKey = agentKey
-	identity, err := client.AgentIdentity() // defined in PR #4 Task 4.1; see note below
-	if err != nil {
-		return err
+	ctx := &config.Context{Type: typ, APIURL: apiURL}
+	if typ == "agent" {
+		client.AgentKey = key
+		ctx.AgentKey = key
+		identity, err := client.AgentIdentity()
+		if err != nil {
+			return err
+		}
+		ctx.Identity = identity
+	} else {
+		client.APIKey = key
+		ctx.APIKey = key
+		who, err := client.Whoami()
+		if err != nil {
+			// A server that predates scoped keys can't know any tvkey_: it
+			// answers INVALID_KEY or a bare 404, which reads as "your key is bad".
+			var ce *clierr.CLIError
+			if errors.As(err, &ce) && (ce.Code == "INVALID_KEY" || strings.HasPrefix(ce.Response, "404")) {
+				ce.Hint = "the key is unknown or revoked — or " + apiURL + " predates scoped keys (tvkey_ keys need a server that supports them, e.g. api.tokenvault.one)"
+			}
+			return err
+		}
+		ctx.Identity = who.Principal.Name
+		if ctx.Identity == "" {
+			ctx.Identity = "key"
+		}
 	}
 
 	cfg, err := config.Load()
 	if err != nil {
 		return err
 	}
-	cfg.Contexts[contextName] = &config.Context{
-		Type:     "agent",
-		APIURL:   apiURL,
-		Identity: identity,
-		AgentKey: agentKey,
-	}
+	cfg.Contexts[contextName] = ctx
 	cfg.Current = contextName
 	return cfg.Save()
 }

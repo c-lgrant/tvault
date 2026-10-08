@@ -7,7 +7,7 @@ import (
 
 // completeServices suggests token service names for `<service>` arguments.
 func completeServices(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
-	cc, err := resolve(cmd, false)
+	cc, err := resolve(cmd)
 	if err != nil {
 		return nil, cobra.ShellCompDirectiveNoFileComp
 	}
@@ -24,7 +24,7 @@ func completeServices(cmd *cobra.Command, args []string, toComplete string) ([]s
 
 // completeAgents suggests agent names for `<name-or-id>` arguments.
 func completeAgents(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
-	cc, err := resolve(cmd, true)
+	cc, err := resolve(cmd)
 	if err != nil {
 		return nil, cobra.ShellCompDirectiveNoFileComp
 	}

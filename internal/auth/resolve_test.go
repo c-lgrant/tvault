@@ -20,6 +20,58 @@ func TestResolveAgentContextAttachesKey(t *testing.T) {
 	}
 }
 
+func TestResolveKeyContextUsesBearerKeyWithoutRefresh(t *testing.T) {
+	ctx := &config.Context{Type: "key", APIURL: "https://x", APIKey: "tvkey_abc", RefreshToken: "must-not-be-used"}
+	client, err := ClientFor(ctx, false)
+	if err != nil {
+		t.Fatalf("ClientFor errored: %v", err)
+	}
+	if client.APIKey != "tvkey_abc" || client.BearerToken != "" || client.AgentKey != "" {
+		t.Errorf("key client wrong: %+v", client)
+	}
+}
+
+func TestLoginKeyDetectsPrefix(t *testing.T) {
+	var paths []string
+	var auths []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.Path)
+		auths = append(auths, r.Header.Get("Authorization"))
+		if r.URL.Path == "/api/agents/whoami" {
+			w.Write([]byte(`{"principal":{"type":"key","id":"k1","name":"ci-key"},"userId":"u","kind":"scoped","scopes":[],"expiresAt":null}`))
+			return
+		}
+		w.Write([]byte(`{"grants":[]}`))
+	}))
+	defer srv.Close()
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+
+	if err := LoginKey("k", srv.URL, "tvkey_abc"); err != nil {
+		t.Fatalf("LoginKey(tvkey_) errored: %v", err)
+	}
+	if err := LoginKey("a", srv.URL, "tvagent_xyz"); err != nil {
+		t.Fatalf("LoginKey(tvagent_) errored: %v", err)
+	}
+	cfg, _ := config.Load()
+	k, a := cfg.Contexts["k"], cfg.Contexts["a"]
+	if k == nil || k.Type != "key" || k.APIKey != "tvkey_abc" || k.AgentKey != "" || k.Identity != "ci-key" {
+		t.Errorf("key context wrong: %+v", k)
+	}
+	if a == nil || a.Type != "agent" || a.AgentKey != "tvagent_xyz" || a.APIKey != "" {
+		t.Errorf("agent context wrong: %+v", a)
+	}
+	if paths[0] != "/api/agents/whoami" || auths[0] != "Bearer tvkey_abc" {
+		t.Errorf("key login validated via %s with %q", paths[0], auths[0])
+	}
+
+	if err := LoginKey("bad", srv.URL, "sk-nope"); err == nil {
+		t.Error("unrecognized prefix should be rejected")
+	}
+	if cfg2, _ := config.Load(); cfg2.Contexts["bad"] != nil {
+		t.Error("rejected key must not be persisted")
+	}
+}
+
 func TestResolveAdminContextRefreshesWhenStale(t *testing.T) {
 	var refreshCalls int
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -2,9 +2,12 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
+
+	"github.com/c-lgrant/tvault/internal/clierr"
 )
 
 // Agent is the list/show shape returned by the agents endpoints.
@@ -60,6 +63,9 @@ type CreateAgentResult struct {
 	ID     string `json:"id"`
 	Name   string `json:"name"`
 	APIKey string `json:"apiKey"`
+	// Kind is "classic" or "scoped" on servers that support scoped agents;
+	// empty on servers that predate them (they ignore the kind/scopes sent).
+	Kind string `json:"kind"`
 }
 
 func (c *Client) ListAgents() ([]Agent, error) {
@@ -91,7 +97,20 @@ func (c *Client) GetAgent(id string) (*Agent, error) {
 // grants cannot be set at creation time. Callers that want grants must follow
 // up with AddGrants once the agent exists.
 func (c *Client) CreateAgent(name string) (*CreateAgentResult, error) {
+	return c.CreateAgentWithKind(name, "", nil)
+}
+
+// CreateAgentWithKind is CreateAgent plus the optional scoped-principal
+// fields. An empty kind is omitted so the server applies its default
+// ("classic"); scopes are only sent when non-empty.
+func (c *Client) CreateAgentWithKind(name, kind string, scopes []string) (*CreateAgentResult, error) {
 	payload := map[string]any{"name": name}
+	if kind != "" {
+		payload["kind"] = kind
+	}
+	if len(scopes) > 0 {
+		payload["scopes"] = scopes
+	}
 	body, err := c.doRequest("POST", "/api/agents", payload, nil)
 	if err != nil {
 		return nil, err
@@ -148,6 +167,21 @@ type GrantResult struct {
 	Skipped []string         // services not attempted (after a failure)
 }
 
+// BriefError is err's one-line summary: a CLIError's message without its
+// multi-line footer (which would nest a whole "tvault: error:" block).
+func BriefError(err error) string {
+	var ce *clierr.CLIError
+	if errors.As(err, &ce) {
+		switch {
+		case ce.Message != "":
+			return ce.Message
+		case ce.Response != "":
+			return ce.Response
+		}
+	}
+	return err.Error()
+}
+
 // Err returns a multi-line error summarising a partial failure, or nil if
 // every service succeeded.
 func (r GrantResult) Err() error {
@@ -156,7 +190,7 @@ func (r GrantResult) Err() error {
 	}
 	var b strings.Builder
 	for svc, e := range r.Failed {
-		fmt.Fprintf(&b, "\n  failed: %s — %v", svc, e)
+		fmt.Fprintf(&b, "\n  failed: %s — %s", svc, BriefError(e))
 	}
 	if len(r.OK) > 0 {
 		fmt.Fprintf(&b, "\n  succeeded: %s", strings.Join(r.OK, ", "))

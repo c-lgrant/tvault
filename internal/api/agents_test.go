@@ -190,8 +190,8 @@ func TestAddGrantsPartialFailure(t *testing.T) {
 
 func TestAgentIdentityValidatesKey(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("X-Agent-Key") != "tvagent_abc" {
-			t.Errorf("missing X-Agent-Key header")
+		if r.Header.Get("Authorization") != "Bearer tvagent_abc" {
+			t.Errorf("missing Bearer agent key, got %q", r.Header.Get("Authorization"))
 		}
 		// The real /api/agents/credentials list response is {"grants":[...]}.
 		// It carries no agent name, so AgentIdentity falls back to "agent".

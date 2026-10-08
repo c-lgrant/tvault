@@ -19,6 +19,11 @@ func TestExitCode(t *testing.T) {
 		{&CLIError{Kind: KindVaultLocked}, 5},
 		{&CLIError{Kind: KindEmpty}, 6},
 		{&CLIError{Kind: KindRateLimited}, 7},
+		{&CLIError{Kind: KindScopeDenied}, 8},
+		{&CLIError{Kind: KindHumanOnly}, 9},
+		{&CLIError{Kind: KindKeyExpired}, 10},
+		{&CLIError{Kind: KindKeySuspended}, 11},
+		{&CLIError{Kind: KindInvalidKey}, 12},
 		{errors.New("plain error"), 1},
 	}
 	for _, c := range cases {
