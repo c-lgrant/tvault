@@ -69,6 +69,26 @@ func KeyContextType(key string) string {
 	}
 }
 
+// agentLoginIdentity validates an agent key through GET /api/agents/whoami,
+// which answers for any valid key and needs no scope. The credentials list it
+// replaces needs credentials:read, so a scoped agent without it (e.g. one that
+// may only create tokens) could never log in (#15). A server without whoami
+// (404) falls back to the credentials list, which every classic agent can call.
+func agentLoginIdentity(client *api.Client) (string, error) {
+	who, err := client.Whoami()
+	if err == nil {
+		if who.Principal.Name != "" {
+			return who.Principal.Name, nil
+		}
+		return "agent", nil
+	}
+	var ce *clierr.CLIError
+	if errors.As(err, &ce) && strings.HasPrefix(ce.Response, "404") {
+		return client.AgentIdentity()
+	}
+	return "", err
+}
+
 // LoginKey validates an API key and persists it as a context, detecting the
 // type from the prefix: tvagent_* → agent context, tvkey_* → key context.
 func LoginKey(contextName, apiURL, key string) error {
@@ -84,7 +104,7 @@ func LoginKey(contextName, apiURL, key string) error {
 	if typ == "agent" {
 		client.AgentKey = key
 		ctx.AgentKey = key
-		identity, err := client.AgentIdentity()
+		identity, err := agentLoginIdentity(client)
 		if err != nil {
 			return err
 		}

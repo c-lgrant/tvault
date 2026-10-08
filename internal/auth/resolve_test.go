@@ -72,6 +72,79 @@ func TestLoginKeyDetectsPrefix(t *testing.T) {
 	}
 }
 
+// #15: a scoped agent without credentials:read must still log in. Agent keys
+// are validated through whoami (no scope needed), not the credentials list.
+func TestLoginKeyAgentValidatesViaWhoami(t *testing.T) {
+	var paths []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.Path)
+		if r.URL.Path == "/api/agents/whoami" {
+			w.Write([]byte(`{"principal":{"type":"agent","id":"a1","name":"script-mint"},"userId":"u","kind":"scoped","scopes":["tokens:create"],"expiresAt":null}`))
+			return
+		}
+		w.WriteHeader(http.StatusForbidden)
+		w.Write([]byte(`{"detail":{"code":"SCOPE_DENIED","missingScope":"credentials:read","message":"Missing required scope: credentials:read"}}`))
+	}))
+	defer srv.Close()
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+
+	if err := LoginKey("a", srv.URL, "tvagent_xyz"); err != nil {
+		t.Fatalf("scoped agent without credentials:read could not log in: %v", err)
+	}
+	cfg, _ := config.Load()
+	if a := cfg.Contexts["a"]; a == nil || a.Type != "agent" || a.AgentKey != "tvagent_xyz" || a.Identity != "script-mint" {
+		t.Errorf("agent context wrong: %+v", a)
+	}
+	if len(paths) != 1 || paths[0] != "/api/agents/whoami" {
+		t.Errorf("agent login called %v, want only /api/agents/whoami", paths)
+	}
+}
+
+// A server without /api/agents/whoami (404) still accepts a classic agent key
+// through the credentials endpoint, as before.
+func TestLoginKeyAgentFallsBackOnOldServer(t *testing.T) {
+	var paths []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.Path)
+		if r.URL.Path == "/api/agents/whoami" {
+			w.WriteHeader(http.StatusNotFound)
+			w.Write([]byte(`{"detail":"Not Found"}`))
+			return
+		}
+		w.Write([]byte(`{"grants":[]}`))
+	}))
+	defer srv.Close()
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+
+	if err := LoginKey("a", srv.URL, "tvagent_xyz"); err != nil {
+		t.Fatalf("old-server agent login errored: %v", err)
+	}
+	cfg, _ := config.Load()
+	if a := cfg.Contexts["a"]; a == nil || a.Identity != "agent" {
+		t.Errorf("agent context wrong: %+v", a)
+	}
+	if len(paths) != 2 || paths[1] != "/api/agents/credentials" {
+		t.Errorf("old-server agent login called %v", paths)
+	}
+}
+
+// An invalid agent key is refused by whoami and never persisted.
+func TestLoginKeyAgentInvalidIsRejected(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		w.Write([]byte(`{"detail":{"code":"INVALID_KEY","message":"Invalid agent API key"}}`))
+	}))
+	defer srv.Close()
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+
+	if err := LoginKey("a", srv.URL, "tvagent_xyz"); err == nil {
+		t.Fatal("invalid agent key should be rejected")
+	}
+	if cfg, _ := config.Load(); cfg.Contexts["a"] != nil {
+		t.Error("rejected key must not be persisted")
+	}
+}
+
 func TestResolveAdminContextRefreshesWhenStale(t *testing.T) {
 	var refreshCalls int
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
