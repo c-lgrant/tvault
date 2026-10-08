@@ -27,7 +27,7 @@ func TestScopedErrorCodesMapToExitCodes(t *testing.T) {
 		{"reauth required", 401, `{"detail":{"code":"REAUTH_REQUIRED","message":"sign in again"}}`, 2, "tvault login"},
 		{"not owner", 403, `{"detail":{"code":"NOT_OWNER","message":"not yours"}}`, 1, "owner"},
 		{"grant required", 403, `{"detail":{"code":"GRANT_REQUIRED","message":"no grant"}}`, 1, "keys grant"},
-		{"no grant", 404, `{"detail":{"code":"NO_GRANT","message":"missing"}}`, 1, "keys show"},
+		{"no grant", 404, `{"detail":{"code":"NO_GRANT","message":"missing"}}`, 1, "tvault grant <agent>"},
 		{"unknown scope 422", 422, `{"detail":{"code":"UNKNOWN_SCOPE","message":"bad scope"}}`, 1, "bad scope"},
 		{"invalid expiry 400", 400, `{"detail":{"code":"INVALID_EXPIRY","message":"bad expiry"}}`, 1, "--expires"},
 		{"plain 403 stays user error", 403, `{"detail":"forbidden"}`, 1, "forbidden"},

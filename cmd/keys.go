@@ -201,12 +201,14 @@ var keysRevokeCmd = &cobra.Command{
 	Args:    cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		yes, _ := cmd.Flags().GetBool("yes")
+		force, _ := cmd.Flags().GetBool("force")
+		yes = yes || force
 		cc, err := resolve(cmd)
 		if err != nil {
 			return err
 		}
 		if !confirmDestructive(cmd, cc, "revoke key", args, yes) {
-			return &clierr.CLIError{Kind: clierr.KindUser, Command: "keys revoke", Message: "aborted — pass --yes to confirm"}
+			return &clierr.CLIError{Kind: clierr.KindUser, Command: "keys revoke", Message: "aborted — pass --force to confirm"}
 		}
 		id, err := resolveKeyRef(cc.Client, args[0])
 		if err != nil {
@@ -325,7 +327,8 @@ func init() {
 	keysCreateCmd.Flags().String("name", "", "key name (required)")
 	keysCreateCmd.Flags().StringSlice("scopes", nil, "comma-separated scopes, e.g. credentials:read,tokens:list (required)")
 	keysCreateCmd.Flags().String("expires", defaultKeyExpiry, "expiry: 30d | 90d | 365d | YYYY-MM-DD | never")
-	keysRevokeCmd.Flags().BoolP("yes", "y", false, "skip the confirmation prompt (required in a non-interactive shell)")
+	keysRevokeCmd.Flags().Bool("force", false, "skip the confirmation prompt (required in a non-interactive shell)")
+	keysRevokeCmd.Flags().BoolP("yes", "y", false, "alias for --force")
 
 	keysGrantCmd.Flags().Int("expires-in-hours", 0, "expire the grant after N hours (default: no grant expiry)")
 

@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"regexp"
@@ -185,17 +186,33 @@ var agentsCreateCmd = &cobra.Command{
 			return enrich(cmd, cc, err)
 		}
 		cmd.PrintErrf("Created agent %q.\n", res.Name)
+		var gr api.GrantResult
+		var grantErr error
 		if len(grants) > 0 {
-			gr := cc.Client.AddGrants(res.ID, grants)
-			if err := gr.Err(); err != nil {
-				cmd.PrintErrf("Agent created, but granting services failed: %v\n", err)
-			} else {
+			gr = cc.Client.AddGrants(res.ID, grants)
+			if grantErr = gr.Err(); grantErr == nil {
 				cmd.PrintErrf("Granted %d service(s).\n", len(gr.OK))
 			}
 		}
 		cmd.PrintErrln("API key (shown once — store it now):")
 		// stdout: scripts capture KEY=$(tvault agents create ... | tail -1).
 		fmt.Println(res.APIKey)
+		if grantErr != nil {
+			// The key is already printed (it is never shown again), but a
+			// half-granted agent must not exit 0: scripts would assume access.
+			// Keep the first failure's kind so e.g. SCOPE_DENIED still exits 8.
+			kind := clierr.KindUser
+			for _, e := range gr.Failed {
+				var ce *clierr.CLIError
+				if errors.As(e, &ce) {
+					kind = ce.Kind
+					break
+				}
+			}
+			return &clierr.CLIError{Kind: kind, Command: "agents create",
+				Message: "agent created (key printed above), but granting services failed: " + grantErr.Error(),
+				Hint:    "retry with `tvault grant " + res.Name + " <service>` once the cause is fixed"}
+		}
 		return nil
 	},
 }

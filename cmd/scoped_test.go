@@ -333,3 +333,32 @@ func TestParseExpiry(t *testing.T) {
 		}
 	}
 }
+
+// A grant refused after the agent is created must not exit 0: the key is
+// still printed (it is shown only once), but the scope refusal keeps exit 8.
+func TestAgentsCreate_GrantFailureIsNonZero(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == "POST" && r.URL.Path == "/api/agents":
+			w.WriteHeader(201)
+			w.Write([]byte(`{"id":"a1","name":"child","apiKey":"tvagent_child"}`))
+		case r.Method == "POST" && r.URL.Path == "/api/agents/a1/grants":
+			w.WriteHeader(403)
+			w.Write([]byte(`{"detail":{"code":"SCOPE_DENIED","message":"no","missingScope":"grants:write"}}`))
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(500)
+		}
+	}))
+	defer srv.Close()
+	setupContext(t, &config.Context{Type: "key", APIURL: srv.URL, Identity: "ci", APIKey: "tvkey_k"})
+
+	stdout, _, err := runCLI(t, "agents", "create", "--kind", "scoped", "--name", "child",
+		"--scopes", "credentials:read", "--grants", "github", "--non-interactive")
+	if stdout != "tvagent_child\n" {
+		t.Errorf("stdout = %q, want the key even when grants fail", stdout)
+	}
+	if code := clierr.ExitCode(err); code != 8 {
+		t.Errorf("exit code = %d, want 8 (err=%v)", code, err)
+	}
+}
