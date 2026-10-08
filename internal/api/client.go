@@ -331,6 +331,10 @@ func (c *Client) attempt(method, path string, body any, query map[string]string)
 			cliErr.Hint = "the principal creating this must already hold the grant — grant it first (tvault keys grant <key> <service>)"
 		case "NO_GRANT":
 			cliErr.Hint = "this principal has no grant for that service — ask the owner to grant it (`tvault grant <agent> <service>` or `tvault keys grant <key> <service>`)"
+		case "SCOPE_NOT_DELEGABLE":
+			cliErr.Hint = "only a signed-in human can give that scope — create the key or agent from the console or an admin context"
+		case "ROTATION_CONFLICT":
+			cliErr.Hint = "another rotation of this key won the race — use the key it returned, or rotate again"
 		case "UNKNOWN_SCOPE":
 			cliErr.Hint = "see the scope list in the README (Keys section)"
 		case "INVALID_EXPIRY":

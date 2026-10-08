@@ -77,8 +77,16 @@ var errorExplanations = map[string]struct {
 		Fix:  "Grant the service to the acting principal first (`tvault keys grant <key> <service>`), then retry.",
 	},
 	"NO_GRANT": {
-		What: "The key has no grant for that service (or the key does not exist).",
-		Fix:  "List what it holds with `tvault keys show <key>`.",
+		What: "This key or agent has no grant for that service.",
+		Fix:  "Ask the owner to grant it: `tvault grant <agent> <service>` or `tvault keys grant <key> <service>`.",
+	},
+	"SCOPE_NOT_DELEGABLE": {
+		What: "Only a signed-in human can give this scope to a key or agent (keys:manage, keys:revoke, agents:manage, agents:delete, policies:write, grants:write, tokens:update, tokens:delete, proxies:write).",
+		Fix:  "Create or edit the key/agent from the console, or from an admin context (`tvault ctx use <admin-ctx>`).",
+	},
+	"ROTATION_CONFLICT": {
+		What: "Two rotations of the same key ran at once and this one lost; no new key was issued by it.",
+		Fix:  "Use the key the winning rotation returned, or rotate again.",
 	},
 	"UNKNOWN_SCOPE": {
 		What: "A requested scope name is not recognised.",
