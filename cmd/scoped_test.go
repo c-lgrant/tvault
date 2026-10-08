@@ -180,8 +180,10 @@ func TestGrantsAdd_AgentIDSkipsAgentList(t *testing.T) {
 	if err != nil {
 		t.Fatalf("grants add errored: %v", err)
 	}
-	if len(calls) != 1 || calls[0] != "POST /api/agents/"+agentID+"/grants" {
-		t.Errorf("calls = %v, want a single POST (no GET /api/agents)", calls)
+	// Listing is attempted (to catch name/ID confusion); it is denied, so the
+	// ref is treated as an ID and the server decides.
+	if len(calls) != 2 || calls[1] != "POST /api/agents/"+agentID+"/grants" {
+		t.Errorf("calls = %v, want a denied listing then the POST", calls)
 	}
 	if !strings.Contains(stderr, "Granted 1") {
 		t.Errorf("stderr = %q", stderr)
@@ -341,7 +343,7 @@ func TestAgentsCreate_GrantFailureIsNonZero(t *testing.T) {
 		switch {
 		case r.Method == "POST" && r.URL.Path == "/api/agents":
 			w.WriteHeader(201)
-			w.Write([]byte(`{"id":"a1","name":"child","apiKey":"tvagent_child"}`))
+			w.Write([]byte(`{"id":"a1","name":"child","apiKey":"tvagent_child","kind":"scoped"}`))
 		case r.Method == "POST" && r.URL.Path == "/api/agents/a1/grants":
 			w.WriteHeader(403)
 			w.Write([]byte(`{"detail":{"code":"SCOPE_DENIED","message":"no","missingScope":"grants:write"}}`))

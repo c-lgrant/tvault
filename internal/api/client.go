@@ -127,7 +127,7 @@ func kindForError(status int, code string) clierr.Kind {
 		return clierr.KindHumanOnly
 	case "KEY_EXPIRED":
 		return clierr.KindKeyExpired
-	case "KEY_SUSPENDED":
+	case "KEY_SUSPENDED", "AGENT_INACTIVE":
 		return clierr.KindKeySuspended
 	case "INVALID_KEY":
 		return clierr.KindInvalidKey
@@ -312,11 +312,16 @@ func (c *Client) attempt(method, path string, body any, query map[string]string)
 	case clierr.KindHumanOnly:
 		cliErr.Hint = "this operation needs a signed-in human — run `tvault login` and switch to the admin context"
 	case clierr.KindKeyExpired:
-		cliErr.Hint = "rotate the key (tvault keys rotate / tvault agents rotate-key) or log in with a new one"
+		cliErr.Hint = "an expired key can't rotate itself — rotate it from an admin context (`tvault keys rotate <id>` / `tvault agents rotate-key <agent>`), or log in with a new key"
 	case clierr.KindKeySuspended:
 		cliErr.Hint = "the key is suspended — ask the owner to resume it, or use another key"
 	case clierr.KindInvalidKey:
-		cliErr.Hint = "the key is unknown or was revoked — check it, or log in with a valid key (tvault login --key)"
+		cliErr.Hint = "the key is unknown or was revoked — check it, or log in with a valid key (`tvault login --key-stdin`)"
+	}
+	// FastAPI's bare 404 for a route that doesn't exist (as opposed to an
+	// application "X not found") means the server predates the endpoint.
+	if resp.StatusCode == http.StatusNotFound && er.Code == "" && er.Message == "Not Found" && cliErr.Hint == "" {
+		cliErr.Hint = "this server doesn't have that endpoint — it likely predates scoped keys (api.tokenvault.one has them)"
 	}
 	// Code-specific guidance for codes that keep their status-derived Kind
 	// (and so their exit code: 1 for 4xx, 2 for 401).

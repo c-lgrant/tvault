@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/c-lgrant/tvault/internal/api"
 	"github.com/c-lgrant/tvault/internal/auth"
@@ -83,6 +84,17 @@ func enrich(cmd *cobra.Command, cc *cmdContext, err error) error {
 		}
 		if ce.Context == "" && cc != nil {
 			ce.Context = cc.label()
+		}
+		// A classic tvagent_ key on a management route gets a bare 401
+		// "Invalid or expired token" (no code) from the server. That is not a
+		// session expiry: classic agents can only read credentials.
+		if cc != nil && cc.Ctx.Type == "agent" && ce.Kind == clierr.KindAuth && ce.Code == "" &&
+			strings.HasPrefix(ce.Response, "401") &&
+			!strings.HasSuffix(ce.Request, "/api/agents/credentials") &&
+			!strings.HasSuffix(ce.Request, "/api/agents/whoami") {
+			ce.Kind = clierr.KindHumanOnly
+			ce.Message = "classic agents can only read credentials — use an admin context or a scoped agent"
+			ce.Hint = "switch context with `tvault ctx use <admin-ctx>`, or create a scoped agent (`tvault agents create --kind scoped`)"
 		}
 		if ce.Kind == clierr.KindVaultLocked && ce.Hint == "" && cc != nil && cc.Ctx.Type == "admin" {
 			ce.Hint = "tvault vault unlock"

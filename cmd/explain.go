@@ -58,7 +58,11 @@ var errorExplanations = map[string]struct {
 	},
 	"KEY_EXPIRED": {
 		What: "The API key is past its expiry (exit code 10).",
-		Fix:  "Rotate it (`tvault keys rotate <id>` / `tvault agents rotate-key <agent>`) or log in with a new key.",
+		Fix:  "An expired key can't rotate itself (--self is refused too). Rotate it from an admin context (`tvault keys rotate <id>` / `tvault agents rotate-key <agent>`) or log in with a new key.",
+	},
+	"AGENT_INACTIVE": {
+		What: "The agent is suspended and refused until it is resumed (exit code 11).",
+		Fix:  "Resume it from an admin context: `tvault agents resume <agent>`.",
 	},
 	"KEY_SUSPENDED": {
 		What: "The API key is suspended and refused until it is resumed (exit code 11).",

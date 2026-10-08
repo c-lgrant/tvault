@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"errors"
 	"strings"
 	"time"
 
@@ -93,6 +94,12 @@ func LoginKey(contextName, apiURL, key string) error {
 		ctx.APIKey = key
 		who, err := client.Whoami()
 		if err != nil {
+			// A server that predates scoped keys can't know any tvkey_: it
+			// answers INVALID_KEY or a bare 404, which reads as "your key is bad".
+			var ce *clierr.CLIError
+			if errors.As(err, &ce) && (ce.Code == "INVALID_KEY" || strings.HasPrefix(ce.Response, "404")) {
+				ce.Hint = "the key is unknown or revoked — or " + apiURL + " predates scoped keys (tvkey_ keys need a server that supports them, e.g. api.tokenvault.one)"
+			}
 			return err
 		}
 		ctx.Identity = who.Principal.Name

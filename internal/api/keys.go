@@ -19,6 +19,10 @@ type WhoamiResult struct {
 	Kind      string    `json:"kind"`
 	Scopes    []string  `json:"scopes"`
 	ExpiresAt *string   `json:"expiresAt"`
+
+	// Flat identity fields from servers that predate the principal block.
+	ID   string `json:"id,omitempty"`
+	Name string `json:"name,omitempty"`
 }
 
 // Whoami asks the server which principal the client's credentials resolve to.
@@ -30,6 +34,14 @@ func (c *Client) Whoami() (*WhoamiResult, error) {
 	var res WhoamiResult
 	if err := json.Unmarshal(body, &res); err != nil {
 		return nil, err
+	}
+	// Servers that predate scoped keys answer with a flat {id, name, ...} and
+	// no principal block: those are classic agents.
+	if res.Principal.ID == "" && res.ID != "" {
+		res.Principal = Principal{Type: "agent", ID: res.ID, Name: res.Name}
+		if res.Kind == "" {
+			res.Kind = "classic"
+		}
 	}
 	return &res, nil
 }
