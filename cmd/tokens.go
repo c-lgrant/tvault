@@ -143,6 +143,9 @@ func runTokensSet(cmd *cobra.Command, args []string) error {
 	if err := cc.Client.SetTokenValue(args[0], value); err != nil {
 		return enrich(cmd, cc, err)
 	}
+	if cc.Client.DryRun {
+		return nil
+	}
 	cmd.PrintErrf("Updated credential for %q.\n", args[0])
 	return nil
 }
@@ -301,6 +304,9 @@ func runTokensCreate(cmd *cobra.Command, _ []string) error {
 	}
 	if err := cc.Client.CreateToken(*req); err != nil {
 		return enrich(cmd, cc, err)
+	}
+	if cc.Client.DryRun {
+		return nil
 	}
 	if req.Credential == "" {
 		cmd.PrintErrf("Created token %q (no value stored).\n", req.ServiceName)

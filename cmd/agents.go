@@ -223,7 +223,7 @@ an agent can rotate itself with --self, which also switches the active context t
 		if res.APIKey == "" { // --dry-run
 			return nil
 		}
-		cmd.PrintErrf("Rotated key for agent %s —the old key no longer works.\n", label)
+		cmd.PrintErrf("Rotated key for agent %s — the old key no longer works.\n", label)
 		if self {
 			if err := storeRotatedKey(cc, res.APIKey); err != nil {
 				fmt.Println(res.APIKey)

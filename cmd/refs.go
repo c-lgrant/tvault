@@ -77,7 +77,7 @@ func pickRef(kind, ref string, cands []candidate, mutating bool) (resolved, erro
 			nm := nameMatches[0]
 			if mutating {
 				return resolved{}, userErr(
-					fmt.Sprintf("no %s has id %s; a %s is NAMED %s — use its id %s", kind, ref, kind, ref, nm.ID),
+					fmt.Sprintf("no %s has id %s; one is NAMED %s — use its id %s", kind, ref, ref, nm.ID),
 					"pass the id explicitly so the right "+kind+" is changed")
 			}
 			return resolved{ID: nm.ID, Name: nm.Name}, nil
