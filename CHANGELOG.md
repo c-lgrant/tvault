@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.1](https://github.com/c-lgrant/tvault-private/compare/v0.10.0...v0.10.1) (2026-10-08)
+
+
+### Bug Fixes
+
+* **auth:** validate agent key logins through whoami, so scoped agents without credentials:read can log in ([6584bd5](https://github.com/c-lgrant/tvault-private/commit/6584bd58b21a8f71bcba40867edd02e3c8d714a5)), closes [#15](https://github.com/c-lgrant/tvault-private/issues/15)
+
 ## [0.10.0](https://github.com/c-lgrant/tvault-private/compare/v0.9.0...v0.10.0) (2026-10-08)
 
 
