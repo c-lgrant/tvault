@@ -142,6 +142,44 @@ func TestLoginFlowTimesOut(t *testing.T) {
 	}
 }
 
+// The browser opened but couldn't reach the loopback, so the page showed the
+// code: a code pasted into the terminal completes the loopback flow.
+func TestLoginFlowAcceptsPastedCodeWhileWaiting(t *testing.T) {
+	forceLoopbackEnv(t)
+	origOpen, origPaste, origIn := openBrowser, pasteAvailable, manualInput
+	t.Cleanup(func() { openBrowser, pasteAvailable, manualInput = origOpen, origPaste, origIn })
+	var gotState string
+	openBrowser = func(rawURL string) error {
+		gotState = mustParseQuery(t, rawURL)["state"] // browser never calls back
+		return nil
+	}
+	pasteAvailable = func() bool { return true }
+	manualInput = strings.NewReader("\n  pasted-code  \n")
+
+	got, err := runLoginFlow("https://tokenvault.uk", false, 3*time.Second)
+	if err != nil {
+		t.Fatalf("runLoginFlow errored: %v", err)
+	}
+	if got.code != "pasted-code" || got.state == "" || got.state != gotState {
+		t.Errorf("got %+v, want the pasted code with the flow's state %q", got, gotState)
+	}
+}
+
+// Without a terminal to paste into (CI, piped stdin), the loopback flow only
+// waits for the browser, as before.
+func TestLoginFlowIgnoresStdinWithoutTerminal(t *testing.T) {
+	forceLoopbackEnv(t)
+	origOpen, origPaste, origIn := openBrowser, pasteAvailable, manualInput
+	t.Cleanup(func() { openBrowser, pasteAvailable, manualInput = origOpen, origPaste, origIn })
+	openBrowser = func(string) error { return nil }
+	pasteAvailable = func() bool { return false }
+	manualInput = strings.NewReader("not-a-terminal\n")
+
+	if _, err := runLoginFlow("https://tokenvault.uk", false, 200*time.Millisecond); err == nil {
+		t.Fatal("expected a timeout: stdin is not a terminal, so nothing may be read from it")
+	}
+}
+
 func TestLoginFlowRejectsBadState(t *testing.T) {
 	forceLoopbackEnv(t)
 	// Stand in for the browser, but POST a state that does NOT match the
