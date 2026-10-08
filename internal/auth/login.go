@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/c-lgrant/tvault/internal/clierr"
+	"golang.org/x/term"
 )
 
 // openBrowser is a package var so tests can stand in for the browser.
@@ -41,6 +42,26 @@ var manualInput io.Reader = os.Stdin
 
 // getenv is a package var so tests can stand in for environment lookups.
 var getenv = os.Getenv
+
+// pasteAvailable reports whether the user can paste a code into this process
+// (stdin is a terminal). A package var so tests can stand in for the terminal.
+var pasteAvailable = func() bool { return term.IsTerminal(int(os.Stdin.Fd())) }
+
+// readPastedCode reads lines from manualInput until a non-empty one arrives,
+// and sends it on ch. It stops quietly at EOF or a read error.
+func readPastedCode(ch chan<- string) {
+	r := bufio.NewReader(manualInput)
+	for {
+		line, err := r.ReadString('\n')
+		if code := strings.TrimSpace(line); code != "" {
+			ch <- code
+			return
+		}
+		if err != nil {
+			return
+		}
+	}
+}
 
 // callbackResult is what the browser POSTs to the loopback server (loopback
 // flow) or what the user pastes in (manual flow).
@@ -188,9 +209,26 @@ func runLoginFlow(frontendURL string, forceManual bool, timeout time.Duration) (
 	// Committed to the loopback wait; ensure the server is stopped on exit.
 	defer shutdownServer()
 
+	// The browser may open but still fail to reach this listener (a browser
+	// that resolves localhost differently, a page opened on another device).
+	// The page then shows the code instead, so accept a pasted code too:
+	// whichever arrives first wins. The code is only valid with this flow's
+	// state, the same as a callback.
+	var pasteCh chan string
+	if pasteAvailable() {
+		pasteCh = make(chan string, 1)
+		fmt.Fprintf(os.Stderr, "If the page shows a code instead, paste it here:\n> ")
+		go readPastedCode(pasteCh)
+	}
+
 	select {
 	case res := <-resultCh:
+		if pasteCh != nil {
+			fmt.Fprintln(os.Stderr)
+		}
 		return &res, nil
+	case code := <-pasteCh:
+		return &callbackResult{code: code, state: state}, nil
 	case <-time.After(timeout):
 		return nil, &clierr.CLIError{
 			Kind:    clierr.KindAuth,

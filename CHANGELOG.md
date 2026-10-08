@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.11.0](https://github.com/c-lgrant/tvault-private/compare/v0.10.1...v0.11.0) (2026-10-08)
+
+
+### Features
+
+* **login:** accept a pasted code while waiting for the browser ([64b15e3](https://github.com/c-lgrant/tvault-private/commit/64b15e3d9e6430d7431f3339301a07f0d505f1f4))
+
 ## [0.10.1](https://github.com/c-lgrant/tvault-private/compare/v0.10.0...v0.10.1) (2026-10-08)
 
 
