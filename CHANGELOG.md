@@ -1,5 +1,39 @@
 # Changelog
 
+## [0.9.0](https://github.com/c-lgrant/tvault-private/compare/v0.8.2...v0.9.0) (2026-10-08)
+
+
+### Features
+
+* **cli:** add `login --key-stdin` to keep keys out of shell history ([47e3edd](https://github.com/c-lgrant/tvault-private/commit/47e3edd83cfac4ad122bd3e88ebc3d5b9dbe4ac6))
+* **cli:** hints for AUTO_GRANT_IN_PLACE / MANUAL_GRANT_IN_PLACE ([9b6c523](https://github.com/c-lgrant/tvault-private/commit/9b6c523f9b40b79f71f4e936db4f1e15ddc5f072))
+* **cli:** rotate --self for keys and agents; SCOPE_NOT_DELEGABLE and ROTATION_CONFLICT hints ([1446a4b](https://github.com/c-lgrant/tvault-private/commit/1446a4b8cff9748e89c8b689d5df038cc4484ef0))
+* **cli:** SELF_CHANGE_FORBIDDEN hint and explain entry ([de04604](https://github.com/c-lgrant/tvault-private/commit/de046045268f2832e71e2d68bc36f5bf0a84bf4a))
+* map more scoped-key error codes, add keys show/grant/ungrant ([93aef28](https://github.com/c-lgrant/tvault-private/commit/93aef28bb70e0ed451681d33187a4ee1c6fb9a5a))
+* scoped-key contexts, scope exit codes, keys command group ([edd9b84](https://github.com/c-lgrant/tvault-private/commit/edd9b84c1778db670fb647ee88787122d8bed258))
+
+
+### Bug Fixes
+
+* **cli:** "Suspended"/"Resumed agent" (was "Suspendd") ([182362a](https://github.com/c-lgrant/tvault-private/commit/182362af9c8064424d4df4814d987fb236e4c94a))
+* **cli:** agents rotate-key --self names the agent, not "agent" ([bf4ceb7](https://github.com/c-lgrant/tvault-private/commit/bf4ceb77ee869c3cb6259cc36ee40c1d480d3050))
+* **cli:** clearer errors for old servers, classic agents, expired keys ([2da37ed](https://github.com/c-lgrant/tvault-private/commit/2da37ed99ee55a4d7aa08e047f2d2ef859dbf0e8))
+* **cli:** escape control characters in names shown in confirmations ([46a11ff](https://github.com/c-lgrant/tvault-private/commit/46a11ffc5e59c712a7d3392a74cbc416e7dd3636))
+* **cli:** no success message under --dry-run for tokens create/set; copy nits ([ff9937d](https://github.com/c-lgrant/tvault-private/commit/ff9937d5a7fa2b70d70560bc7d123ac4fff2a484))
+* **cli:** non-zero exit on half-granted agent create; keys revoke --force; agent-friendly NO_GRANT hint ([dd5e24a](https://github.com/c-lgrant/tvault-private/commit/dd5e24a7fe562cbd956f476600b2d780fac9036e))
+* **cli:** resolve agent IDs without listing agents ([fc738a0](https://github.com/c-lgrant/tvault-private/commit/fc738a0f37ad53e0c0956643bd578e11a98fdecd))
+* **cli:** resolve agent/key refs safely (no name/ID confusion) ([20877f9](https://github.com/c-lgrant/tvault-private/commit/20877f9bca51729c805d76177d864cd17cf30193))
+* **cli:** whoami falls back for admin contexts on pre-scoped-key servers ([56de563](https://github.com/c-lgrant/tvault-private/commit/56de5635b920faf8191219be0f1c967bafc60782))
+* **deps:** golang.org/x/sys v0.44.0 (GO-2026-5024) and patch updates ([5c5d57c](https://github.com/c-lgrant/tvault-private/commit/5c5d57c6907816b5eaf913c79b4c0272539cf998))
+* **login:** derive frontend URL from --api-url instead of falling back to prod ([dc60d44](https://github.com/c-lgrant/tvault-private/commit/dc60d444d7862082d61f6830d60b56d104b7b156))
+* parse key grants with grantExpiresAt and the full grant shape ([bd7f750](https://github.com/c-lgrant/tvault-private/commit/bd7f7505e2e83bf3a0fdfd5887c5dae5f69d459d))
+
+
+### Documentation
+
+* **api:** KeyGrant.Source comment no longer mentions inheritance ([d439727](https://github.com/c-lgrant/tvault-private/commit/d439727994cf484bb10e7c994a10c8ce61e56816))
+* document scoped keys, key contexts and exit codes 8-10 ([66cb4c6](https://github.com/c-lgrant/tvault-private/commit/66cb4c65f40ab96ff6b18a4c634bc1278ff19eed))
+
 ## [0.8.2](https://github.com/c-lgrant/tvault-private/compare/v0.8.1...v0.8.2) (2026-10-06)
 
 
