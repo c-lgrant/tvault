@@ -11,6 +11,7 @@ import { base64Decode } from "../core/crypto/encoding.ts";
 import { invalidRequest, ticketInvalid, tokenNotFound, upstreamError, upstreamTimeout } from "../core/protocol/errors.ts";
 import { verifyTicket } from "../core/protocol/tickets.ts";
 import { decryptTokenField } from "../core/protocol/tokendoc.ts";
+import { assertCreationMatches } from "../core/protocol/constraints.ts";
 import type { FeatureModule } from "../core/registry.ts";
 import { isGcpServiceAccount, mintGcpAccessToken } from "./interceptors/gcpSa.ts";
 
@@ -53,6 +54,8 @@ export function proxyModule(): FeatureModule {
 
           const storedDoc = await ctx.storage.get("tokens", service);
           if (!storedDoc) return sendError(c, tokenNotFound(`No token stored for service '${service}'`));
+
+          assertCreationMatches(payload, storedDoc);
 
           const key = await ctx.secrets.encryptionKey();
           let accessToken: string | null;

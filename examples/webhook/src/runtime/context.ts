@@ -166,4 +166,6 @@ export interface RuntimeContext {
   secrets: SecretProvider;
   storage: StorageAdapter;
   replay: ReplayGuard;
+  /** Set by createApp: the un-wrapped adapter beneath the legacy-TOTP healing layer in `storage`. */
+  rawStorage?: StorageAdapter;
 }

@@ -10,6 +10,7 @@ import { sendError } from "../core/middleware/respond.ts";
 import { invalidRequest, setupRequired, ticketInvalid, tokenNotFound } from "../core/protocol/errors.ts";
 import { verifyTicket } from "../core/protocol/tickets.ts";
 import { readTokenObject } from "../core/protocol/tokendoc.ts";
+import { assertCreationMatches } from "../core/protocol/constraints.ts";
 import type { FeatureModule } from "../core/registry.ts";
 
 const CREDENTIAL_PURPOSES = new Set(["agent_credential", "user_reveal"]);
@@ -55,6 +56,8 @@ export function credentialModule(): FeatureModule {
           if (!storedDoc) {
             return sendError(c, tokenNotFound(`No token stored for service '${service}'`), cors);
           }
+
+          assertCreationMatches(payload, storedDoc);
 
           const key = await ctx.secrets.encryptionKey();
           let token = await readTokenObject(key, storedDoc);

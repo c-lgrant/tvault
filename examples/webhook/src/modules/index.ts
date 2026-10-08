@@ -1,7 +1,7 @@
 // Canonical module assembly. The registration order fixes the advertised
 // capability list (buildRegistryView preserves order) so /v1/exchange and
 // /v1/health report exactly:
-//   ["store","credential","proxy","refresh","tv-refresh","storage","totp"]
+//   ["store","credential","proxy","refresh","tv-refresh","storage","totp","ticketConstraints"]
 // matching the TV backend's CAPABILITIES set. Interceptor order also follows
 // from here: TOTP is registered before GCP, so a TOTP token is intercepted
 // first (the two are mutually exclusive, but this mirrors the reference).
@@ -15,6 +15,8 @@ import { tvRefreshModule } from "./tvRefresh.ts";
 import { storageModule } from "./storage.ts";
 import { totpModule } from "./interceptors/totp.ts";
 import { gcpSaModule } from "./interceptors/gcpSa.ts";
+import { adminModule } from "./admin.ts";
+import { ticketConstraintsModule } from "./ticketConstraints.ts";
 import { healthModule } from "./health.ts";
 import { exchangeModule } from "./exchange.ts";
 import { landingModule } from "./landing.ts";
@@ -30,9 +32,11 @@ export function allModules(): FeatureModule[] {
     tvRefreshModule(),
     storageModule(),
     totpModule(),
+    ticketConstraintsModule(),
     // Transparent interceptor (no capability).
     gcpSaModule(),
     // Infra endpoints (no capability).
+    adminModule(),
     healthModule(),
     exchangeModule(),
     landingModule(),
