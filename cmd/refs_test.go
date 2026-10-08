@@ -155,3 +155,19 @@ func TestListingDenied_IDShapedIsIDNameIsError(t *testing.T) {
 		t.Errorf("name with listing denied: want exit 8 + 'agent ID', got %v", err)
 	}
 }
+
+// Server-supplied names can't repaint a confirmation prompt: control, escape
+// and bidi characters come out escaped and quoted.
+func TestLabelEscapesUnsafeNames(t *testing.T) {
+	cases := map[string]string{
+		"build-worker":                    "build-worker (a1)",
+		"x\x1b[2K\rpayments":              `"x\x1b[2K\rpayments" (a1)`,
+		"ok\nAbout to delete agent(s): y": `"ok\nAbout to delete agent(s): y" (a1)`,
+		"evil‮gnp.exe":               `"evil‮gnp.exe" (a1)`,
+	}
+	for name, want := range cases {
+		if got := (resolved{ID: "a1", Name: name}).label(); got != want {
+			t.Errorf("label(%q) = %s, want %s", name, got, want)
+		}
+	}
+}

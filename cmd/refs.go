@@ -14,9 +14,9 @@ type resolved struct{ ID, Name string }
 // label renders "name (id)", or just the id when the name is unknown.
 func (r resolved) label() string {
 	if r.Name == "" {
-		return r.ID
+		return safeText(r.ID)
 	}
-	return fmt.Sprintf("%s (%s)", r.Name, r.ID)
+	return fmt.Sprintf("%s (%s)", safeText(r.Name), safeText(r.ID))
 }
 
 func labels(rs []resolved) []string {
