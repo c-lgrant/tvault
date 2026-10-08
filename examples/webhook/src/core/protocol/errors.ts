@@ -47,6 +47,12 @@ export const ticketExpired = (message: string) =>
 export const tokenNotFound = (message: string) =>
   new WebhookError(404, "token_not_found", message);
 
+export const alreadyExists = (message: string) =>
+  new WebhookError(409, "already_exists", message);
+
+export const staleCreation = (message: string) =>
+  new WebhookError(409, "stale_creation", message);
+
 export const forbidden = (message: string) =>
   new WebhookError(403, "forbidden", message);
 

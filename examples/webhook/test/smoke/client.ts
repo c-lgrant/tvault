@@ -72,7 +72,7 @@ async function main(): Promise<void> {
   assert(healthJson.status === "healthy", "health reports healthy");
   assert(
     JSON.stringify(healthJson.capabilities) ===
-      JSON.stringify(["store", "credential", "proxy", "refresh", "tv-refresh", "storage", "totp"]),
+      JSON.stringify(["store", "credential", "proxy", "refresh", "tv-refresh", "storage", "totp", "ticketConstraints"]),
     `capabilities are canonical (${healthJson.capabilities.join(",")})`,
   );
   const head = await fetch(`${BASE}/v1/health`, { method: "HEAD" });

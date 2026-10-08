@@ -25,6 +25,8 @@ export const SENSITIVE_FIELDS: ReadonlySet<string> = new Set([
   "certificateChain",
   "sshPrivateKey",
   "totpSecret",
+  // A TOTP link embeds the seed: never stored as meta, never listed.
+  "totpUri",
 ]);
 
 /** Decoded credential-ticket payload (credential_tickets.py). */
@@ -42,6 +44,13 @@ export interface TicketPayload {
   aid?: string;
   /** Optional proxy config ID (audit). */
   pid?: string;
+  /** Store tickets (ticketConstraints): "create" refuses an existing service with 409 already_exists. */
+  mode?: "create" | "overwrite";
+  /**
+   * Token creationId (ticketConstraints). Store: persisted as meta.creationId.
+   * Credential/proxy: must equal the stored meta.creationId or 409 stale_creation.
+   */
+  cid?: string;
 }
 
 /**

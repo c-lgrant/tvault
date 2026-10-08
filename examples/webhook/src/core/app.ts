@@ -8,6 +8,7 @@ import type { RuntimeContext } from "../runtime/context.ts";
 import { buildRegistryView, type FeatureModule } from "./registry.ts";
 import { rawBody } from "./middleware/rawbody.ts";
 import { rateLimit } from "./middleware/ratelimit.ts";
+import { healingStorage } from "./protocol/totpHeal.ts";
 import { sendError } from "./middleware/respond.ts";
 
 /** Hono context variables shared across middleware + handlers. */
@@ -17,8 +18,17 @@ export interface AppVariables {
 
 export type AppEnv = { Variables: AppVariables };
 
-export function createApp(ctx: RuntimeContext, modules: FeatureModule[]): Hono<AppEnv> {
+export function createApp(baseCtx: RuntimeContext, modules: FeatureModule[]): Hono<AppEnv> {
   const app = new Hono<AppEnv>();
+
+  // Every module reads tokens through the healing layer, so legacy documents
+  // that stored a plaintext otpauth:// URI are migrated on first read/list.
+  const rawStorage = baseCtx.rawStorage ?? baseCtx.storage;
+  const ctx: RuntimeContext = {
+    ...baseCtx,
+    rawStorage,
+    storage: healingStorage(baseCtx, rawStorage),
+  };
 
   // Capture raw bytes for every request before any handler parses them.
   app.use("*", rawBody());
