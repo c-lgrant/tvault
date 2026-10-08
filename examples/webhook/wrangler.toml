@@ -1,4 +1,4 @@
-name = "tv-webhook-dev"
+name = "tv-webhook"
 main = "src/runtime/worker.ts"
 compatibility_date = "2024-11-01"
 compatibility_flags = ["nodejs_compat"]
@@ -7,14 +7,11 @@ compatibility_flags = ["nodejs_compat"]
 # account_id = ""
 
 # Non-secret configuration. Override per your deployment.
-# This is the `develop` branch: defaults target the DEV control plane
-# (tokenvault.one) and a distinct worker name, so a dev deploy never binds to
-# or collides with production. `main` targets tokenvault.uk.
 [vars]
 # TOKENVAULT_FRONTEND_URL is REQUIRED — no silent fallback. Set this to the
 # Token Vault frontend origin (e.g. "https://tokenvault.uk" for the hosted
 # service, or your self-hosted origin).
-TOKENVAULT_FRONTEND_URL = "https://tokenvault.one"
+TOKENVAULT_FRONTEND_URL = "https://tokenvault.uk"
 # WEBHOOK_EXTERNAL_URL is normally auto-detected from the request host; set it
 # only if you front the Worker with a custom domain that rewrites Host.
 # WEBHOOK_EXTERNAL_URL = "https://tv-webhook.<account>.workers.dev"
@@ -47,7 +44,7 @@ TV_RATE_LIMIT_PER_MINUTE = "300"
 # returned id here.)
 [[d1_databases]]
 binding = "DB"
-database_name = "tv-webhook-dev"
+database_name = "tv-webhook"
 
 # ── Observability (Workers Logs + invocation traces) ──────────────────────────
 # Persists structured logs and per-invocation traces, viewable in the dashboard
