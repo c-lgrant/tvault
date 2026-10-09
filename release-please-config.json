@@ -8,6 +8,9 @@
     ".": {
       "release-type": "go",
       "package-name": "tvault",
+      "extra-files": [
+        { "type": "json", "path": "npm/package.json", "jsonpath": "$.version" }
+      ],
       "changelog-sections": [
         { "type": "feat",     "section": "Features" },
         { "type": "fix",      "section": "Bug Fixes" },
