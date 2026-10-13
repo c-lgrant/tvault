@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -224,16 +225,31 @@ func strPtr(s string) *string { return &s }
 
 // webhookRetryRig is a TV stub plus a webhook that hangs for the first
 // `hangs` calls. Each ticket is unique, as TV's are (the webhook rejects a
-// reused nonce), and the webhook records which tickets it was shown.
-func webhookRetryRig(t *testing.T, hangs int) (*Client, *[]string, *int) {
+// reused nonce), and the webhook records which tickets it was shown. The
+// handlers run on server goroutines, so the counters sit behind a mutex.
+type retryRig struct {
+	mu     sync.Mutex
+	shown  []string
+	minted int
+}
+
+func (g *retryRig) seen() ([]string, int) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return append([]string(nil), g.shown...), g.minted
+}
+
+func webhookRetryRig(t *testing.T, hangs int) (*Client, *retryRig) {
 	t.Helper()
-	var shown []string
-	minted := 0
+	g := &retryRig{}
 	release := make(chan struct{})
 	t.Cleanup(func() { close(release) })
 	webhook := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		shown = append(shown, r.URL.Query().Get("ticket"))
-		if len(shown) <= hangs {
+		g.mu.Lock()
+		g.shown = append(g.shown, r.URL.Query().Get("ticket"))
+		n := len(g.shown)
+		g.mu.Unlock()
+		if n <= hangs {
 			select { // hold the response until the client gives up
 			case <-release:
 			case <-r.Context().Done():
@@ -248,16 +264,19 @@ func webhookRetryRig(t *testing.T, hangs int) (*Client, *[]string, *int) {
 		case "/api/tokens/svc":
 			w.Write([]byte(`{"serviceName":"svc"}`))
 		case "/api/vault/credential-ticket":
-			minted++
-			w.Write([]byte(`{"ticket":"t` + strings.Repeat("x", minted) + `","webhookUrl":"` + webhook.URL + `"}`))
+			g.mu.Lock()
+			g.minted++
+			n := g.minted
+			g.mu.Unlock()
+			w.Write([]byte(`{"ticket":"t` + strings.Repeat("x", n) + `","webhookUrl":"` + webhook.URL + `"}`))
 		}
 	}))
 	t.Cleanup(tv.Close)
-	return &Client{BaseURL: tv.URL, HTTP: tv.Client(), WebhookTimeout: 100 * time.Millisecond}, &shown, &minted
+	return &Client{BaseURL: tv.URL, HTTP: tv.Client(), WebhookTimeout: 100 * time.Millisecond}, g
 }
 
 func TestGetTokenValue_WebhookTimeoutRetriesWithFreshTicket(t *testing.T) {
-	client, shown, minted := webhookRetryRig(t, 1)
+	client, rig := webhookRetryRig(t, 1)
 	val, err := client.GetTokenValue("svc")
 	if err != nil {
 		t.Fatalf("GetTokenValue errored: %v", err)
@@ -265,13 +284,14 @@ func TestGetTokenValue_WebhookTimeoutRetriesWithFreshTicket(t *testing.T) {
 	if val != "plaintext" {
 		t.Errorf("value = %q", val)
 	}
-	if *minted != 2 || len(*shown) != 2 || (*shown)[0] == (*shown)[1] {
-		t.Errorf("minted %d tickets, webhook saw %v; want 2 distinct", *minted, *shown)
+	shown, minted := rig.seen()
+	if minted != 2 || len(shown) != 2 || shown[0] == shown[1] {
+		t.Errorf("minted %d tickets, webhook saw %v; want 2 distinct", minted, shown)
 	}
 }
 
 func TestGetTokenValue_WebhookTimeoutGivesUpWithTimeoutInMessage(t *testing.T) {
-	client, shown, _ := webhookRetryRig(t, 99)
+	client, rig := webhookRetryRig(t, 99)
 	start := time.Now()
 	_, err := client.GetTokenValue("svc")
 	var ce *clierr.CLIError
@@ -281,8 +301,8 @@ func TestGetTokenValue_WebhookTimeoutGivesUpWithTimeoutInMessage(t *testing.T) {
 	if !strings.Contains(ce.Message, "100ms") {
 		t.Errorf("message %q does not name the timeout", ce.Message)
 	}
-	if len(*shown) != 2 {
-		t.Errorf("webhook attempts = %d, want 2", len(*shown))
+	if shown, _ := rig.seen(); len(shown) != 2 {
+		t.Errorf("webhook attempts = %d, want 2", len(shown))
 	}
 	if time.Since(start) > 2*time.Second {
 		t.Errorf("took %s; the per-attempt webhook timeout was not applied", time.Since(start))
