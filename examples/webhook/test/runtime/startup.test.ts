@@ -13,6 +13,19 @@ describe("runStartup", () => {
     expect((await ctx.storage.get("meta", "schema_state"))?.version).toBe(CURRENT_SCHEMA_VERSION);
   });
 
+  it("does not rewrite the schema stamp when it is already current", async () => {
+    const ctx = makeContext({ hmacSecret: secret });
+    await runStartup(ctx);
+    const writes: string[] = [];
+    const originalSet = ctx.storage.set.bind(ctx.storage);
+    ctx.storage.set = async (col, key, data) => {
+      writes.push(`${col}/${key}`);
+      return originalSet(col, key, data);
+    };
+    await runStartup(ctx);
+    expect(writes).toEqual([]);
+  });
+
   it("auto-seals a configured webhook that already has tokens", async () => {
     const ctx = makeContext({ hmacSecret: secret });
     await ctx.storage.set("tokens", "github", { tokenId: "github", serviceName: "github" });

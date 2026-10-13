@@ -19,7 +19,7 @@ export function healthModule(): FeatureModule {
         keyConfigured: await ctx.secrets.isConfigured(),
         capabilities: registry.capabilities,
         uptime: Math.floor((Date.now() - startMs) / 1000),
-        tokenCount: (await ctx.storage.entries("tokens")).length,
+        tokenCount: await ctx.storage.count("tokens"),
       });
 
       // GET is unauthenticated and reflects the request Origin so the TV bind
@@ -27,10 +27,15 @@ export function healthModule(): FeatureModule {
       // non-sensitive (status/version/capabilities/uptime/tokenCount) and already
       // public on GET — CORS only lets a browser read what anyone can already curl.
       app.options("/v1/health", (c) => preflightResponse(c));
-      app.get("/v1/health", async (c) => c.json(await payload(), 200, corsHeaders(c.req.header("origin"))));
 
-      // HEAD must be answered explicitly — Hono does not derive it from GET.
-      app.on("HEAD", "/v1/health", (c) => c.body(null, 200, corsHeaders(c.req.header("origin"))));
+      // HEAD is TV's connection warm-up probe: answer it with no storage I/O.
+      // Hono dispatches every HEAD request to the GET route (a HEAD route never
+      // matches), so the GET handler checks the raw method itself.
+      app.get("/v1/health", async (c) => {
+        const cors = corsHeaders(c.req.header("origin"));
+        if (c.req.method === "HEAD") return c.body(null, 200, cors);
+        return c.json(await payload(), 200, cors);
+      });
 
       // POST is the authenticated health check TV uses to re-sync capabilities.
       app.post("/v1/health", hmacAuth(ctx), async (c) => c.json(await payload()));

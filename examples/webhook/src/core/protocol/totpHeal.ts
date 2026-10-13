@@ -70,6 +70,7 @@ export function healingStorage(ctx: Pick<RuntimeContext, "secrets">, raw: Storag
     },
     set: (collection, key, data) => raw.set(collection, key, data),
     delete: (collection, key) => raw.delete(collection, key),
+    count: (collection) => raw.count(collection),
     async entries(collection) {
       const all = await raw.entries(collection);
       if (collection !== "tokens") return all;

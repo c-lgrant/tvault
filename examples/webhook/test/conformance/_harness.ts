@@ -35,6 +35,9 @@ class MemoryStorage implements StorageAdapter {
   async entries(collection: string): Promise<Array<[string, StoredDocument]>> {
     return [...this.col(collection).entries()];
   }
+  async count(collection: string): Promise<number> {
+    return this.col(collection).size;
+  }
 }
 
 class StaticSecret implements SecretProvider {
