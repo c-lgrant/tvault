@@ -2,7 +2,9 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -17,22 +19,43 @@ import (
 // Token is the list/show shape returned by the tokens endpoints.
 //
 // NOTE: the backend names the type field "tokenType" (not "type"), and stores
-// editable metadata (displayName/notes/tags) in a separate Firestore
+// editable metadata (displayName/description/tags) in a separate Firestore
 // collection that is merged into the list/show responses.
+//
+// The CLI calls the free-text field "notes", but the backend's field is
+// "description". It still reads a legacy "notes" value, but only when no
+// description exists, so Notes decodes from description first (UnmarshalJSON).
 type Token struct {
 	ServiceName string   `json:"serviceName"`
 	Type        string   `json:"tokenType"`
 	Status      string   `json:"status"`
 	DisplayName string   `json:"displayName,omitempty"`
-	Notes       string   `json:"notes,omitempty"`
+	Notes       string   `json:"description,omitempty"`
 	Tags        []string `json:"tags,omitempty"`
 }
 
+func (t *Token) UnmarshalJSON(b []byte) error {
+	type plain Token // no methods: avoids recursing into this UnmarshalJSON
+	var v struct {
+		plain
+		LegacyNotes string `json:"notes"`
+	}
+	if err := json.Unmarshal(b, &v); err != nil {
+		return err
+	}
+	*t = Token(v.plain)
+	if t.Notes == "" {
+		t.Notes = v.LegacyNotes
+	}
+	return nil
+}
+
 // TokenMetadata is the editable-metadata payload for PATCH …/metadata.
-// Pointer fields distinguish "not set" from "set to empty".
+// Pointer fields distinguish "not set" from "set to empty". Notes is sent as
+// "description" (see Token).
 type TokenMetadata struct {
 	DisplayName *string   `json:"displayName,omitempty"`
-	Notes       *string   `json:"notes,omitempty"`
+	Notes       *string   `json:"description,omitempty"`
 	Tags        *[]string `json:"tags,omitempty"`
 }
 
@@ -178,23 +201,64 @@ type credentialTicketResp struct {
 	ExpiresIn  int    `json:"expiresIn"`
 }
 
+const (
+	// DefaultWebhookTimeout bounds one webhook credential fetch.
+	DefaultWebhookTimeout = 10 * time.Second
+	// webhookAttempts: a webhook fetch that gets no response is tried once
+	// more before the CLI exits, so a single stalled request does not leave
+	// `$(tvault get …)` empty.
+	webhookAttempts = 2
+)
+
+func (c *Client) webhookTimeout() time.Duration {
+	if c.WebhookTimeout > 0 {
+		return c.WebhookTimeout
+	}
+	return DefaultWebhookTimeout
+}
+
 // getTokenValueZK fetches a credential via the zero-knowledge ticket flow.
 // Used as a fallback when GET /api/tokens/{service} returns no secret (the
 // signal that the user is in webhook mode and TV has stripped secrets).
+//
+// A network failure on the webhook leg is retried with a NEW ticket: tickets
+// are one-shot (the webhook records each nonce), so resending the old one
+// would be rejected as a replay. Only network failures are retried; an HTTP
+// error from the webhook is a real answer.
 func (c *Client) getTokenValueZK(service string) (string, error) {
+	var err error
+	for attempt := 1; attempt <= webhookAttempts; attempt++ {
+		var ticket credentialTicketResp
+		if ticket, err = c.credentialTicket(service); err != nil {
+			return "", err
+		}
+		var v string
+		v, err = c.fetchWebhookCredential(ticket.WebhookURL, ticket.Ticket, service)
+		var ce *clierr.CLIError
+		if err == nil || !errors.As(err, &ce) || ce.Kind != clierr.KindNetwork {
+			return v, err
+		}
+		if c.Debug && attempt < webhookAttempts {
+			fmt.Fprintf(os.Stderr, "[debug] webhook attempt %d failed; retrying with a new ticket\n", attempt)
+		}
+	}
+	return "", err
+}
+
+func (c *Client) credentialTicket(service string) (credentialTicketResp, error) {
+	var ticket credentialTicketResp
 	body, err := c.doRequest("POST", "/api/vault/credential-ticket",
 		map[string]string{"serviceName": service, "purpose": "user_reveal"}, nil)
 	if err != nil {
-		return "", err
+		return ticket, err
 	}
-	var ticket credentialTicketResp
 	if err := json.Unmarshal(body, &ticket); err != nil {
-		return "", &clierr.CLIError{
+		return ticket, &clierr.CLIError{
 			Kind: clierr.KindServer, Request: "POST /api/vault/credential-ticket",
 			Message: "could not parse ticket response: " + err.Error(),
 		}
 	}
-	return c.fetchWebhookCredential(ticket.WebhookURL, ticket.Ticket, service)
+	return ticket, nil
 }
 
 // fetchWebhookCredential makes the direct CLI → user-webhook call. Per the
@@ -212,7 +276,10 @@ func (c *Client) fetchWebhookCredential(webhookURL, ticket, service string) (str
 		"&service=" + url.QueryEscape(service)
 	reqLine := "GET " + webhookURL + "/v1/credential"
 
-	req, err := http.NewRequest("GET", u, nil)
+	timeout := c.webhookTimeout()
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, "GET", u, nil)
 	if err != nil {
 		return "", &clierr.CLIError{Kind: clierr.KindUser, Request: reqLine, Message: err.Error()}
 	}
@@ -227,10 +294,11 @@ func (c *Client) fetchWebhookCredential(webhookURL, ticket, service string) (str
 		if c.Debug {
 			fmt.Fprintf(os.Stderr, "[debug] %s → connection error after %s: %v\n", reqLine, time.Since(start), err)
 		}
-		return "", &clierr.CLIError{
-			Kind: clierr.KindNetwork, Request: reqLine,
-			Message: "could not reach webhook — " + err.Error(),
+		msg := "could not reach webhook — " + err.Error()
+		if errors.Is(err, context.DeadlineExceeded) {
+			msg = fmt.Sprintf("webhook did not respond within %s", timeout)
 		}
+		return "", &clierr.CLIError{Kind: clierr.KindNetwork, Request: reqLine, Message: msg}
 	}
 	defer resp.Body.Close()
 	respBody, _ := io.ReadAll(resp.Body)

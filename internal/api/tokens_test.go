@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/c-lgrant/tvault/internal/clierr"
 )
@@ -32,6 +33,24 @@ func TestListTokens(t *testing.T) {
 	}
 	if toks[0].Type != "JWT" {
 		t.Errorf("type = %q, want JWT", toks[0].Type)
+	}
+}
+
+func TestTokenNotesReadsDescription(t *testing.T) {
+	cases := map[string]string{
+		`{"serviceName":"a","description":"current"}`:                  "current",
+		`{"serviceName":"a","notes":"legacy"}`:                         "legacy",
+		`{"serviceName":"a","description":"current","notes":"legacy"}`: "current",
+		`{"serviceName":"a"}`:                                          "",
+	}
+	for body, want := range cases {
+		var tok Token
+		if err := json.Unmarshal([]byte(body), &tok); err != nil {
+			t.Fatalf("%s: %v", body, err)
+		}
+		if tok.Notes != want {
+			t.Errorf("%s: Notes = %q, want %q", body, tok.Notes, want)
+		}
 	}
 }
 
@@ -85,8 +104,13 @@ func TestUpdateTokenMetadata(t *testing.T) {
 		raw, _ := io.ReadAll(r.Body)
 		var body map[string]any
 		json.Unmarshal(raw, &body)
-		if body["notes"] != "rotated quarterly" {
+		// The backend's field is "description"; it only re-reads legacy "notes"
+		// when no description exists, so a "notes" write can be invisible.
+		if body["description"] != "rotated quarterly" {
 			t.Errorf("body = %v", body)
+		}
+		if _, ok := body["notes"]; ok {
+			t.Errorf("body still sends legacy notes: %v", body)
 		}
 		w.WriteHeader(200)
 	}))
@@ -197,6 +221,73 @@ func TestTokenHistory(t *testing.T) {
 }
 
 func strPtr(s string) *string { return &s }
+
+// webhookRetryRig is a TV stub plus a webhook that hangs for the first
+// `hangs` calls. Each ticket is unique, as TV's are (the webhook rejects a
+// reused nonce), and the webhook records which tickets it was shown.
+func webhookRetryRig(t *testing.T, hangs int) (*Client, *[]string, *int) {
+	t.Helper()
+	var shown []string
+	minted := 0
+	release := make(chan struct{})
+	t.Cleanup(func() { close(release) })
+	webhook := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		shown = append(shown, r.URL.Query().Get("ticket"))
+		if len(shown) <= hangs {
+			select { // hold the response until the client gives up
+			case <-release:
+			case <-r.Context().Done():
+			}
+			return
+		}
+		w.Write([]byte(`{"token":{"accessToken":"plaintext"}}`))
+	}))
+	t.Cleanup(webhook.Close)
+	tv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/tokens/svc":
+			w.Write([]byte(`{"serviceName":"svc"}`))
+		case "/api/vault/credential-ticket":
+			minted++
+			w.Write([]byte(`{"ticket":"t` + strings.Repeat("x", minted) + `","webhookUrl":"` + webhook.URL + `"}`))
+		}
+	}))
+	t.Cleanup(tv.Close)
+	return &Client{BaseURL: tv.URL, HTTP: tv.Client(), WebhookTimeout: 100 * time.Millisecond}, &shown, &minted
+}
+
+func TestGetTokenValue_WebhookTimeoutRetriesWithFreshTicket(t *testing.T) {
+	client, shown, minted := webhookRetryRig(t, 1)
+	val, err := client.GetTokenValue("svc")
+	if err != nil {
+		t.Fatalf("GetTokenValue errored: %v", err)
+	}
+	if val != "plaintext" {
+		t.Errorf("value = %q", val)
+	}
+	if *minted != 2 || len(*shown) != 2 || (*shown)[0] == (*shown)[1] {
+		t.Errorf("minted %d tickets, webhook saw %v; want 2 distinct", *minted, *shown)
+	}
+}
+
+func TestGetTokenValue_WebhookTimeoutGivesUpWithTimeoutInMessage(t *testing.T) {
+	client, shown, _ := webhookRetryRig(t, 99)
+	start := time.Now()
+	_, err := client.GetTokenValue("svc")
+	var ce *clierr.CLIError
+	if !errors.As(err, &ce) || ce.Kind != clierr.KindNetwork {
+		t.Fatalf("err = %v, want a KindNetwork CLIError", err)
+	}
+	if !strings.Contains(ce.Message, "100ms") {
+		t.Errorf("message %q does not name the timeout", ce.Message)
+	}
+	if len(*shown) != 2 {
+		t.Errorf("webhook attempts = %d, want 2", len(*shown))
+	}
+	if time.Since(start) > 2*time.Second {
+		t.Errorf("took %s; the per-attempt webhook timeout was not applied", time.Since(start))
+	}
+}
 
 // TestGetTokenValue_WebhookFallback exercises the zero-knowledge fallback:
 // /api/tokens/{svc} returns metadata only (no secret fields), so the CLI

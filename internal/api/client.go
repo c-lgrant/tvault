@@ -45,6 +45,10 @@ type Client struct {
 	UserAgent   string // sent as User-Agent; defaults to DefaultUserAgent when New() is used
 	Debug       bool
 
+	// WebhookTimeout bounds each direct CLI → webhook credential fetch;
+	// 0 = DefaultWebhookTimeout. A healthy webhook answers in well under 1s.
+	WebhookTimeout time.Duration
+
 	DryRun    bool      // when true, mutating requests are printed, not sent
 	DryRunOut io.Writer // where dry-run output goes; defaults to os.Stderr
 
