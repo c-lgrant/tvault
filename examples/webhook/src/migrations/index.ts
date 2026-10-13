@@ -33,7 +33,11 @@ export const MIGRATIONS: MigrationStep[] = [];
 const META = "meta";
 const KEY = "schema_state";
 
-async function storedVersion(storage: StorageAdapter, fallback: number): Promise<number> {
+/** The stored schema version, and whether a valid stamp was actually present. */
+async function storedVersion(
+  storage: StorageAdapter,
+  fallback: number,
+): Promise<{ version: number; stamped: boolean }> {
   const doc = await storage.get(META, KEY);
   const v = doc?.version;
   // Absent stamp ⇒ "never migrated". We treat it as BASELINE_SCHEMA_VERSION
@@ -47,7 +51,8 @@ async function storedVersion(storage: StorageAdapter, fallback: number): Promise
   // Infinity, negative, or non-numeric) must not propagate: NaN in particular
   // would poison `Math.max(from, current)` and make every `version > from`
   // filter false, silently disabling all future migrations. Fall back instead.
-  return typeof v === "number" && Number.isInteger(v) && v >= 0 ? v : fallback;
+  const valid = typeof v === "number" && Number.isInteger(v) && v >= 0;
+  return valid ? { version: v, stamped: true } : { version: fallback, stamped: false };
 }
 
 /**
@@ -64,7 +69,7 @@ export async function applyPendingMigrationsWith(
   steps: MigrationStep[],
   current: number,
 ): Promise<{ from: number; to: number }> {
-  const from = await storedVersion(storage, BASELINE_SCHEMA_VERSION);
+  const { version: from, stamped } = await storedVersion(storage, BASELINE_SCHEMA_VERSION);
   // Never stamp below the already-recorded version (guard against older builds
   // redeployed temporarily then re-upgraded).
   const to = Math.max(from, current);
@@ -72,7 +77,8 @@ export async function applyPendingMigrationsWith(
     .filter((s) => s.version > from && s.version <= current)
     .sort((a, b) => a.version - b.version);
   for (const step of pending) await step.up(storage);
-  await storage.set(META, KEY, { version: to });
+  // Runs on every cold start: skip the write when the stamp is already current.
+  if (!stamped || to !== from) await storage.set(META, KEY, { version: to });
   return { from, to };
 }
 

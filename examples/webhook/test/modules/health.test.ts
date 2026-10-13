@@ -18,6 +18,30 @@ describe("health CORS", () => {
     expect(await res.json()).toMatchObject({ status: "healthy" });
   });
 
+  it("answers HEAD without touching storage", async () => {
+    const ctx = makeContext({ hmacSecret: secret });
+    const boom = async () => {
+      throw new Error("HEAD must not read storage");
+    };
+    Object.assign(ctx.storage, { get: boom, entries: boom, count: boom });
+    const app = createApp(ctx, [healthModule()]);
+    const res = await app.request("/v1/health", { method: "HEAD" });
+    expect(res.status).toBe(200);
+  });
+
+  it("counts tokens on GET without loading the documents", async () => {
+    const ctx = makeContext({ hmacSecret: secret });
+    await ctx.storage.set("tokens", "a", { tokenId: "a" });
+    await ctx.storage.set("tokens", "b", { tokenId: "b" });
+    ctx.storage.entries = async () => {
+      throw new Error("GET must not load every token document");
+    };
+    const app = createApp(ctx, [healthModule()]);
+    const res = await app.request("/v1/health");
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ tokenCount: 2 });
+  });
+
   it("answers the OPTIONS preflight with reflected CORS", async () => {
     const app = createApp(makeContext({ hmacSecret: secret }), [healthModule()]);
     const res = await app.request("/v1/health", {

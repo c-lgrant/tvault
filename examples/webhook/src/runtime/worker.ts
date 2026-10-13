@@ -8,6 +8,13 @@
 // No KV namespace: storage is D1, replay is the Cache API, and the seed is a
 // Secret — so the Worker needs exactly one auto-provisioned resource (D1).
 // The app is built once per isolate and reused across requests.
+//
+// Only the FINISHED app is shared. On Workers, I/O belongs to the request that
+// started it: if that request is cancelled mid-build (client timeout), the
+// build's D1 calls are cancelled and its promise never settles. Sharing an
+// in-flight build promise would make every later request on the isolate await
+// it forever. So a request that finds no app yet runs its own build (startup is
+// idempotent) and the first build to finish is kept.
 
 import type { Hono } from "hono";
 import { createApp, type AppEnv } from "../core/app.ts";
@@ -28,7 +35,7 @@ export interface Env {
   [key: string]: unknown;
 }
 
-let appPromise: Promise<Hono<AppEnv>> | null = null;
+let builtApp: Hono<AppEnv> | null = null;
 
 async function buildApp(env: Env): Promise<Hono<AppEnv>> {
   if (!env.DB) {
@@ -44,20 +51,14 @@ async function buildApp(env: Env): Promise<Hono<AppEnv>> {
     storage: await D1StorageAdapter.create(env.DB),
     replay: new CacheReplayGuard(),
   };
-  await runStartup(ctx); // memoized by appPromise: runs once per isolate
+  await runStartup(ctx); // once per isolate, unless concurrent cold requests race
   return createApp(ctx, allModules());
 }
 
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
-    // Self-healing memo: if buildApp rejects (e.g. startup storage I/O fails)
-    // we clear the cached promise so the next request gets a fresh attempt
-    // rather than re-awaiting the same rejected promise forever.
-    appPromise ??= buildApp(env).catch((e: unknown) => {
-      appPromise = null;
-      throw e;
-    });
-    const app = await appPromise;
+    // A failed build caches nothing, so the next request simply tries again.
+    const app = builtApp ?? (builtApp = await buildApp(env));
     return app.fetch(request, env, ctx);
   },
 } satisfies ExportedHandler<Env>;
