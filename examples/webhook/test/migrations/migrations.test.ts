@@ -14,6 +14,7 @@ class MemStore implements StorageAdapter {
   async set(c: string, k: string, d: StoredDocument) { this.c(c).set(k, d); }
   async delete(c: string, k: string) { this.c(c).delete(k); }
   async entries(c: string) { return [...this.c(c).entries()]; }
+  async count(c: string) { return this.c(c).size; }
 }
 
 describe("applyPendingMigrations", () => {

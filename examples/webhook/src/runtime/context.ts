@@ -147,6 +147,8 @@ export interface StorageAdapter {
   delete(collection: string, key: string): Promise<void>;
   /** All [key, document] pairs in a collection (unshaped). */
   entries(collection: string): Promise<Array<[string, StoredDocument]>>;
+  /** Number of documents in a collection, without loading them. */
+  count(collection: string): Promise<number>;
 }
 
 /**

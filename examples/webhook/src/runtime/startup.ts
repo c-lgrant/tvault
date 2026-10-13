@@ -12,13 +12,20 @@ import { applyPendingMigrations } from "../migrations/index.ts";
 import { isBound, markBound } from "../modules/bindState.ts";
 
 export async function runStartup(ctx: RuntimeContext): Promise<void> {
+  // This runs on every cold start, so the bind-state read goes out in parallel
+  // with the migration's schema read instead of after it. No migration touches
+  // meta/bind_state. A failed read just skips the seal (null), as before.
+  const bound = isBound(ctx.storage).catch((e: unknown) => {
+    console.warn("[startup] bind-state read failed (non-fatal):", e);
+    return null;
+  });
   await applyPendingMigrations(ctx.storage);
 
   // Auto-seal is best-effort: a failure to write the bind flag must never
   // prevent the webhook from serving. Migration above is intentionally outside
   // this block — serving on an un-upconverted store is worse than not sealing.
   try {
-    if (await isBound(ctx.storage)) return;
+    if ((await bound) !== false) return;
     if (!(await ctx.secrets.isConfigured())) return;
     const tokens = await ctx.storage.entries("tokens");
     if (tokens.length > 0) await markBound(ctx.storage);

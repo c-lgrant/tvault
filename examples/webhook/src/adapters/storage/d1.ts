@@ -64,4 +64,12 @@ export class D1StorageAdapter implements StorageAdapter {
       .all<EntryRow>();
     return (result.results ?? []).map((r) => [r.k, JSON.parse(r.doc) as StoredDocument]);
   }
+
+  async count(collection: string): Promise<number> {
+    const row = await this.db
+      .prepare("SELECT COUNT(*) AS n FROM kv WHERE collection = ?")
+      .bind(collection)
+      .first<{ n: number }>();
+    return row?.n ?? 0;
+  }
 }

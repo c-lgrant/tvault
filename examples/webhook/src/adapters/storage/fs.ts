@@ -71,4 +71,8 @@ export class FsStorageAdapter implements StorageAdapter {
   async entries(collection: string): Promise<Array<[string, StoredDocument]>> {
     return Object.entries(this.collection(collection));
   }
+
+  async count(collection: string): Promise<number> {
+    return Object.keys(this.collection(collection)).length;
+  }
 }
