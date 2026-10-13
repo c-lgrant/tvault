@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.11.1](https://github.com/c-lgrant/tvault-private/compare/v0.11.0...v0.11.1) (2026-10-13)
+
+
+### Bug Fixes
+
+* **cli:** save tokens edit --notes; retry a stalled webhook fetch ([581093f](https://github.com/c-lgrant/tvault-private/commit/581093f9ef58fc891e522bab33894c3d84a78af5))
+* **deps:** build with Go 1.27.2; update Go and webhook dependencies ([5c02a71](https://github.com/c-lgrant/tvault-private/commit/5c02a715579c7f990915df7872c7484a04cf6553))
+* **webhook:** stop cold-start hangs; cut startup and health D1 work ([49a46ba](https://github.com/c-lgrant/tvault-private/commit/49a46bae808b57e3d572d1fef753c630c1b9a1a5))
+
 ## [0.11.0](https://github.com/c-lgrant/tvault-private/compare/v0.10.1...v0.11.0) (2026-10-08)
 
 
