@@ -2,6 +2,21 @@
 
 ## [0.11.1](https://github.com/c-lgrant/tvault-private/compare/v0.11.0...v0.11.1) (2026-10-13)
 
+**Bug-fix and security release. All webhook operators and CLI users should upgrade.** There are no breaking changes, and no configuration or storage migration is needed.
+
+#### Webhook (`examples/webhook`)
+
+- **Fixed: requests could hang until the client timed out.** About 1 request in 10 hung, on every route. Token Vault's calls failed after 3 s, and `tvault get` failed after 30 s with an empty result. Cause: each Worker instance shared its start-up work across requests. If the first request was cancelled during start-up, every later request to that instance waited forever. Now a request never waits on another request's start-up.
+- **Faster cold starts.** Start-up now makes 2 database reads and no writes, down from 4 round trips plus a write on every cold start.
+- **Lighter health checks.** `HEAD /v1/health` (Token Vault's warm-up probe) no longer reads every stored credential. `GET /v1/health` counts tokens without loading them.
+- **To upgrade:** if you deployed with the Cloudflare button, run the "Update webhook" workflow in your repo and merge its pull request. Workers Builds redeploys automatically. If you run the webhook with Docker or Node, pull this release and rebuild.
+
+#### CLI (`tvault`, npm `@tvault/cli`)
+
+- **Fixed: `tvault tokens edit --notes` did not save the note.** The command reported success, but `tokens show` displayed an empty note.
+- **Fixed: `tvault get` could print nothing when the webhook stalled.** Each webhook fetch now stops after 10 s and is retried once with a new ticket. A timeout now says "webhook did not respond within 10s".
+- **Security: built with Go 1.27.2.** This fixes 9 Go standard-library vulnerabilities that affected the CLI (net/http, HTTP/2, crypto/tls, net/textproto: GO-2026-6603 to GO-2026-6617). Earlier release binaries were built with Go 1.26.0.
+- **To upgrade:** run `npm i -g @tvault/cli@0.11.1`, or download the binary for your platform from this release.
 
 ### Bug Fixes
 
