@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.12.0](https://github.com/c-lgrant/tvault/compare/v0.11.1...v0.12.0) (2026-10-14)
+
+
+### Features
+
+* **cli:** `agents list` and `agents show` show when each agent was last active, and `--format wide` adds its access count ([d0f2685](https://github.com/c-lgrant/tvault/commit/d0f268567334334f48ede36d6e432330ad3f45fe))
+
+
+### Bug Fixes
+
+* **cli:** share the admin ID token across tvault processes, so a burst of parallel `tvault get` calls makes one session refresh instead of one each ([9944bf9](https://github.com/c-lgrant/tvault/commit/9944bf9eac617f347ac03fda4b209bbb04a1f9fa), [7a2e751](https://github.com/c-lgrant/tvault/commit/7a2e7515a8b81042d0e90ec05c144e5b58e8631d))
+* **cli:** retry a rate-limited session refresh ([406615d](https://github.com/c-lgrant/tvault/commit/406615d8f9043dcf64d110f3aa6ace2f0a715fc8))
+* **webhook:** stop a stalled Cache API lookup hanging requests until the caller times out ([ee29c70](https://github.com/c-lgrant/tvault/commit/ee29c702df7a78207a074a83156b439b80d221e9))
+
 ## [0.11.1](https://github.com/c-lgrant/tvault-private/compare/v0.11.0...v0.11.1) (2026-10-13)
 
 **Bug-fix and security release. All webhook operators and CLI users should upgrade.** There are no breaking changes, and no configuration or storage migration is needed.
