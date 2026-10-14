@@ -11,8 +11,14 @@ name: release-please
 on:
   push:
     branches: [main]
-  # Re-run by hand (on main) when a push did not start it.
+  # Run by hand on main: with no tag it runs release-please (when a push did
+  # not start it); with a tag it publishes that existing release again.
   workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing release tag to publish (e.g. v0.12.0); leave empty to run release-please'
+        required: false
+        default: ''
 
 permissions:
   contents: write
@@ -22,7 +28,7 @@ permissions:
 
 jobs:
   release-please:
-    if: ${{ github.ref == 'refs/heads/main' }}
+    if: ${{ github.ref == 'refs/heads/main' && !inputs.tag }}
     runs-on: ubuntu-latest
     outputs:
       release_created: ${{ steps.rp.outputs.release_created }}
@@ -36,28 +42,63 @@ jobs:
 
       # The release PR's branch was pushed with GITHUB_TOKEN, so its CI did not
       # start by itself. Required checks need it, so dispatch it on that branch.
+      # The PR JSON is parsed in the shell: a step's env is evaluated even when
+      # its `if` is false, so fromJSON on an empty output would fail the job.
       - name: Run CI on the release PR
-        if: ${{ steps.rp.outputs.pr }}
+        if: ${{ steps.rp.outputs.pr != '' }}
         env:
           GH_TOKEN: ${{ github.token }}
-          BRANCH: ${{ fromJSON(steps.rp.outputs.pr).headBranchName }}
-        run: gh workflow run ci.yml --repo "$GITHUB_REPOSITORY" --ref "$BRANCH"
+          PR_JSON: ${{ steps.rp.outputs.pr }}
+        run: |
+          branch=$(printf '%s' "$PR_JSON" | jq -r '.headBranchName // empty')
+          case "$branch" in
+            release-please--*) gh workflow run ci.yml --repo "$GITHUB_REPOSITORY" --ref "$branch" ;;
+            *) echo "::warning::unexpected release PR branch '$branch'; CI not dispatched" ;;
+          esac
+
+  # Picks the tag to publish: a release release-please just created, or the
+  # tag given to a manual run. Empty means there is nothing to publish.
+  plan:
+    needs: release-please
+    if: ${{ always() && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.pick.outputs.tag }}
+    steps:
+      - id: pick
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_TAG: ${{ inputs.tag }}
+          CREATED: ${{ needs.release-please.outputs.release_created }}
+          RP_TAG: ${{ needs.release-please.outputs.tag_name }}
+        run: |
+          tag=""
+          if [ -n "$INPUT_TAG" ]; then
+            tag="$INPUT_TAG"
+          elif [ "$CREATED" = "true" ]; then
+            tag="$RP_TAG"
+          fi
+          if [ -n "$tag" ]; then
+            printf '%s' "$tag" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+([-.][A-Za-z0-9.]+)?$' || { echo "invalid tag '$tag'" >&2; exit 1; }
+            gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null || { echo "no release for '$tag'" >&2; exit 1; }
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
 
   binaries:
-    needs: release-please
-    if: ${{ needs.release-please.outputs.release_created == 'true' }}
+    needs: plan
+    if: ${{ needs.plan.outputs.tag != '' }}
     uses: ./.github/workflows/release.yml
     with:
-      tag: ${{ needs.release-please.outputs.tag_name }}
+      tag: ${{ needs.plan.outputs.tag }}
     permissions:
       contents: write
 
   webhook-image:
-    needs: release-please
-    if: ${{ needs.release-please.outputs.release_created == 'true' }}
+    needs: plan
+    if: ${{ needs.plan.outputs.tag != '' }}
     uses: ./.github/workflows/build-webhook.yml
     with:
-      tag: ${{ needs.release-please.outputs.tag_name }}
+      tag: ${{ needs.plan.outputs.tag }}
     permissions:
       contents: read
       packages: write
@@ -66,7 +107,7 @@ jobs:
   # so no npm token exists anywhere, and each version gets provenance. It runs
   # after `binaries` because npm/install.js downloads the tag's release assets.
   npm:
-    needs: [release-please, binaries]
+    needs: [plan, binaries]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -74,7 +115,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ needs.release-please.outputs.tag_name }}
+          ref: refs/tags/${{ needs.plan.outputs.tag }}
       - uses: actions/setup-node@v4
         with:
           node-version: 24
@@ -83,7 +124,7 @@ jobs:
       - run: npm install -g npm@11.6.2
       - name: Check the package version matches the tag
         env:
-          TAG: ${{ needs.release-please.outputs.tag_name }}
+          TAG: ${{ needs.plan.outputs.tag }}
         run: test "v$(node -p 'require("./npm/package.json").version')" = "$TAG"
       - run: npm publish --access public
         working-directory: npm
