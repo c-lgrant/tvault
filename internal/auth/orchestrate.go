@@ -46,6 +46,7 @@ func Login(opts LoginOptions) error {
 	if err != nil {
 		return err
 	}
+	forgetReplaced(cfg, name)
 	cfg.Contexts[name] = &config.Context{
 		Type:         "admin",
 		APIURL:       opts.APIURL,
@@ -132,7 +133,17 @@ func LoginKey(contextName, apiURL, key string) error {
 	if err != nil {
 		return err
 	}
+	forgetReplaced(cfg, contextName)
 	cfg.Contexts[contextName] = ctx
 	cfg.Current = contextName
 	return cfg.Save()
+}
+
+// forgetReplaced drops the cached ID token of an admin context that a new
+// login is about to overwrite, so the old session's token leaves the disk.
+// A failure only leaves a token that expires within the hour.
+func forgetReplaced(cfg *config.Config, name string) {
+	if old := cfg.Contexts[name]; old != nil && old.Type == "admin" {
+		_ = config.ForgetIDToken(old)
+	}
 }
