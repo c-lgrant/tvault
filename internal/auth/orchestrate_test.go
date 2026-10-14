@@ -50,9 +50,36 @@ func TestLoginAdminPersistsContext(t *testing.T) {
 	if ctx == nil || ctx.Type != "admin" || ctx.RefreshToken != "rt" || ctx.Identity != "conor@x.y" {
 		t.Errorf("stored context wrong: %+v", ctx)
 	}
-	// The refresh token must be the only secret on disk — no id_token.
+	// The refresh token must be the only secret in contexts.yaml — no id_token.
 	raw, _ := os.ReadFile(filepath.Join(dir, "tvault", "contexts.yaml"))
 	if string(raw) != "" && contains(raw, "idt") {
-		t.Error("id_token was persisted to disk — it must stay in memory only")
+		t.Error("id_token was written to contexts.yaml")
+	}
+}
+
+// Logging in over an existing admin context drops the old session's cached
+// ID token, so it does not stay on disk until it expires.
+func TestLoginOverAdminContextForgetsOldIDToken(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"principal":{"type":"key","id":"k1","name":"ci-key"},"kind":"scoped","scopes":[]}`))
+	}))
+	defer srv.Close()
+
+	old := &config.Context{Type: "admin", APIURL: srv.URL, RefreshToken: "old-rt"}
+	cfg, _ := config.Load()
+	cfg.Contexts["work"] = old
+	if err := cfg.Save(); err != nil {
+		t.Fatal(err)
+	}
+	if err := config.StoreIDToken(old, "old-idt", time.Now().Add(time.Hour).Unix()); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := LoginKey("work", srv.URL, "tvkey_abc"); err != nil {
+		t.Fatalf("LoginKey: %v", err)
+	}
+	if token, _ := config.CachedIDToken(old); token != "" {
+		t.Errorf("old session's ID token still cached: %q", token)
 	}
 }

@@ -82,7 +82,8 @@ Either nudges release-please into opening / updating the release PR.
 ## Recovering from a failed release
 
 **Binaries didn't publish:** run `release.yml` from the Actions tab with the
-tag. goreleaser overwrites the release assets, so a re-run is safe. Then
+tag. goreleaser replaces assets that a failed run already uploaded
+(`replace_existing_artifacts` in `.goreleaser.yaml`), so a re-run is safe. Then
 re-run the failed `release-please` run's `npm` job if it was skipped.
 
 **Image didn't push:** re-run the failed `release-please` run's
