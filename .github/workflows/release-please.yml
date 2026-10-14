@@ -84,9 +84,11 @@ jobs:
           fi
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
 
+  # always(): a skipped release-please job (a manual run with a tag) would
+  # otherwise skip every job downstream of it, even with plan succeeding.
   binaries:
     needs: plan
-    if: ${{ needs.plan.outputs.tag != '' }}
+    if: ${{ always() && needs.plan.result == 'success' && needs.plan.outputs.tag != '' }}
     uses: ./.github/workflows/release.yml
     with:
       tag: ${{ needs.plan.outputs.tag }}
@@ -95,7 +97,7 @@ jobs:
 
   webhook-image:
     needs: plan
-    if: ${{ needs.plan.outputs.tag != '' }}
+    if: ${{ always() && needs.plan.result == 'success' && needs.plan.outputs.tag != '' }}
     uses: ./.github/workflows/build-webhook.yml
     with:
       tag: ${{ needs.plan.outputs.tag }}
@@ -108,6 +110,7 @@ jobs:
   # after `binaries` because npm/install.js downloads the tag's release assets.
   npm:
     needs: [plan, binaries]
+    if: ${{ always() && needs.binaries.result == 'success' && needs.plan.outputs.tag != '' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
