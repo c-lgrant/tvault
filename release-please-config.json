@@ -4,7 +4,6 @@
   "include-component-in-tag": false,
   "include-v-in-tag": true,
   "bootstrap-sha": "1ebadf4cd5dafc960fd275664cec860e25268e20",
-  "last-release-sha": "4c7e5d694f500187c6d71680eea40efcc897b7d2",
   "packages": {
     ".": {
       "release-type": "go",

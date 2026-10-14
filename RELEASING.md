@@ -83,16 +83,18 @@ Either nudges release-please into opening / updating the release PR.
 
 ## Recovering from a failed release
 
-**Binaries didn't publish:** run `release.yml` from the Actions tab with the
-tag. goreleaser replaces assets that a failed run already uploaded
-(`replace_existing_artifacts` in `.goreleaser.yaml`), so a re-run is safe. Then
-re-run the failed `release-please` run's `npm` job if it was skipped.
+**Anything after the tag failed (binaries, image or npm):** run
+`release-please` by hand on `main` with the tag:
 
-**Image didn't push:** re-run the failed `release-please` run's
-`webhook-image` job.
+```bash
+gh workflow run release-please.yml --ref main -f tag=vX.Y.Z
+```
 
-**npm didn't publish:** re-run the failed `release-please` run's `npm` job.
-`npm publish` refuses a version that already exists, so a re-run is safe.
+That publishes the existing release again: goreleaser replaces assets a failed
+run already uploaded (`replace_existing_artifacts`), the image push is
+idempotent, and the npm job runs from the same workflow file npm trusts. If
+that version is already on npm, `npm publish` fails without harm. Run
+`release.yml` alone (with the tag) to rebuild only the binaries.
 
 **release-please isn't opening a PR:** Check that the most recent commit
 subjects use conventional-commit prefixes (`feat:`, `fix:`, etc.). The bot
