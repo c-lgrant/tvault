@@ -106,6 +106,50 @@ func TestPost429DoesNotRetry(t *testing.T) {
 	}
 }
 
+// TestRefresh429Retries proves the CLI-session refresh, a POST that changes
+// no server state, retries a 429 like a GET does.
+func TestRefresh429Retries(t *testing.T) {
+	var calls int
+	srv := rateLimitedServer(t, "1", &calls)
+	defer srv.Close()
+
+	var slept []time.Duration
+	client := &Client{BaseURL: srv.URL, HTTP: srv.Client(), sleep: func(d time.Duration) { slept = append(slept, d) }}
+	if _, err := client.RefreshToken("rt"); err == nil {
+		t.Fatal("expected error")
+	}
+	if calls != maxGetAttempts {
+		t.Errorf("attempts = %d, want %d", calls, maxGetAttempts)
+	}
+	if len(slept) != maxGetAttempts-1 {
+		t.Errorf("sleeps = %d, want %d", len(slept), maxGetAttempts-1)
+	}
+}
+
+// TestRefreshRecoversAfter429 proves a refresh that is rate-limited once
+// succeeds on the retry.
+func TestRefreshRecoversAfter429(t *testing.T) {
+	var calls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if calls == 1 {
+			w.WriteHeader(http.StatusTooManyRequests)
+			return
+		}
+		w.Write([]byte(`{"id_token":"idt","expires_in":3600}`))
+	}))
+	defer srv.Close()
+
+	client := &Client{BaseURL: srv.URL, HTTP: srv.Client(), sleep: func(time.Duration) {}}
+	res, err := client.RefreshToken("rt")
+	if err != nil {
+		t.Fatalf("RefreshToken: %v", err)
+	}
+	if res.IDToken != "idt" || calls != 2 {
+		t.Errorf("IDToken = %q after %d calls, want idt after 2", res.IDToken, calls)
+	}
+}
+
 // TestConnectionErrorBackoffGrows proves connection-error GET retries use a
 // growing non-zero backoff between attempts.
 func TestConnectionErrorBackoffGrows(t *testing.T) {

@@ -29,6 +29,13 @@ const (
 	maxRetryWait   = 10 * time.Second
 )
 
+// retrySafePosts are POSTs that change no server state, so a retry after a
+// 429 or a lost response is harmless. A refresh only mints another ID token,
+// and failing it fails whatever command needed the token.
+var retrySafePosts = map[string]bool{
+	"/api/cli/auth/refresh": true,
+}
+
 // DefaultUserAgent is sent as the User-Agent header on every request.
 // Set this at program startup before any Client is created.
 var DefaultUserAgent = "tvault"
@@ -159,18 +166,20 @@ func kindForStatus(status int) clierr.Kind {
 // doRequest issues one HTTP request, JSON-encoding body when non-nil, and
 // returns the raw response body on 2xx. Non-2xx becomes a *clierr.CLIError
 // carrying the mapped Kind, the request line, and the response summary.
-// Connection errors and 429s are retried with backoff, but only for GET:
-// retrying a POST (e.g. /api/cli/auth/exchange) after a lost response can
-// burn a single-use code the server already processed.
+// Connection errors and 429s are retried with backoff, but only for GET and
+// the POSTs in retrySafePosts: retrying another POST (e.g.
+// /api/cli/auth/exchange) after a lost response can burn a single-use code
+// the server already processed.
 func (c *Client) doRequest(method, path string, body any, query map[string]string) ([]byte, error) {
 	var lastErr error
+	retrySafe := method == http.MethodGet || (method == http.MethodPost && retrySafePosts[path])
 	for attempt := 0; attempt < maxGetAttempts; attempt++ {
 		respBody, retriable, err := c.attempt(method, path, body, query)
 		if err == nil {
 			return respBody, nil
 		}
 		lastErr = err
-		if !retriable || method != http.MethodGet || attempt == maxGetAttempts-1 {
+		if !retriable || !retrySafe || attempt == maxGetAttempts-1 {
 			return nil, err
 		}
 		delay, ok := backoffDelay(attempt, err)
