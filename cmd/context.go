@@ -98,8 +98,14 @@ var contextRmCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		if _, ok := cfg.Contexts[args[0]]; !ok {
+		ctx, ok := cfg.Contexts[args[0]]
+		if !ok {
 			return &clierr.CLIError{Kind: clierr.KindUser, Command: "context rm", Message: "no such context: " + args[0]}
+		}
+		if ctx.Type == "admin" {
+			if err := config.ForgetIDToken(ctx); err != nil {
+				cmd.PrintErrf("warning: could not clear the cached ID token (%v)\n", err)
+			}
 		}
 		delete(cfg.Contexts, args[0])
 		if cfg.Current == args[0] {

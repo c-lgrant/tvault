@@ -1,11 +1,19 @@
 name: ci
 on:
   push:
-    branches: [main, preview]
+    branches: [main, develop, preview]
   pull_request:
+  # release-please.yml dispatches this on the release PR's branch, because a
+  # branch pushed with GITHUB_TOKEN starts no workflows by itself.
+  workflow_dispatch:
 
 permissions:
   contents: read
+
+# A new push to a PR cancels its stale run. Branch pushes never cancel.
+concurrency:
+  group: ci-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   test:
@@ -23,6 +31,22 @@ jobs:
       - run: go vet ./...
       - run: go build ./...
       - run: go test ./... -race
+
+  webhook:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: examples/webhook
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: examples/webhook/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
 
   preview-build:
     if: github.event_name == 'push' && github.ref == 'refs/heads/preview'
@@ -80,7 +104,7 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      - uses: goreleaser/goreleaser-action@v6
+      - uses: goreleaser/goreleaser-action@e435ccd777264be153ace6237001ef4d979d3a7a # v6
         with:
           args: build --snapshot --clean
 

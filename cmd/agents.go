@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/c-lgrant/tvault/internal/api"
 	"github.com/c-lgrant/tvault/internal/clierr"
@@ -46,9 +48,13 @@ var agentsListCmd = &cobra.Command{
 		}
 		rows := make([]map[string]string, len(agents))
 		for i, a := range agents {
-			rows[i] = map[string]string{"id": a.ID, "name": a.Name, "status": a.Status}
+			rows[i] = agentRow(a, cc.Format)
 		}
-		return output.Render(os.Stdout, cc.Format, []string{"name", "status", "id"}, rows)
+		columns := []string{"name", "status", "last_active", "id"}
+		if cc.Format == output.FormatWide {
+			columns = []string{"name", "status", "last_active", "accesses", "id"}
+		}
+		return output.Render(os.Stdout, cc.Format, columns, rows)
 	},
 }
 
@@ -75,12 +81,47 @@ var agentsShowCmd = &cobra.Command{
 		for _, g := range a.Grants {
 			grants = append(grants, g.ServiceName)
 		}
-		rows := []map[string]string{{
-			"name": a.Name, "status": a.Status, "id": a.ID,
-			"grants": joinComma(grants),
-		}}
-		return output.Render(os.Stdout, cc.Format, []string{"name", "status", "id", "grants"}, rows)
+		row := agentRow(*a, cc.Format)
+		row["grants"] = joinComma(grants)
+		return output.Render(os.Stdout, cc.Format,
+			[]string{"name", "status", "last_active", "accesses", "id", "grants"}, []map[string]string{row})
 	},
+}
+
+// agentRow is the display row for one agent. JSON keeps last_active as the
+// raw timestamp ("" when never used); tables show it relative ("3h ago").
+func agentRow(a api.Agent, format output.Format) map[string]string {
+	lastActive := a.LastActiveAt
+	if format != output.FormatJSON {
+		lastActive = relativeTime(a.LastActiveAt, time.Now())
+	}
+	return map[string]string{
+		"id": a.ID, "name": a.Name, "status": a.Status,
+		"last_active": lastActive,
+		"accesses":    strconv.Itoa(int(a.TotalAccesses)),
+	}
+}
+
+// relativeTime renders an RFC 3339 timestamp as "never", "just now",
+// "5m ago", "3h ago" or "12d ago". An unparseable value is shown as is.
+func relativeTime(ts string, now time.Time) string {
+	if ts == "" {
+		return "never"
+	}
+	t, err := time.Parse(time.RFC3339Nano, ts)
+	if err != nil {
+		return ts
+	}
+	switch d := now.Sub(t); {
+	case d < time.Minute:
+		return "just now"
+	case d < time.Hour:
+		return fmt.Sprintf("%dm ago", int(d.Minutes()))
+	case d < 48*time.Hour:
+		return fmt.Sprintf("%dh ago", int(d.Hours()))
+	default:
+		return fmt.Sprintf("%dd ago", int(d.Hours()/24))
+	}
 }
 
 var agentsCreateCmd = &cobra.Command{

@@ -47,4 +47,25 @@ describe("CacheReplayGuard", () => {
     await g.checkRequestId("r1");
     expect(lastCacheControl).toBe("max-age=600");
   });
+
+  // A stalled Cache API must not hang the request: the lookup counts as a
+  // miss and the request goes on.
+  it("treats a stalled match or put as unseen instead of hanging", async () => {
+    const never = new Promise<never>(() => {});
+    const stalled: ReplayCacheLike = {
+      match: () => never,
+      put: () => never,
+    };
+    const g = new CacheReplayGuard(stalled, 20);
+    const started = Date.now();
+    expect(await g.checkRequestId("req_stall")).toBe(false);
+    expect(await g.checkNonce("n_stall")).toBe(false);
+    expect(Date.now() - started).toBeLessThan(1000);
+  });
+
+  it("still reports a replay when the lookup answers in time", async () => {
+    const g = new CacheReplayGuard(fakeCache(), 20);
+    expect(await g.checkRequestId("req_2")).toBe(false);
+    expect(await g.checkRequestId("req_2")).toBe(true);
+  });
 });

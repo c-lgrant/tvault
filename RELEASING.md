@@ -1,31 +1,45 @@
 # Releasing tvault
 
-Releases are automated via [release-please](https://github.com/googleapis/release-please).
-You almost never need to do anything manual.
+Development follows gitflow, and releases are automated with
+[release-please](https://github.com/googleapis/release-please).
 
 ## The happy path
 
-1. Land conventional-commit work on `main` (e.g. `feat: add foo`, `fix: bar`).
-2. The `release-please` workflow opens (or updates) a PR titled
-   `chore(main): release tvault X.Y.Z`. The PR body is the auto-generated
-   `CHANGELOG.md` diff.
-3. Review the changelog. Merge the PR.
-4. release-please creates the `vX.Y.Z` tag and publishes a GitHub Release. That
-   triggers `release.yml` (binaries via goreleaser) and `build-webhook.yml`
-   (multi-arch image to `ghcr.io/c-lgrant/tvault-webhook`).
-
-That's the whole thing.
+1. Branch from `develop`. Use conventional-commit subjects (`feat: add foo`,
+   `fix: bar`).
+2. Open a PR into `develop`. CI must pass before it merges.
+3. To ship, open a PR from `develop` into `main` and merge it with a merge
+   commit (not a squash), so the `feat`/`fix` commits reach release-please.
+4. The `release-please` workflow opens (or updates) a PR titled
+   `chore(main): release X.Y.Z`. Its body is the generated `CHANGELOG.md`
+   diff. The workflow also starts CI on that PR.
+5. Review the changelog and merge the release PR.
+6. release-please tags `vX.Y.Z` and publishes the GitHub Release. The same
+   workflow then builds the binaries (goreleaser), pushes the webhook image to
+   `ghcr.io/c-lgrant/tvault-webhook`, and publishes `@tvault/cli` to npm.
+7. Merge `main` back into `develop` (a PR), so `develop` has the release
+   commit, `CHANGELOG.md` and the version bumps.
 
 ## Triggers at a glance
 
-| Event                                | Workflow            | What it does                                        |
-|--------------------------------------|---------------------|-----------------------------------------------------|
-| Push to `main` (any commit)          | `ci.yml`            | gofmt, vet, build, test (ubuntu + macOS); goreleaser dry-run; install.sh smoke (when a release exists and the repo is public) |
-| PR open / update                     | `ci.yml`            | Same minus the install.sh smoke job                 |
-| Push to `main` (any commit)          | `release-please.yml`| Open or update the release PR; no-op if nothing releasable |
-| Merge of release PR                  | (release-please)    | Create `vX.Y.Z` tag + published GitHub Release      |
-| GitHub Release published             | `release.yml`       | `goreleaser release --clean` → binaries + checksums |
-| GitHub Release published             | `build-webhook.yml` | Build + push `ghcr.io/c-lgrant/tvault-webhook` tags |
+| Event                              | Workflow             | What it does |
+|------------------------------------|----------------------|--------------|
+| PR, or push to `develop`/`main`    | `ci.yml`             | gofmt, vet, build, test (ubuntu + macOS); webhook typecheck + tests; goreleaser dry-run; install.sh smoke on `main` |
+| Push to `main`                     | `release-please.yml` | Open or update the release PR and dispatch its CI; no-op if nothing is releasable |
+| Merge of the release PR            | `release-please.yml` | Tag + GitHub Release, then call `release.yml` (binaries) and `build-webhook.yml` (image), then `npm publish` |
+
+Everything runs on `GITHUB_TOKEN`; there are no release secrets. Events that
+`GITHUB_TOKEN` causes never start other workflows, which is why the release
+jobs are called from `release-please.yml` and the release PR's CI is
+dispatched explicitly.
+
+## npm
+
+`@tvault/cli` is published with npm trusted publishing: npmjs.com trusts
+`release-please.yml` in `c-lgrant/tvault`, so no npm token exists and every
+version carries provenance. The package version moves with each release
+(release-please bumps `npm/package.json`). The npm job runs after the binaries
+upload, because `npm/install.js` downloads the tag's release assets.
 
 ## Versioning notes
 
@@ -43,19 +57,8 @@ places:
 If you `go run .` from a working tree, you'll always see `tvault dev (commit
 unknown, built unknown)` — that's expected and not a regression.
 
-## First-release bootstrap (one-time)
-
-The GHCR `tvault-webhook` package is created on the first push and defaults to
-**private** because the source repo is private. After the first release lands,
-flip its visibility once:
-
-```bash
-gh api -X PATCH /user/packages/container/tvault-webhook/visibility \
-  -f visibility=public
-```
-
-After this, anonymous `docker pull ghcr.io/c-lgrant/tvault-webhook:latest`
-works — which is what `tvault webhook init`/`up` rely on.
+Never move or delete a published tag: the Go checksum database has recorded
+its content, and `go install …@vX.Y.Z` fails for everyone if it changes.
 
 ## Forcing a release
 
@@ -78,35 +81,18 @@ Either nudges release-please into opening / updating the release PR.
 
 ## Recovering from a failed release
 
-**`release.yml` failed (binaries didn't publish):** Re-run the workflow from
-the Actions tab. goreleaser is idempotent against GitHub Release assets — it
-overwrites them. Re-running is safe.
+**Binaries didn't publish:** run `release.yml` from the Actions tab with the
+tag. goreleaser replaces assets that a failed run already uploaded
+(`replace_existing_artifacts` in `.goreleaser.yaml`), so a re-run is safe. Then
+re-run the failed `release-please` run's `npm` job if it was skipped.
 
-**`build-webhook.yml` failed (image didn't push):** Same — re-run the
-workflow from the Actions tab. The metadata-action regenerates the same tag
-list from the release event.
+**Image didn't push:** re-run the failed `release-please` run's
+`webhook-image` job.
 
-**Tag is wrong / changelog is wrong:** Delete the GitHub Release (UI: Releases
-→ … → Delete release) AND the corresponding `vX.Y.Z` git tag
-(`git push origin :refs/tags/vX.Y.Z`). release-please will reopen the release
-PR on the next push to `main` so you can fix the commits/changelog and merge
-again.
+**npm didn't publish:** re-run the failed `release-please` run's `npm` job.
+`npm publish` refuses a version that already exists, so a re-run is safe.
 
 **release-please isn't opening a PR:** Check that the most recent commit
 subjects use conventional-commit prefixes (`feat:`, `fix:`, etc.). The bot
 ignores commits whose type is marked `hidden` in `release-please-config.json`
 (`test:`, `chore:`, `ci:`) — a release of only those produces no PR.
-
-## Private repo vs public repo
-
-While `c-lgrant/tvault` is private:
-
-- `go install github.com/c-lgrant/tvault@latest` returns 404 — Go's module
-  proxy can't see private repos without auth.
-- `curl … install.sh | bash` returns 404 on the API call — same reason.
-- CI's `install-sh-smoke` job self-skips (it checks `gh repo view --json visibility`).
-- All other workflows run normally; goreleaser publishes binaries to the
-  GitHub Release just fine, but only authenticated users can download them.
-
-When the repo flips to public, all of the above start working automatically —
-no code changes needed at flip time.

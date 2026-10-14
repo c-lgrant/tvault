@@ -1,8 +1,12 @@
 name: Build webhook image
 
 on:
-  release:
-    types: [published]
+  # Called by release-please.yml with the new release's tag.
+  workflow_call:
+    inputs:
+      tag:
+        type: string
+        required: true
   push:
     branches: [preview]
     paths:
@@ -23,6 +27,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag && format('refs/tags/{0}', inputs.tag) || '' }}
 
       - uses: docker/setup-qemu-action@v3
 
@@ -41,10 +47,10 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            type=semver,pattern={{version}},event=release
-            type=semver,pattern={{major}}.{{minor}},event=release
-            type=semver,pattern={{major}},event=release
-            type=raw,value=latest,enable=${{ github.event_name == 'release' && !github.event.release.prerelease }}
+            type=semver,pattern={{version}},value=${{ inputs.tag }},enable=${{ inputs.tag != '' }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ inputs.tag }},enable=${{ inputs.tag != '' }}
+            type=semver,pattern={{major}},value=${{ inputs.tag }},enable=${{ inputs.tag != '' }}
+            type=raw,value=latest,enable=${{ inputs.tag != '' && !contains(inputs.tag, '-') }}
             type=raw,value=preview,enable=${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/preview' }}
             type=sha,prefix=preview-,enable=${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/preview' }}
 

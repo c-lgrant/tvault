@@ -1,4 +1,13 @@
 name: release-please
+
+# Gitflow: feature branches → develop → main. Every push to main updates the
+# release PR. Merging that PR tags vX.Y.Z, creates the GitHub Release, and the
+# jobs below publish the binaries, the webhook image and the npm package.
+#
+# Everything runs on GITHUB_TOKEN. Events that GITHUB_TOKEN causes never start
+# other workflows, so the release jobs live here rather than in `on: release`
+# workflows, and the release PR's CI is started with workflow_dispatch.
+
 on:
   push:
     branches: [main]
@@ -7,12 +16,71 @@ permissions:
   contents: write
   issues: write
   pull-requests: write
+  actions: write
 
 jobs:
   release-please:
     runs-on: ubuntu-latest
+    outputs:
+      release_created: ${{ steps.rp.outputs.release_created }}
+      tag_name: ${{ steps.rp.outputs.tag_name }}
     steps:
-      - uses: googleapis/release-please-action@v5
+      - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5
+        id: rp
         with:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
+
+      # The release PR's branch was pushed with GITHUB_TOKEN, so its CI did not
+      # start by itself. Required checks need it, so dispatch it on that branch.
+      - name: Run CI on the release PR
+        if: ${{ steps.rp.outputs.pr }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ fromJSON(steps.rp.outputs.pr).headBranchName }}
+        run: gh workflow run ci.yml --repo "$GITHUB_REPOSITORY" --ref "$BRANCH"
+
+  binaries:
+    needs: release-please
+    if: ${{ needs.release-please.outputs.release_created == 'true' }}
+    uses: ./.github/workflows/release.yml
+    with:
+      tag: ${{ needs.release-please.outputs.tag_name }}
+    permissions:
+      contents: write
+
+  webhook-image:
+    needs: release-please
+    if: ${{ needs.release-please.outputs.release_created == 'true' }}
+    uses: ./.github/workflows/build-webhook.yml
+    with:
+      tag: ${{ needs.release-please.outputs.tag_name }}
+    permissions:
+      contents: read
+      packages: write
+
+  # npm trusted publishing: npmjs.com trusts this workflow file in this repo,
+  # so no npm token exists anywhere, and each version gets provenance. It runs
+  # after `binaries` because npm/install.js downloads the tag's release assets.
+  npm:
+    needs: [release-please, binaries]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.release-please.outputs.tag_name }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      # Trusted publishing needs npm 11.5.1 or later.
+      - run: npm install -g npm@11.6.2
+      - name: Check the package version matches the tag
+        env:
+          TAG: ${{ needs.release-please.outputs.tag_name }}
+        run: test "v$(node -p 'require("./npm/package.json").version')" = "$TAG"
+      - run: npm publish --access public
+        working-directory: npm

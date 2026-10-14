@@ -31,6 +31,9 @@ var logoutCmd = &cobra.Command{
 					cmd.PrintErrf("warning: server-side revoke failed (%v) — dropping the local context anyway\n", rerr)
 				}
 			}
+			if ferr := config.ForgetIDToken(ctx); ferr != nil {
+				cmd.PrintErrf("warning: could not clear the cached ID token (%v)\n", ferr)
+			}
 		}
 
 		delete(cfg.Contexts, name)

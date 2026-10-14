@@ -31,3 +31,7 @@ snapshot:
 
 release:
   prerelease: auto
+  # release-please creates the Release first; keep its notes, and let a
+  # re-run replace assets a failed run already uploaded.
+  mode: keep-existing
+  replace_existing_artifacts: true
