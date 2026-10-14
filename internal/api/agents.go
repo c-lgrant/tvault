@@ -23,6 +23,10 @@ type Agent struct {
 	Status     string   `json:"status"` // "active" | "suspended"
 	GrantCount looseInt `json:"grantCount,omitempty"`
 	Grants     []Grant  `json:"grants,omitempty"`
+	// LastActiveAt is an RFC 3339 timestamp, or "" if the agent has never
+	// fetched a credential.
+	LastActiveAt  string   `json:"lastActiveAt,omitempty"`
+	TotalAccesses looseInt `json:"totalAccesses,omitempty"`
 }
 
 // looseInt is an int that survives sloppy wire formats. The backend routes

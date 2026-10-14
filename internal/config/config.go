@@ -100,14 +100,20 @@ func (c *Config) Save() error {
 	if err != nil {
 		return err
 	}
-	p := filepath.Join(d, "contexts.yaml")
+	return writeFileAtomic(d, "contexts.yaml", data)
+}
+
+// writeFileAtomic writes data to dir/name with mode 0600, via a temp file and
+// a rename, so a concurrent reader sees either the old file or the new one.
+func writeFileAtomic(d, name string, data []byte) error {
+	p := filepath.Join(d, name)
 
 	// Write to a unique temp file in the same directory so the rename stays
 	// atomic on one filesystem. CreateTemp is subject to umask, so chmod
 	// explicitly to guarantee 0600 for the plaintext secrets we're about to
 	// write. The deferred Remove cleans up on any failure path and is a
 	// harmless no-op once the file has been renamed away.
-	tmpFile, err := os.CreateTemp(d, "contexts-*.yaml")
+	tmpFile, err := os.CreateTemp(d, name+".tmp-*")
 	if err != nil {
 		return err
 	}

@@ -152,6 +152,7 @@ func TestResolveAdminContextRefreshesWhenStale(t *testing.T) {
 		w.Write([]byte(`{"id_token":"fresh-idt","expires_in":3600}`))
 	}))
 	defer srv.Close()
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 
 	ctx := &config.Context{Type: "admin", APIURL: srv.URL, RefreshToken: "rt"}
 	// No cached token → must refresh.
@@ -174,8 +175,11 @@ func TestResolveAdminContextRefreshesWhenStale(t *testing.T) {
 		t.Errorf("refreshCalls = %d after cached call, want 1", refreshCalls)
 	}
 
-	// Force staleness → refresh again.
+	// Force staleness in memory and on disk → refresh again.
 	ctx.SetIDToken("stale", time.Now().Add(2*time.Minute).Unix())
+	if err := config.StoreIDToken(ctx, "stale", time.Now().Add(2*time.Minute).Unix()); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := ClientFor(ctx, false); err != nil {
 		t.Fatalf("third ClientFor errored: %v", err)
 	}
