@@ -1,6 +1,6 @@
 {
   "name": "@tvault/cli",
-  "version": "0.11.1",
+  "version": "0.12.0",
   "description": "Scoped, revocable API-key access for AI agents. Your keys stay on your own webhook. This is the Token Vault CLI.",
   "keywords": [
     "tokenvault",
