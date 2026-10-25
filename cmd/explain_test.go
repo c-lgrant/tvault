@@ -18,6 +18,18 @@ func TestExplainKnownCode(t *testing.T) {
 	}
 }
 
+func TestExplainWebConsoleRequired(t *testing.T) {
+	buf := new(bytes.Buffer)
+	rootCmd.SetOut(buf)
+	rootCmd.SetArgs([]string{"explain", "WEB_CONSOLE_REQUIRED"})
+	if err := rootCmd.Execute(); err != nil {
+		t.Fatalf("explain errored: %v", err)
+	}
+	if !strings.Contains(buf.String(), "web console") {
+		t.Errorf("explain WEB_CONSOLE_REQUIRED output = %s", buf.String())
+	}
+}
+
 func TestExplainUnknownCode(t *testing.T) {
 	rootCmd.SetArgs([]string{"explain", "NOPE_NOT_REAL"})
 	err := rootCmd.Execute()
