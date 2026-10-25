@@ -20,6 +20,10 @@ var errorExplanations = map[string]struct {
 		What: "An ABAC policy attached to this entity rejected the request.",
 		Fix:  "Inspect the policy named in the error footer; the request must satisfy every rule.",
 	},
+	"WEB_CONSOLE_REQUIRED": {
+		What: "A Block CLI Reads policy protects this token, and this change could widen who can read it (a grant, a folder change, a proxy, or loosening the policy). Only the web console may do that; the CLI and API keys may not.",
+		Fix:  "Make the change in the web console. Reading the token works for agents and proxies with access; the CLI is refused by design.",
+	},
 	"GRANT_EXPIRED": {
 		What: "The agent's grant for this service has expired and was removed.",
 		Fix:  "Have an admin re-grant access: `tvault ag gr add <agent> <service>`.",
