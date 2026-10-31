@@ -2,11 +2,14 @@ package cmd
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/c-lgrant/tvault/internal/clierr"
 	"github.com/c-lgrant/tvault/internal/config"
@@ -27,6 +30,8 @@ func newStoreBackend(t *testing.T) *storeBackend {
 	b := &storeBackend{}
 	b.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case r.Method == "GET" && strings.HasPrefix(r.URL.Path, "/api/tokens/"):
+			w.Write([]byte(`{"serviceName":"svc","tokenType":"PlainText","type":"PlainText"}`))
 		case r.Method == "POST" && r.URL.Path == "/api/vault/store-ticket":
 			w.Write([]byte(`{"ticket":"tk","webhookUrl":"` + b.srv.URL + `/wh","expiresIn":60}`))
 		case r.Method == "POST" && r.URL.Path == "/wh/v1/store":
@@ -55,13 +60,14 @@ func newStoreBackend(t *testing.T) *storeBackend {
 func withStdin(t *testing.T, content string, tty bool, hidden string) {
 	t.Helper()
 	rootCmd.SetIn(strings.NewReader(content))
-	origTTY, origHidden := stdinIsTTY, readHidden
+	origTTY, origHidden, origMode := stdinIsTTY, readHidden, stdinMode
+	stdinMode = func() os.FileMode { return 0 } // regular file: read to EOF
 	stdinIsTTY = func() bool { return tty }
 	readHidden = func(string) (string, error) { return hidden, nil }
 	resetFlags(t)
 	t.Cleanup(func() {
 		rootCmd.SetIn(nil)
-		stdinIsTTY, readHidden = origTTY, origHidden
+		stdinIsTTY, readHidden, stdinMode = origTTY, origHidden, origMode
 		resetFlags(t)
 	})
 }
@@ -183,5 +189,70 @@ func TestSetValue_Modes(t *testing.T) {
 				t.Errorf("stored %q, want %q", b.got, c.want)
 			}
 		})
+	}
+}
+
+// An open pipe that never sends anything (docker exec -i, harnesses) must not
+// hang the command: without --value-stdin it counts as "no value".
+func withSilentPipe(t *testing.T) {
+	t.Helper()
+	pr, pw := io.Pipe()
+	t.Cleanup(func() { pw.Close() })
+	withStdin(t, "", false, "")
+	rootCmd.SetIn(pr)
+	stdinMode = func() os.FileMode { return os.ModeNamedPipe }
+	orig := stdinFirstByteWait
+	stdinFirstByteWait = 50 * time.Millisecond
+	t.Cleanup(func() { stdinFirstByteWait = orig })
+}
+
+func TestAdd_SilentOpenPipeCreatesPlaceholderWithoutHanging(t *testing.T) {
+	b := newStoreBackend(t)
+	withSilentPipe(t)
+	if _, _, err := runCLI(t, "add", "svc"); err != nil {
+		t.Fatal(err)
+	}
+	if len(b.got) != 0 || b.tokenPOST != 1 {
+		t.Errorf("want a placeholder, got stored=%q placeholders=%d", b.got, b.tokenPOST)
+	}
+}
+
+func TestSet_SilentOpenPipeErrorsWithHint(t *testing.T) {
+	b := newStoreBackend(t)
+	withSilentPipe(t)
+	_, _, err := runCLI(t, "set", "svc")
+	var ce *clierr.CLIError
+	if err == nil || !errors.As(err, &ce) || ce.Kind != clierr.KindUser || !strings.Contains(ce.Hint, "--value-stdin") {
+		t.Fatalf("err = %v, want a user error hinting --value-stdin", err)
+	}
+	if len(b.got) != 0 {
+		t.Errorf("stored %q", b.got)
+	}
+}
+
+func TestSet_PipeWithDataIsRead(t *testing.T) {
+	b := newStoreBackend(t)
+	withStdin(t, "piped\n", false, "")
+	stdinMode = func() os.FileMode { return os.ModeNamedPipe }
+	if _, _, err := runCLI(t, "set", "svc"); err != nil {
+		t.Fatal(err)
+	}
+	if len(b.got) != 1 || b.got[0] != "piped" {
+		t.Errorf("stored %q", b.got)
+	}
+}
+
+func TestSet_ExplicitValueStdinWaitsOnSilentPipeNoTimeout(t *testing.T) {
+	b := newStoreBackend(t)
+	pr, pw := io.Pipe()
+	withStdin(t, "", false, "")
+	rootCmd.SetIn(pr)
+	stdinMode = func() os.FileMode { return os.ModeNamedPipe }
+	go func() { time.Sleep(150 * time.Millisecond); pw.Write([]byte("late\n")); pw.Close() }()
+	if _, _, err := runCLI(t, "set", "svc", "--value-stdin"); err != nil {
+		t.Fatal(err)
+	}
+	if len(b.got) != 1 || b.got[0] != "late" {
+		t.Errorf("stored %q", b.got)
 	}
 }
