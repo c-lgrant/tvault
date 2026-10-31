@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"errors"
 	"fmt"
+	neturl "net/url"
 	"os"
 	"os/exec"
 	"strings"
@@ -30,9 +31,9 @@ var (
 	stderrIsTTY = func() bool { return term.IsTerminal(int(os.Stderr.Fd())) }
 	// loginFn is the browser login.
 	loginFn = auth.Login
-	// claudeGet runs `claude mcp get tokenvault` and returns its output.
-	claudeGet = func() (string, error) {
-		out, err := exec.Command("claude", "mcp", "get", "tokenvault").CombinedOutput()
+	// claudeGet runs `claude mcp get <name>` and returns its output.
+	claudeGet = func(name string) (string, error) {
+		out, err := exec.Command("claude", "mcp", "get", name).CombinedOutput()
 		return string(out), err
 	}
 	claudeRun = func(args ...string) error {
@@ -175,11 +176,11 @@ func ensureAgent(cmd *cobra.Command, cc *cmdContext, ref, command string, yes bo
 	return resolved{ID: res.ID, Name: ref}, nil
 }
 
-func grantServices(cmd *cobra.Command, cc *cmdContext, agent resolved, services []string, command string) error {
-	if len(services) == 0 {
+func grantSpecs(cmd *cobra.Command, cc *cmdContext, agent resolved, specs []api.GrantSpec, command string) error {
+	if len(specs) == 0 {
 		return nil
 	}
-	res := cc.Client.AddGrants(agent.ID, services)
+	res := cc.Client.AddGrantSpecs(agent.ID, specs)
 	if err := res.Err(); err != nil {
 		kind := clierr.KindUser
 		for _, e := range res.Failed {
@@ -197,15 +198,25 @@ func grantServices(cmd *cobra.Command, cc *cmdContext, agent resolved, services 
 }
 
 var connectCmd = &cobra.Command{
-	Use:   "connect <agent> [<service>...]",
+	Use:   "connect <agent> [<service>[=<uses>[:<server>,...]]...]",
 	Short: "Grant services to an agent (creating it if needed) and print how to connect Claude Code",
 	Long: `Grants existing credentials to an agent, creating the agent first if it does
 not exist, then registers Token Vault as an MCP server in Claude Code.
 
+A service can carry what the grant is for, as in ` + "`tvault grant`" + `:
+github=tools, github=value,tools:github (see ` + "`tvault grant --help`" + `).
+
+With --server <service>/<server>, the one credential MCP server (see
+` + "`tvault mcp-servers`" + `) is added to Claude Code as its own entry instead of the
+general Token Vault one: ` + "`claude mcp add --transport http --scope user <name> <url>`" + `
+with the per-server URL <api>/api/mcp/<service>/<server>. The entry name
+defaults to tv-<service>-<server>; override it with --name.
+
 The credential values never pass through Token Vault; this only creates the
 agent and its grants. In Claude Code, run /mcp, sign in, and pick the agent.`,
 	Example: `  tvault connect my-agent github stripe
-  tvault connect my-agent github --yes --no-claude`,
+  tvault connect my-agent github --yes --no-claude
+  tvault connect my-agent github=tools:github --server github/github`,
 	Args:              cobra.MinimumNArgs(1),
 	ValidArgsFunction: completeAgentThenServices,
 	RunE:              runConnect,
@@ -215,6 +226,24 @@ func runConnect(cmd *cobra.Command, args []string) error {
 	yes, _ := cmd.Flags().GetBool("yes")
 	noClaude, _ := cmd.Flags().GetBool("no-claude")
 	printOnly, _ := cmd.Flags().GetBool("print")
+	serverRef, _ := cmd.Flags().GetString("server")
+	entryName, _ := cmd.Flags().GetString("name")
+
+	var svc, srv string
+	if serverRef != "" {
+		var ok bool
+		if svc, srv, ok = splitServerRef(serverRef); !ok {
+			return &clierr.CLIError{Kind: clierr.KindUser, Command: "connect",
+				Message: fmt.Sprintf("invalid --server %q: expected <service>/<server>", safeText(serverRef)),
+				Hint:    "list a credential's servers with `tvault mcp-servers ls <service>`"}
+		}
+	} else if entryName != "" {
+		return &clierr.CLIError{Kind: clierr.KindUser, Command: "connect", Message: "--name only applies with --server"}
+	}
+	specs, err := parseGrantSpecs(args[1:], "connect")
+	if err != nil {
+		return err
+	}
 
 	cc, err := resolve(cmd)
 	if err != nil {
@@ -224,11 +253,23 @@ func runConnect(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return enrich(cmd, cc, err)
 	}
-	if err := grantServices(cmd, cc, agent, args[1:], "connect"); err != nil {
+	if err := grantSpecs(cmd, cc, agent, specs, "connect"); err != nil {
 		return enrich(cmd, cc, err)
 	}
 
-	if !noClaude {
+	if serverRef != "" {
+		if !hasToolsGrant(specs, svc, srv) {
+			cmd.PrintErrf("note: %s needs a tools grant on %s to call this server: tvault grant %s %s=tools:%s\n",
+				agent.label(), safeText(svc), safeText(args[0]), safeText(svc), safeText(srv))
+		}
+		if !noClaude {
+			if entryName == "" {
+				entryName = "tv-" + svc + "-" + srv
+			}
+			url := strings.TrimRight(cc.Ctx.APIURL, "/") + "/api/mcp/" + neturl.PathEscape(svc) + "/" + neturl.PathEscape(srv)
+			registerEntryWithClaude(cmd, cc, printOnly, entryName, url)
+		}
+	} else if !noClaude {
 		registerWithClaude(cmd, cc, printOnly)
 	}
 	name := agent.Name
@@ -243,28 +284,71 @@ func runConnect(cmd *cobra.Command, args []string) error {
 // it is not registered yet. Problems here never fail the command: the agent
 // and grants already exist, so the manual command is printed instead.
 func registerWithClaude(cmd *cobra.Command, cc *cmdContext, printOnly bool) {
-	mcpURL := strings.TrimRight(cc.Ctx.APIURL, "/") + "/api/agents/mcp"
-	add := []string{"mcp", "add", "--transport", "http", "--scope", "user", "tokenvault", mcpURL}
+	registerEntryWithClaude(cmd, cc, printOnly, "tokenvault", strings.TrimRight(cc.Ctx.APIURL, "/")+"/api/agents/mcp")
+}
+
+// splitServerRef parses a --server value, <service>/<server>.
+func splitServerRef(ref string) (svc, srv string, ok bool) {
+	svc, srv, ok = strings.Cut(ref, "/")
+	if !ok || svc == "" || srv == "" || strings.Contains(srv, "/") {
+		return "", "", false
+	}
+	return svc, srv, true
+}
+
+// hasToolsGrant reports whether specs already give a tools grant on svc that
+// covers server (no server list = every server).
+func hasToolsGrant(specs []api.GrantSpec, svc, server string) bool {
+	for _, s := range specs {
+		if s.Service != svc {
+			continue
+		}
+		tools := false
+		for _, u := range s.Uses {
+			tools = tools || u == "tools"
+		}
+		if !tools {
+			continue
+		}
+		if len(s.Servers) == 0 {
+			return true
+		}
+		for _, n := range s.Servers {
+			if n == server {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// registerEntryWithClaude adds one HTTP MCP server entry called name at mcpURL.
+func registerEntryWithClaude(cmd *cobra.Command, cc *cmdContext, printOnly bool, name, mcpURL string) {
+	add := []string{"mcp", "add", "--transport", "http", "--scope", "user", name, mcpURL}
 	line := "claude " + strings.Join(add, " ")
+	what := "Token Vault"
+	if name != "tokenvault" {
+		what = "the " + name + " MCP server"
+	}
 	if printOnly || cc.Client.DryRun {
-		cmd.PrintErrf("To register Token Vault with Claude Code, run:\n  %s\n", line)
+		cmd.PrintErrf("To register %s with Claude Code, run:\n  %s\n", what, line)
 		return
 	}
 	if _, err := claudeLookPath(); err != nil {
-		cmd.PrintErrf("Claude Code (`claude`) is not on PATH. To register Token Vault later, run:\n  %s\n", line)
+		cmd.PrintErrf("Claude Code (`claude`) is not on PATH. To register %s later, run:\n  %s\n", what, line)
 		return
 	}
-	if out, err := claudeGet(); err == nil {
+	if out, err := claudeGet(name); err == nil {
 		if strings.Contains(out, mcpURL) {
-			cmd.PrintErrln("Claude Code already has a \"tokenvault\" MCP server for this control plane.")
+			cmd.PrintErrf("Claude Code already has a %q MCP server for this control plane.\n", name)
 			return
 		}
 		// Registered, but pointing somewhere else (another environment).
 		// Replacing it is the user's call, so only print the commands.
-		cmd.PrintErrf("Claude Code already has a \"tokenvault\" MCP server, but not for %s.\nTo switch it, run:\n  claude mcp remove tokenvault\n  %s\n", mcpURL, line)
+		cmd.PrintErrf("Claude Code already has a %q MCP server, but not for %s.\nTo switch it, run:\n  claude mcp remove %s\n  %s\n", name, mcpURL, name, line)
 		return
 	}
-	cmd.PrintErrf("Registering Token Vault with Claude Code:\n  %s\n", line)
+	cmd.PrintErrf("Registering %s with Claude Code:\n  %s\n", what, line)
 	if err := claudeRun(add...); err != nil {
 		cmd.PrintErrf("That command failed (%v). Run it yourself to finish registering.\n", err)
 	}
@@ -274,5 +358,7 @@ func init() {
 	connectCmd.Flags().Bool("yes", false, "create the agent without asking if it does not exist")
 	connectCmd.Flags().Bool("no-claude", false, "do not look for or touch Claude Code")
 	connectCmd.Flags().Bool("print", false, "only print the `claude mcp add` command; run nothing")
+	connectCmd.Flags().String("server", "", "add one credential MCP server (<service>/<server>) to Claude Code as its own entry, instead of the general Token Vault one")
+	connectCmd.Flags().String("name", "", "with --server: the Claude Code entry name (default tv-<service>-<server>)")
 	rootCmd.AddCommand(connectCmd)
 }

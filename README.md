@@ -149,11 +149,54 @@ metadata goes to Token Vault, and the value is POSTed straight to your webhook.
 | Command | Purpose |
 |---------|---------|
 | `gr list <agent>` (`ls`) | List an agent's grants. |
-| `gr add <agent> <service>...` | Grant services to an agent. |
+| `gr add <agent> <service>[=<uses>[:<server>,...]]...` | Grant services to an agent. |
 | `gr rm <agent> <service>...` | Revoke grants from an agent. |
 
 The top-level `tvault grant <agent> <service>...` is a flat-verb shortcut for
 `gr add`.
+
+A plain `<service>` grants the value. Append `=<uses>` to say what the grant is
+for: `value` (the agent may read the credential) and/or `tools` (the agent may
+call the credential's [MCP servers](#mcp-servers--tvault-mcp-servers-mcp)
+through Token Vault and is never handed the value). After a colon, name the
+servers a `tools` grant covers; without it, every server of the credential.
+
+```bash
+tvault grant claude-code github            # value (today's meaning)
+tvault grant claude-code github=tools      # tools only, every server
+tvault grant claude-code github=value,tools:github
+```
+
+### MCP servers — `tvault mcp-servers` (`mcp`)
+
+A credential can have up to five MCP servers attached. An agent granted `tools`
+on it calls them through Token Vault; your webhook puts the credential into the
+upstream request, so neither the agent nor Token Vault holds the value. The CLI
+sends only the server's name, URL and header *templates*.
+
+| Command | Purpose |
+|---------|---------|
+| `mcp-servers ls <service>` | List the credential's servers and the endpoint each is served at (`--format json` for the full shape). |
+| `mcp-servers add <service> --preset <id>` | Attach a preset server (`github`, `linear`, `sentry`; `name` defaults to the preset id). |
+| `mcp-servers add <service> --name <n> --url <u> --header 'Name: value'...` | Attach your own server. `--header` is repeatable. |
+| `mcp-servers rm <service> <name>` | Detach a server (`--force` skips the prompt). Grants naming it are not edited. |
+| `mcp-servers templates` | List the presets. |
+
+`add` and `rm` read the current list and write the whole list back (the API is a
+full replace). Credentials go into a header with the literal text `${TOKEN}`;
+**single-quote it** so your shell does not expand it, and never put a real
+secret in a header value:
+
+```bash
+tvault mcp-servers add github --preset github
+tvault mcp-servers add github --name docs --url https://mcp.example.com/mcp \
+    --header 'Authorization: Bearer ${TOKEN}' --header 'Accept: application/json, text/event-stream'
+```
+
+Adding a server (or changing a URL or headers) needs a recent sign-in. In an
+interactive admin context the CLI opens the browser login and retries once. A
+key or agent context sees servers redacted (URL origin only, no headers), so it
+may add to an empty list but will not rewrite an existing one.
 
 ### Vault — `tvault vault`
 
@@ -198,8 +241,8 @@ type `tokens` / `context` / `agents grants` for every operation.
 |----------|------------|
 | `tvault ls` | `tvault tokens list` |
 | `tvault get <svc>` | `tvault tokens get <svc>` |
-| `tvault add <svc>` | `tvault tokens create --service <svc>` (defaults `--type PlainText`). `--for <agent>` also grants it to that agent, creating the agent first if missing (asks `Create agent "<name>"? [y/N]` on a terminal; `--yes` skips, and a non-interactive shell needs it). |
-| `tvault connect <agent> [<svc>...]` | Grant existing credentials to an agent (created if missing; `--yes`), then register Token Vault in Claude Code if `claude` is on PATH and has no `tokenvault` MCP server (`claude mcp add --transport http --scope user tokenvault <api>/api/agents/mcp`; a registration for a different control plane is left alone and the switch commands are printed). `--print` only prints that command; `--no-claude` skips it. Finish in Claude Code: `/mcp`, sign in, pick the agent. |
+| `tvault add <svc>` | `tvault tokens create --service <svc>` (defaults `--type PlainText`). `--for <agent>` also grants it to that agent, creating the agent first if missing (asks `Create agent "<name>"? [y/N]` on a terminal; `--yes` skips, and a non-interactive shell needs it). `--for <agent>=<uses>[:<server>,...]` sets what the grant is for (`--for my-agent=tools`). `--mcp <preset>` then attaches that MCP server preset; if that fails the value stays stored and the retry command is printed. |
+| `tvault connect <agent> [<svc>[=<uses>]...]` | Grant existing credentials to an agent (created if missing; `--yes`), then register Token Vault in Claude Code if `claude` is on PATH and has no `tokenvault` MCP server (`claude mcp add --transport http --scope user tokenvault <api>/api/agents/mcp`; a registration for a different control plane is left alone and the switch commands are printed). `--print` only prints that command; `--no-claude` skips it. `--server <svc>/<server>` registers that one credential MCP server instead, as its own entry (`claude mcp add --transport http --scope user tv-<svc>-<server> <api>/api/mcp/<svc>/<server>`; `--name` renames the entry), and notes if the agent still needs `tvault grant <agent> <svc>=tools:<server>`. Finish in Claude Code: `/mcp`, sign in, pick the agent. |
 | `tvault set <svc>` | `tvault tokens set <svc>` |
 | `tvault show <svc>` | `tvault tokens show <svc>` |
 | `tvault rm <svc>...` | `tvault tokens rm <svc>...` |

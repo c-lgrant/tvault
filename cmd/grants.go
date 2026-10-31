@@ -47,11 +47,28 @@ var grantsListCmd = &cobra.Command{
 }
 
 var grantsAddCmd = &cobra.Command{
-	Use:               "add <agent> <service> [<service>...]",
-	Short:             "Grant an agent access to one or more services",
+	Use:   "add <agent> <service>[=<uses>[:<server>,...]] [...]",
+	Short: "Grant an agent access to one or more services",
+	Long: `Grants an agent access to credentials. A plain <service> grants the value
+(today's meaning). Append =<uses> to choose what the grant may be used for:
+
+  value   the agent may read the credential value
+  tools   the agent may call the credential's MCP servers through Token Vault
+          and is never handed the value (see ` + "`tvault mcp-servers`" + `)
+
+<uses> is a comma list. After a colon, name the MCP servers a tools grant covers;
+without it, every server of the credential (including ones added later).`,
+	Example: `  tvault grant claude-code github            # value grant
+  tvault grant claude-code github=tools      # tools only, all servers
+  tvault grant claude-code github=value,tools:github
+  tvault grant claude-code github=tools:github linear=tools`,
 	Args:              cobra.MinimumNArgs(2),
 	ValidArgsFunction: completeAgentThenServices,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		specs, err := parseGrantSpecs(args[1:], "agents grants add")
+		if err != nil {
+			return err
+		}
 		cc, err := resolve(cmd)
 		if err != nil {
 			return err
@@ -60,7 +77,7 @@ var grantsAddCmd = &cobra.Command{
 		if err != nil {
 			return enrich(cmd, cc, err)
 		}
-		res := cc.Client.AddGrants(rs[0].ID, args[1:])
+		res := cc.Client.AddGrantSpecs(rs[0].ID, specs)
 		if err := res.Err(); err != nil {
 			if len(res.OK) > 0 {
 				cmd.PrintErrf("Granted %d service(s) to %s before the failure.\n", len(res.OK), rs[0].label())

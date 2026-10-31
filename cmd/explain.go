@@ -118,7 +118,43 @@ var errorExplanations = map[string]struct {
 	},
 	"REAUTH_REQUIRED": {
 		What: "Creating a key as a human needs a fresh browser sign-in (exit code 2).",
-		Fix:  "Run `tvault login` again, then retry the command. (`agents create`, `add --for` and `connect` do this inline in an interactive admin context.)",
+		Fix:  "Run `tvault login` again, then retry the command. (`agents create`, `add --for`, `mcp-servers add` and `connect` do this inline in an interactive admin context.)",
+	},
+	"MCP_SERVER_LITERAL_CREDENTIAL": {
+		What: "A header whose name looks like a credential (Authorization, Cookie, X-Api-Key, anything with key/token/secret/auth) holds a literal value. Token Vault never stores a credential, so such a header may hold only the placeholder ${TOKEN}.",
+		Fix:  "Use --header 'Authorization: Bearer ${TOKEN}' (single quotes, so your shell does not expand it). Your webhook substitutes the credential.",
+	},
+	"MCP_SERVER_HEADERS_REQUIRED": {
+		What: "None of the server's headers contains ${TOKEN}, so the credential would not be sent to the upstream.",
+		Fix:  "Add a header such as --header 'Authorization: Bearer ${TOKEN}', or start from a preset: `tvault mcp-servers add <service> --preset <id>`.",
+	},
+	"SERVICE_NOT_HOSTABLE": {
+		What: "The credential's name is part of its MCP server URL, so it must be made of letters, digits and . _ ~ - and start with a letter or digit.",
+		Fix:  "Rename the credential (store it under a plain name), then attach the server. Removing servers is always allowed.",
+	},
+	"MCP_SERVERS_CAP": {
+		What: "A credential can have at most five MCP servers.",
+		Fix:  "Remove one first: `tvault mcp-servers rm <service> <name>`.",
+	},
+	"INVALID_GRANT_USES": {
+		What: "A grant's uses must be \"value\" and/or \"tools\", and tools needs a credential with at least one MCP server.",
+		Fix:  "Attach a server first (`tvault mcp-servers add <service> --preset <id>`), then `tvault grant <agent> <service>=tools`.",
+	},
+	"INVALID_GRANT_SERVERS": {
+		What: "A grant names MCP servers that the credential does not have, or names servers without the tools use.",
+		Fix:  "Check the names with `tvault mcp-servers ls <service>`; the syntax is <service>=tools:<server>,<server>.",
+	},
+	"GRANT_USES_EXCEEDED": {
+		What: "A key or agent can only pass on a grant no wider than its own, and the uses requested are not covered by the grant it holds (a value grant cannot be passed on as tools).",
+		Fix:  "Request only uses the acting principal holds, or have a person make the grant.",
+	},
+	"GRANT_SERVERS_EXCEEDED": {
+		What: "A key or agent can only pass on MCP servers its own grant covers, and none of the requested servers are covered.",
+		Fix:  "Name servers within the acting principal's own grant, or have a person make the grant.",
+	},
+	"GRANT_TOOLS_ONLY": {
+		What: "The acting key or agent holds only a tools grant on this credential, which does not allow reading the value or changing its MCP servers.",
+		Fix:  "Have a person make the change, or give the principal a value grant.",
 	},
 	"WEBHOOK_AUTH_FAILED": {
 		What: "The webhook rejected Token Vault's HMAC authentication.",
