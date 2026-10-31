@@ -5,17 +5,15 @@
 
 ### Features
 
-* **explain:** add WEB_CONSOLE_REQUIRED ([11bd15a](https://github.com/c-lgrant/tvault/commit/11bd15a8ba40bbe27df1ece025ab9f1241f319c6))
-* **explain:** add WEB_CONSOLE_REQUIRED ([496fd92](https://github.com/c-lgrant/tvault/commit/496fd929bb562408e2656c4f3ec1c4f0add5e2e7))
+* **explain:** add `WEB_CONSOLE_REQUIRED` ([496fd92](https://github.com/c-lgrant/tvault/commit/496fd929bb562408e2656c4f3ec1c4f0add5e2e7))
 
 
 ### Bug Fixes
 
-* **cli:** keep the token type on set; dry-run and webhook 401 on the ticket path ([#37](https://github.com/c-lgrant/tvault/issues/37)) ([df6e00d](https://github.com/c-lgrant/tvault/commit/df6e00d94023a7e31f81141dbd4c7b7c40adb1e5))
-* **cli:** send credential values to the webhook only ([d02541e](https://github.com/c-lgrant/tvault/commit/d02541ea5aeb91bbff5db9aaf571a1f4be6c63bb))
-* **cli:** send credential values to the webhook only, never to Token Vault ([8e17aee](https://github.com/c-lgrant/tvault/commit/8e17aee1a014a6382be418c00c085b900f1ce8cf))
-* **explain:** describe WEB_CONSOLE_REQUIRED for any access channel policy ([bad7994](https://github.com/c-lgrant/tvault/commit/bad79949a29493c6cfd20c24c57c8d883547ac22))
-* **explain:** describe WEB_CONSOLE_REQUIRED for any access channel policy ([bb90264](https://github.com/c-lgrant/tvault/commit/bb9026472ed8a7996cb08a4299a3f07a5b3cfe08))
+* **cli:** `tvault add` and `tvault set` send credential values to your webhook only, with a store ticket. Before, they sent the value to Token Vault first and used the ticket only after Token Vault refused it. Upgrade to stop that. ([8e17aee](https://github.com/c-lgrant/tvault/commit/8e17aee1a014a6382be418c00c085b900f1ce8cf))
+* **cli:** `tvault set` keeps the token's type; `--dry-run` works on the ticket path; a refused store ticket exits as a server error, not a login error ([#37](https://github.com/c-lgrant/tvault/issues/37)) ([df6e00d](https://github.com/c-lgrant/tvault/commit/df6e00d94023a7e31f81141dbd4c7b7c40adb1e5))
+* **explain:** describe `WEB_CONSOLE_REQUIRED` for any access channel policy ([bb90264](https://github.com/c-lgrant/tvault/commit/bb9026472ed8a7996cb08a4299a3f07a5b3cfe08))
+* **deps:** webhook `wrangler` ^4.156.0 and `@hono/node-server` ^2.1.5, clearing the open undici and serveStatic advisories ([#36](https://github.com/c-lgrant/tvault/issues/36)) ([eaff027](https://github.com/c-lgrant/tvault/commit/eaff027))
 
 ## [0.12.0](https://github.com/c-lgrant/tvault/compare/v0.11.1...v0.12.0) (2026-10-14)
 
