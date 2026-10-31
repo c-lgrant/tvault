@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"io"
@@ -123,38 +124,29 @@ func TestUpdateTokenMetadata(t *testing.T) {
 	}
 }
 
+// TestCreateToken: a create with a value goes ticket-first. The value goes
+// only to the webhook; TV sees one store-ticket request and never /api/tokens.
 func TestCreateToken(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != "POST" || r.URL.Path != "/api/tokens" {
-			t.Errorf("got %s %s", r.Method, r.URL.Path)
-		}
-		raw, _ := io.ReadAll(r.Body)
-		var body map[string]any
-		json.Unmarshal(raw, &body)
-		// Backend POST shape: {serviceName, tokenData:{accessToken,tokenType}}.
-		if body["serviceName"] != "github" {
-			t.Errorf("serviceName = %v", body["serviceName"])
-		}
-		td, ok := body["tokenData"].(map[string]any)
-		if !ok {
-			t.Fatalf("tokenData not an object: %v", body["tokenData"])
-		}
-		if td["accessToken"] != "ghp_x" {
-			t.Errorf("tokenData.accessToken = %v", td["accessToken"])
-		}
-		w.WriteHeader(200)
-	}))
-	defer srv.Close()
-	client := &Client{BaseURL: srv.URL, HTTP: srv.Client()}
-	err := client.CreateToken(CreateTokenRequest{ServiceName: "github", Type: "pat", Credential: "ghp_x"})
+	h := newTicketHarness(t, "ghp_x")
+	err := h.client().CreateToken(CreateTokenRequest{ServiceName: "github", Type: "PlainText", Credential: "ghp_x"})
 	if err != nil {
 		t.Fatalf("CreateToken errored: %v", err)
+	}
+	if h.stored["service"] != "github" {
+		t.Errorf("service = %v", h.stored["service"])
+	}
+	td := h.tokenData(t)
+	if td["accessToken"] != "ghp_x" || td["tokenType"] != "PlainText" {
+		t.Errorf("tokenData = %v", td)
+	}
+	if h.tvHits["/api/tokens"] != 0 || h.tvHits["/api/vault/store-ticket"] != 1 {
+		t.Errorf("tv hits = %+v, want only one store-ticket", h.tvHits)
 	}
 }
 
 // TestCreateTokenTypeSpecificField verifies that CreateToken routes the
-// credential into the backend's type-specific tokenData field rather than
-// always using accessToken (see credentialFieldForType).
+// credential into the type-specific tokenData field rather than always
+// using accessToken (see credentialFieldForType), on the webhook.
 func TestCreateTokenTypeSpecificField(t *testing.T) {
 	cases := []struct {
 		typ   string
@@ -170,30 +162,20 @@ func TestCreateTokenTypeSpecificField(t *testing.T) {
 	for _, tc := range cases {
 		tc := tc
 		t.Run(tc.typ, func(t *testing.T) {
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				raw, _ := io.ReadAll(r.Body)
-				var body map[string]any
-				json.Unmarshal(raw, &body)
-				td, ok := body["tokenData"].(map[string]any)
-				if !ok {
-					t.Fatalf("tokenData not an object: %v", body["tokenData"])
-				}
-				if td[tc.field] != "the-secret" {
-					t.Errorf("tokenData.%s = %v, want the-secret", tc.field, td[tc.field])
-				}
-				// The credential must not leak into accessToken for non-bearer types.
-				if tc.field != "accessToken" && td["accessToken"] != nil {
-					t.Errorf("credential leaked into accessToken: %v", td["accessToken"])
-				}
-				w.WriteHeader(200)
-			}))
-			defer srv.Close()
-			client := &Client{BaseURL: srv.URL, HTTP: srv.Client()}
-			err := client.CreateToken(CreateTokenRequest{
+			h := newTicketHarness(t, "the-secret")
+			err := h.client().CreateToken(CreateTokenRequest{
 				ServiceName: "svc", Type: tc.typ, Credential: "the-secret",
 			})
 			if err != nil {
 				t.Fatalf("CreateToken errored: %v", err)
+			}
+			td := h.tokenData(t)
+			if td[tc.field] != "the-secret" {
+				t.Errorf("tokenData.%s = %v, want the-secret", tc.field, td[tc.field])
+			}
+			// The credential must not leak into accessToken for non-bearer types.
+			if tc.field != "accessToken" && td["accessToken"] != nil {
+				t.Errorf("credential leaked into accessToken: %v", td["accessToken"])
 			}
 		})
 	}
@@ -619,124 +601,102 @@ func TestGetTokenValue_AgentEmpty(t *testing.T) {
 	}
 }
 
-// TestIsWebhookModeReject pins the message pattern. Backend wording lives in
-// backend/routes/tokens.py:495 — if either side changes, both should change.
-func TestIsWebhookModeReject(t *testing.T) {
-	cases := []struct {
-		err  error
-		want bool
-	}{
-		{nil, false},
-		{errors.New("Webhook mode: plaintext secrets must not transit Token Vault. Use store-ticket."), true},
-		{&clierr.CLIError{Message: "Webhook mode: plaintext secrets must not transit Token Vault."}, true},
-		{errors.New("vault is locked"), false},
-		{errors.New("Webhook mode only"), false},
-		{errors.New("must not transit"), false},
-	}
-	for i, tc := range cases {
-		if got := isWebhookModeReject(tc.err); got != tc.want {
-			t.Errorf("case %d: got %v want %v (err=%v)", i, got, tc.want, tc.err)
-		}
-	}
+// ticketHarness is a fake TV plus a fake webhook. TV only issues store
+// tickets and fails the test if any request body carries the secret; the
+// webhook records the token document it was sent.
+type ticketHarness struct {
+	tv, webhook *httptest.Server
+	tvHits      map[string]int
+	stored      map[string]any // the last /v1/store body
+	existingTyp string         // tokenType GET /api/tokens/{svc} reports
 }
 
-// TestSetTokenValue_AutoRouteWebhook verifies that when the backend rejects
-// the plaintext POST in webhook mode, SetTokenValue transparently retries via
-// the store-ticket flow — the caller doesn't have to know about vault mode.
-func TestSetTokenValue_AutoRouteWebhook(t *testing.T) {
-	webhookHits := 0
-	webhook := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		webhookHits++
-		raw, _ := io.ReadAll(r.Body)
-		var body map[string]any
-		json.Unmarshal(raw, &body)
-		td, _ := body["tokenData"].(map[string]any)
-		if td["accessToken"] != "rotated-v2" {
-			t.Errorf("webhook accessToken = %v, want rotated-v2", td["accessToken"])
+func newTicketHarness(t *testing.T, secret string) *ticketHarness {
+	t.Helper()
+	h := &ticketHarness{tvHits: map[string]int{}}
+	h.webhook = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/store" {
+			t.Errorf("unexpected webhook path %s", r.URL.Path)
 		}
+		raw, _ := io.ReadAll(r.Body)
+		json.Unmarshal(raw, &h.stored)
 		w.WriteHeader(200)
 	}))
-	defer webhook.Close()
-
-	tvHits := map[string]int{}
-	tv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		tvHits[r.URL.Path]++
-		switch r.URL.Path {
-		case "/api/tokens":
-			// Plaintext rejected in webhook mode.
-			w.WriteHeader(400)
-			w.Write([]byte(`{"detail":"Webhook mode: plaintext secrets must not transit Token Vault. Use store-ticket."}`))
-		case "/api/vault/store-ticket":
-			w.Write([]byte(`{"ticket":"t","webhookUrl":"` + webhook.URL + `","expiresIn":60}`))
-		default:
+	h.tv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h.tvHits[r.URL.Path]++
+		raw, _ := io.ReadAll(r.Body)
+		if strings.Contains(string(raw), secret) {
+			t.Errorf("PLAINTEXT SENT TO TV: %s %s body=%s", r.Method, r.URL.Path, raw)
+		}
+		if r.Method == "GET" && strings.HasPrefix(r.URL.Path, "/api/tokens/") {
+			w.Write([]byte(`{"serviceName":"svc","tokenType":"` + h.existingTyp + `"}`))
+			return
+		}
+		if r.URL.Path != "/api/vault/store-ticket" {
 			t.Errorf("unexpected TV path %s", r.URL.Path)
 		}
+		w.Write([]byte(`{"ticket":"t","webhookUrl":"` + h.webhook.URL + `","expiresIn":60}`))
 	}))
-	defer tv.Close()
+	t.Cleanup(func() { h.tv.Close(); h.webhook.Close() })
+	return h
+}
 
-	client := &Client{BaseURL: tv.URL, HTTP: tv.Client()}
-	if err := client.SetTokenValue("svc", "rotated-v2"); err != nil {
+func (h *ticketHarness) client() *Client {
+	return &Client{BaseURL: h.tv.URL, HTTP: h.tv.Client()}
+}
+
+func (h *ticketHarness) tokenData(t *testing.T) map[string]any {
+	t.Helper()
+	td, ok := h.stored["tokenData"].(map[string]any)
+	if !ok {
+		t.Fatalf("webhook got no tokenData: %v", h.stored)
+	}
+	return td
+}
+
+// TestSetTokenValue_TicketFirst: a rotate sends the new value only to the
+// webhook. TV sees one store-ticket request and never /api/tokens.
+func TestSetTokenValue_TicketFirst(t *testing.T) {
+	h := newTicketHarness(t, "rotated-v2")
+	if err := h.client().SetTokenValue("svc", "rotated-v2"); err != nil {
 		t.Fatalf("SetTokenValue errored: %v", err)
 	}
-	if webhookHits != 1 {
-		t.Errorf("webhook hits = %d, want 1", webhookHits)
+	if got := h.tokenData(t)["accessToken"]; got != "rotated-v2" {
+		t.Errorf("webhook accessToken = %v, want rotated-v2", got)
 	}
-	if tvHits["/api/tokens"] != 1 || tvHits["/api/vault/store-ticket"] != 1 {
-		t.Errorf("tv hits = %+v", tvHits)
+	if h.tvHits["/api/tokens"] != 0 || h.tvHits["/api/vault/store-ticket"] != 1 {
+		t.Errorf("tv hits = %+v, want only one store-ticket", h.tvHits)
 	}
 }
 
-// TestCreateToken_AutoRouteWebhook verifies the same auto-retry for
-// CreateToken when a credential is provided.
-func TestCreateToken_AutoRouteWebhook(t *testing.T) {
-	webhookHits := 0
-	webhook := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		webhookHits++
-		raw, _ := io.ReadAll(r.Body)
-		var body map[string]any
-		json.Unmarshal(raw, &body)
-		if body["service"] != "stripe" {
-			t.Errorf("service = %v", body["service"])
-		}
-		td, _ := body["tokenData"].(map[string]any)
-		if td["accessToken"] != "sk_live_abc" {
-			t.Errorf("webhook accessToken = %v", td["accessToken"])
-		}
-		if td["tokenType"] != "PlainText" {
-			t.Errorf("tokenType = %v", td["tokenType"])
-		}
-		w.WriteHeader(200)
-	}))
-	defer webhook.Close()
-
-	tv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/api/tokens":
-			raw, _ := io.ReadAll(r.Body)
-			if strings.Contains(string(raw), "sk_live_abc") {
-				// Plaintext rejected — but TV in fact saw it. That's the bug we're guarding.
-			}
-			w.WriteHeader(400)
-			w.Write([]byte(`{"detail":"Webhook mode: plaintext secrets must not transit Token Vault. Use store-ticket."}`))
-		case "/api/vault/store-ticket":
-			w.Write([]byte(`{"ticket":"t","webhookUrl":"` + webhook.URL + `","expiresIn":60}`))
-		default:
-			t.Errorf("unexpected TV path %s", r.URL.Path)
-		}
-	}))
-	defer tv.Close()
-
-	client := &Client{BaseURL: tv.URL, HTTP: tv.Client()}
-	err := client.CreateToken(CreateTokenRequest{
-		Type:        "PlainText",
-		ServiceName: "stripe",
-		Credential:  "sk_live_abc",
-	})
-	if err != nil {
-		t.Fatalf("CreateToken errored: %v", err)
+// TestSetTokenValue_KeepsTheType: set re-sends the token's current type, so
+// an SSH key lands in sshPrivateKey and stays an SSHKey.
+func TestSetTokenValue_KeepsTheType(t *testing.T) {
+	h := newTicketHarness(t, "NEW-KEY")
+	h.existingTyp = "SSHKey"
+	if err := h.client().SetTokenValue("svc", "NEW-KEY"); err != nil {
+		t.Fatalf("SetTokenValue errored: %v", err)
 	}
-	if webhookHits != 1 {
-		t.Errorf("webhook hits = %d, want 1 (auto-retry should fire)", webhookHits)
+	td := h.tokenData(t)
+	if td["tokenType"] != "SSHKey" || td["sshPrivateKey"] != "NEW-KEY" || td["accessToken"] != nil {
+		t.Errorf("tokenData = %v, want SSHKey in sshPrivateKey", td)
+	}
+}
+
+// TestStoreViaTicket_DryRun prints both steps with the value redacted and
+// sends nothing.
+func TestStoreViaTicket_DryRun(t *testing.T) {
+	var sink bytes.Buffer
+	c := &Client{BaseURL: "https://unused.example", DryRun: true, DryRunOut: &sink}
+	if err := c.CreateToken(CreateTokenRequest{ServiceName: "svc", Type: "PlainText", Credential: "s3cret"}); err != nil {
+		t.Fatalf("dry-run create errored: %v", err)
+	}
+	out := sink.String()
+	if !strings.Contains(out, "/api/vault/store-ticket") || !strings.Contains(out, "/v1/store") {
+		t.Errorf("dry-run output missing steps: %q", out)
+	}
+	if strings.Contains(out, "s3cret") {
+		t.Errorf("dry-run printed the secret: %q", out)
 	}
 }
 
@@ -792,7 +752,9 @@ func TestStoreTokenViaWebhook_WebhookError(t *testing.T) {
 	if !errors.As(err, &ce) {
 		t.Fatalf("not a CLIError: %T", err)
 	}
-	if ce.Kind != clierr.KindAuth {
-		t.Errorf("Kind = %v, want KindAuth (401 → 2)", ce.Kind)
+	// A webhook 401 is a refused ticket, not a bad CLI login: logging in
+	// again would not help, so it maps to the server kind, not auth.
+	if ce.Kind != clierr.KindServer {
+		t.Errorf("Kind = %v, want KindServer for a webhook 401", ce.Kind)
 	}
 }

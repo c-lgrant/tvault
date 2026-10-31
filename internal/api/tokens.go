@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/c-lgrant/tvault/internal/clierr"
@@ -341,24 +340,18 @@ func (c *Client) fetchWebhookCredential(webhookURL, ticket, service string) (str
 	}
 }
 
-// CreateToken stores a token via POST /api/tokens. The backend expects a
-// {serviceName, tokenData:{…}} envelope, where tokenData carries the type in
-// tokenType and the secret in a type-specific field (accessToken for bearer
-// types, sshPrivateKey/certificateData/totpSecret for the rest — see
-// credentialFieldForType). POST is an upsert, so it doubles as the rotate
-// path (see SetTokenValue).
-//
-// In webhook (zero-knowledge) mode, if a credential is provided, the
-// backend rejects the POST and we fall back to the store-ticket flow so
-// the secret bypasses TV entirely. Empty-credential placeholders still
-// go through the standard path — they carry no secret.
+// CreateToken stores a token. A credential value never goes to TV: it is
+// sent straight to the user's webhook with a TV-signed store ticket
+// (StoreTokenViaWebhook). Only an empty placeholder, which carries no
+// secret, goes through POST /api/tokens with its {serviceName, tokenData}
+// envelope.
 func (c *Client) CreateToken(req CreateTokenRequest) error {
+	if req.Credential != "" {
+		return c.storeViaTicket(req.ServiceName, req.Type, req.Credential, req.Extra)
+	}
 	tokenData := map[string]any{}
 	if req.Type != "" {
 		tokenData["tokenType"] = req.Type
-	}
-	if req.Credential != "" {
-		tokenData[credentialFieldForType(req.Type)] = req.Credential
 	}
 	for k, v := range req.Extra {
 		tokenData[k] = v
@@ -368,45 +361,21 @@ func (c *Client) CreateToken(req CreateTokenRequest) error {
 		"tokenData":   tokenData,
 	}
 	_, err := c.doRequest("POST", "/api/tokens", payload, nil)
-	if isWebhookModeReject(err) && req.Credential != "" {
-		return c.StoreTokenViaWebhook(req.ServiceName, req.Type, req.Credential)
-	}
 	return err
 }
 
-// SetTokenValue rotates the credential value. The backend has no PUT route —
-// POST /api/tokens is an upsert keyed on serviceName — so we reuse it.
-//
-// In webhook (zero-knowledge) mode the backend rejects plaintext POSTs to
-// /api/tokens (the secret would otherwise transit TV). We detect that
-// rejection and transparently fall back to the store-ticket flow, which
-// pushes the credential directly to the user's webhook. The caller never
-// has to think about vault mode.
+// SetTokenValue rotates the credential value through the store-ticket flow,
+// so the new value goes straight to the user's webhook and never to TV.
+// The webhook replaces the whole document, so the token's current type is
+// read first (metadata only, no secret) and sent again: an SSH key or TOTP
+// secret then lands in its own field and keeps its type. If the read fails,
+// the value is stored as PlainText.
 func (c *Client) SetTokenValue(service, credential string) error {
-	payload := map[string]any{
-		"serviceName": service,
-		"tokenData":   map[string]any{"accessToken": credential},
+	typ := "PlainText"
+	if t, err := c.GetToken(service); err == nil && t.Type != "" {
+		typ = t.Type
 	}
-	_, err := c.doRequest("POST", "/api/tokens", payload, nil)
-	if isWebhookModeReject(err) {
-		// Empty tokenType: don't overwrite the existing token's type — set
-		// semantics rotate the value only.
-		return c.StoreTokenViaWebhook(service, "", credential)
-	}
-	return err
-}
-
-// isWebhookModeReject identifies the backend's "Webhook mode: plaintext
-// secrets must not transit Token Vault" 400 so callers can recover via the
-// store-ticket flow. Pattern-matches on the message because the backend
-// returns no machine-readable code for this case.
-func isWebhookModeReject(err error) bool {
-	if err == nil {
-		return false
-	}
-	msg := err.Error()
-	return strings.Contains(msg, "Webhook mode") &&
-		strings.Contains(msg, "must not transit")
+	return c.StoreTokenViaWebhook(service, typ, credential)
 }
 
 // StoreTokenViaWebhook is the webhook-mode equivalent of CreateToken /
@@ -414,14 +383,29 @@ func isWebhookModeReject(err error) bool {
 // token document directly to the user's webhook at /v1/store. The secret
 // never traverses TV's backend.
 func (c *Client) StoreTokenViaWebhook(service, tokenType, credential string) error {
+	return c.storeViaTicket(service, tokenType, credential, nil)
+}
+
+func (c *Client) storeViaTicket(service, tokenType, credential string, extra map[string]any) error {
+	if c.DryRun {
+		out := c.DryRunOut
+		if out == nil {
+			out = os.Stderr
+		}
+		fmt.Fprintf(out, "[dry-run] POST /api/vault/store-ticket {serviceName: %q}\n", service)
+		fmt.Fprintf(out, "[dry-run] POST <webhook>/v1/store (%s, value redacted)\n", credentialFieldForType(tokenType))
+		return nil
+	}
 	ticket, err := c.VaultStoreTicket(service)
 	if err != nil {
 		return err
 	}
-	tokenData := map[string]any{
-		"tokenType":                       tokenType,
-		credentialFieldForType(tokenType): credential,
+	tokenData := map[string]any{}
+	for k, v := range extra {
+		tokenData[k] = v
 	}
+	tokenData["tokenType"] = tokenType
+	tokenData[credentialFieldForType(tokenType)] = credential
 	payload := map[string]any{
 		"ticket":    ticket.Ticket,
 		"service":   service,
@@ -474,8 +458,15 @@ func (c *Client) postWebhookStore(webhookURL string, payload any) error {
 		if er.Message == "" {
 			er.Message = string(body)
 		}
+		kind := kindForStatus(resp.StatusCode)
+		if resp.StatusCode == 401 {
+			// A 401 from the webhook means the store ticket was refused
+			// (ticket_invalid / ticket_expired), not that the CLI login is
+			// bad: logging in again would not help, so it is a server error.
+			kind = clierr.KindServer
+		}
 		return &clierr.CLIError{
-			Kind: kindForStatus(resp.StatusCode), Request: reqLine,
+			Kind: kind, Request: reqLine,
 			Response: fmt.Sprintf("%d", resp.StatusCode), Message: er.Message,
 		}
 	}
