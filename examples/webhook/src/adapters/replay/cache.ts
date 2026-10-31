@@ -77,7 +77,7 @@ export class CacheReplayGuard implements ReplayGuard {
     return this.checkAndAdd("rid", id, REQUEST_ID_TTL_S);
   }
 
-  async checkNonce(nonce: string): Promise<boolean> {
-    return this.checkAndAdd("nonce", nonce, NONCE_TTL_S);
+  async checkNonce(nonce: string, ttlSeconds: number = NONCE_TTL_S): Promise<boolean> {
+    return this.checkAndAdd("nonce", nonce, ttlSeconds);
   }
 }

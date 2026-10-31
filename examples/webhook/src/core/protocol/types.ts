@@ -3,7 +3,7 @@
 // credential_tickets.py and the webhook routes for the authoritative source.
 
 /** Protocol version advertised at /v1/exchange and /v1/health. */
-export const WEBHOOK_VERSION = "2.4.0";
+export const WEBHOOK_VERSION = "2.5.0";
 
 /** Max clock skew (seconds) tolerated on X-TokenVault-Timestamp. */
 export const TIMESTAMP_TOLERANCE = 300;
@@ -51,6 +51,14 @@ export interface TicketPayload {
    * Credential/proxy: must equal the stored meta.creationId or 409 stale_creation.
    */
   cid?: string;
+  /** OAuth state ticket (`pur` "oauth_connect"): provider key, e.g. "google". */
+  prv?: string;
+  /** OAuth state ticket: token endpoint the control plane expects (cross-checked, never trusted). */
+  tku?: string;
+  /** OAuth state ticket: the user's OAuth client id (not a secret). */
+  clid?: string;
+  /** OAuth state ticket: the redirect URI used at authorize; must be this webhook's callback. */
+  rdu?: string;
 }
 
 /**

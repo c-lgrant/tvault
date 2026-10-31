@@ -43,6 +43,7 @@ export async function verifyTicket(
   ticket: string,
   secret: Bytes,
   replay: ReplayGuard,
+  nonceTtlSeconds?: number,
 ): Promise<TicketPayload> {
   const parts = ticket.split(".");
   if (parts.length !== 2) throw ticketInvalid("Malformed ticket");
@@ -73,7 +74,9 @@ export async function verifyTicket(
   if (typeof nonce !== "string" || !nonce) {
     throw ticketInvalid("Ticket is missing required nonce");
   }
-  if (await replay.checkNonce(nonce)) {
+  // Tickets that live longer than the default 2-minute nonce window (the OAuth
+  // state ticket lives 10 minutes) pass a TTL that covers their whole life.
+  if (await replay.checkNonce(nonce, nonceTtlSeconds)) {
     throw ticketInvalid("Ticket nonce already used (replay)");
   }
 

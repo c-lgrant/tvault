@@ -64,11 +64,15 @@ export function refreshNotifyModule(): FeatureModule {
 
           // Client secret comes from LOCAL config only; tokenUrl/clientId may
           // fall back to the (non-secret) hint fields.
-          const provider = (hint.provider ?? "").toLowerCase();
+          // A token minted by this webhook's own /v1/oauth/callback records a
+          // non-secret `oauth` hint in its meta; that outranks the TV-supplied
+          // hint (which can only describe TV's built-in providers).
+          const stored = (existingMeta.oauth && typeof existingMeta.oauth === "object" ? existingMeta.oauth : {}) as RefreshHint;
+          const provider = (stored.provider ?? hint.provider ?? "").toLowerCase();
           const local = ctx.config.oauthProviders?.[provider];
           const clientSecret = local?.clientSecret;
-          const tokenUrl = local?.tokenUrl ?? hint.tokenUrl;
-          const clientId = local?.clientId ?? hint.clientId;
+          const tokenUrl = local?.tokenUrl ?? stored.tokenUrl ?? hint.tokenUrl;
+          const clientId = local?.clientId ?? stored.clientId ?? hint.clientId;
 
           if (!tokenUrl || !clientId || !clientSecret) {
             // No local credentials to refresh with — acknowledge only.
@@ -110,6 +114,10 @@ export function refreshNotifyModule(): FeatureModule {
             updatedAt: nowIso(),
           };
           if ("createdAt" in existingMeta) updatedMeta.createdAt = existingMeta.createdAt;
+          // Keep what /v1/oauth/callback recorded so the next refresh still works.
+          for (const k of ["oauth", "provider", "scope"] as const) {
+            if (existingMeta[k] != null) updatedMeta[k] = existingMeta[k];
+          }
 
           const doc = await buildEncryptedTokenDocument(key, newAccess, newRefresh, updatedMeta);
           await ctx.storage.set("tokens", service, doc);

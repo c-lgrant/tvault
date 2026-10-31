@@ -92,6 +92,39 @@ npm run deploy
 See [`deploy/cloudflare/README.md`](deploy/cloudflare/README.md) and
 [`deploy/cloudflare/TUTORIAL.md`](deploy/cloudflare/TUTORIAL.md) for detail.
 
+## Connect with your own OAuth app (`oauth-callback`)
+
+The webhook can finish an OAuth consent itself, so the provider's authorization
+code, access token and refresh token never pass through the control plane.
+
+1. Register an OAuth app at the provider (Google, GitHub and Spotify work out of
+   the box). Set its redirect URI to `https://<your-webhook>/v1/oauth/callback`.
+2. Give the webhook the client secret, in `OAUTH_PROVIDERS_JSON` (a Secret on
+   Workers), keyed by the lower-case provider name:
+   ```json
+   { "google": { "clientId": "…", "clientSecret": "…" } }
+   ```
+   `clientId` is optional (the control plane sends the id you saved there; if you
+   set it here it must match). `tokenUrl` is only needed for a provider outside
+   the built-in table (`google`, `github`, `spotify`). The client secret is only
+   ever sent to a token URL from this config or that table, never to one named in
+   a request.
+3. Save the same client id in Token Vault and press Connect. The control plane
+   signs a one-shot, 10-minute state ticket and sends the browser to the
+   provider; the provider redirects back to `/v1/oauth/callback`, where the
+   webhook verifies the state, exchanges the code (PKCE S256; the verifier is
+   derived from the webhook's HMAC secret and the ticket nonce and never travels
+   via the browser), stores the token under the service name the ticket names,
+   and redirects the browser to `<TOKENVAULT_FRONTEND_URL>/tokens/oauth-result`
+   with only a status, the service name and a short error code.
+
+The stored token records a non-secret `oauth` hint (`provider`, `tokenUrl`,
+`clientId`) in its meta, so `/v1/refresh-notify` can refresh it with the same
+`OAUTH_PROVIDERS_JSON` entry. The state ticket is the usual
+`base64url(json).hex_hmac` with `pur: "oauth_connect"` and the extra fields `prv`
+(provider), `tku` (token URL, cross-checked), `clid` (client id) and `rdu`
+(redirect URI).
+
 ## Tests
 
 ```bash

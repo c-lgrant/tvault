@@ -158,8 +158,11 @@ export interface StorageAdapter {
 export interface ReplayGuard {
   /** TTL ~10 min. Returns true if this request ID was already used. */
   checkRequestId(id: string): Promise<boolean>;
-  /** TTL ~2 min. Returns true if this ticket nonce was already used. */
-  checkNonce(nonce: string): Promise<boolean>;
+  /**
+   * TTL ~2 min by default, or `ttlSeconds` for tickets that live longer (the
+   * OAuth state ticket). Returns true if this ticket nonce was already used.
+   */
+  checkNonce(nonce: string, ttlSeconds?: number): Promise<boolean>;
 }
 
 /** Everything a module needs at request time. */
