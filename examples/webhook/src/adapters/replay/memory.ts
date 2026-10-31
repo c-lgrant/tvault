@@ -30,12 +30,15 @@ class TtlSet {
 export class MemoryReplayGuard implements ReplayGuard {
   private readonly requestIds = new TtlSet(600_000);
   private readonly nonces = new TtlSet(120_000);
+  private readonly longNonces = new TtlSet(3_600_000);
 
   async checkRequestId(id: string): Promise<boolean> {
     return this.requestIds.checkAndAdd(id);
   }
 
-  async checkNonce(nonce: string): Promise<boolean> {
-    return this.nonces.checkAndAdd(nonce);
+  async checkNonce(nonce: string, ttlSeconds?: number): Promise<boolean> {
+    // A longer-lived ticket (OAuth state) is remembered for the hour so a
+    // replay inside its whole validity window is caught.
+    return (ttlSeconds && ttlSeconds > 120 ? this.longNonces : this.nonces).checkAndAdd(nonce);
   }
 }

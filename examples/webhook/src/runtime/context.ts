@@ -90,8 +90,14 @@ export interface OAuthProviderConfig {
   clientSecret: string;
   /** Client ID; falls back to the refresh hint when omitted. */
   clientId?: string;
-  /** Token endpoint; falls back to the refresh hint when omitted. */
+  /**
+   * Token endpoint. Optional for google/github/spotify (built in). For any
+   * other provider it is required: the client secret is only ever sent to this
+   * URL or a built-in one, never to a URL a request or hint names.
+   */
   tokenUrl?: string;
+  /** Authorize endpoint, for a provider outside the built-in table (oauth-callback). */
+  authorizeUrl?: string;
 }
 
 /**
@@ -158,8 +164,11 @@ export interface StorageAdapter {
 export interface ReplayGuard {
   /** TTL ~10 min. Returns true if this request ID was already used. */
   checkRequestId(id: string): Promise<boolean>;
-  /** TTL ~2 min. Returns true if this ticket nonce was already used. */
-  checkNonce(nonce: string): Promise<boolean>;
+  /**
+   * TTL ~2 min by default, or `ttlSeconds` for tickets that live longer (the
+   * OAuth state ticket). Returns true if this ticket nonce was already used.
+   */
+  checkNonce(nonce: string, ttlSeconds?: number): Promise<boolean>;
 }
 
 /** Everything a module needs at request time. */
