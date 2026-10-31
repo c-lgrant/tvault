@@ -33,7 +33,7 @@ tvault login              # browser-based admin login
 tvault ls                 # list tokens
 tvault get github         # print a credential (stdout only — safe for $(...))
 tvault add stripe --value sk_test_...   # create a token
-tvault set stripe --value sk_test_new   # rotate it (auto-routes around webhook mode)
+tvault set stripe --value sk_test_new   # rotate it (the value goes straight to your webhook)
 ```
 
 The most common token verbs are also available at the top level: `get`, `set`,
@@ -78,8 +78,8 @@ scopes, enforced by the server (`SCOPE_DENIED` → exit 8, `HUMAN_ONLY` → exit
 | `tk list` (`ls`) | List tokens. |
 | `tk get <service>` | Print a credential value to stdout — safe for `$(...)`. `--check` exits 0/6 without printing (presence probe). |
 | `tk show <service>` (`info`) | Show token metadata (no secret). |
-| `tk create` (`new`) | Create a token — interactive type-picker wizard, or fully flag-driven with `--type`/`--service`/`--value`. In webhook-mode vaults the secret auto-routes to the user's webhook (TV never sees it). |
-| `tk set <service>` (`up`) | Rotate a credential value (`--value`). Auto-routes through the store-ticket flow in webhook-mode vaults. |
+| `tk create` (`new`) | Create a token — interactive type-picker wizard, or fully flag-driven with `--type`/`--service`/`--value`. The secret goes straight to your webhook with a store ticket; Token Vault never receives it. |
+| `tk set <service>` (`up`) | Rotate a credential value (`--value`). The new value goes straight to your webhook with a store ticket. |
 | `tk edit <service>` | Edit metadata: `--name`, `--notes`, `--tags`. |
 | `tk rm <service>...` (`del`, `d`) | Delete one or more tokens. |
 | `tk refresh <service>` (`ref`) | Force an OAuth token refresh. |
