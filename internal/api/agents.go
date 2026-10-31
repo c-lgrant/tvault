@@ -108,7 +108,9 @@ func (c *Client) CreateAgent(name string) (*CreateAgentResult, error) {
 // fields. An empty kind is omitted so the server applies its default
 // ("classic"); scopes are only sent when non-empty.
 func (c *Client) CreateAgentWithKind(name, kind string, scopes []string) (*CreateAgentResult, error) {
-	payload := map[string]any{"name": name}
+	// mcpEnabled defaults to false server-side, which makes the MCP endpoint
+	// refuse the agent; an agent made from the CLI is meant to be usable there.
+	payload := map[string]any{"name": name, "mcpEnabled": true}
 	if kind != "" {
 		payload["kind"] = kind
 	}
