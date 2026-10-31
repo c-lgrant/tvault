@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"io"
@@ -607,6 +608,7 @@ type ticketHarness struct {
 	tv, webhook *httptest.Server
 	tvHits      map[string]int
 	stored      map[string]any // the last /v1/store body
+	existingTyp string         // tokenType GET /api/tokens/{svc} reports
 }
 
 func newTicketHarness(t *testing.T, secret string) *ticketHarness {
@@ -625,6 +627,10 @@ func newTicketHarness(t *testing.T, secret string) *ticketHarness {
 		raw, _ := io.ReadAll(r.Body)
 		if strings.Contains(string(raw), secret) {
 			t.Errorf("PLAINTEXT SENT TO TV: %s %s body=%s", r.Method, r.URL.Path, raw)
+		}
+		if r.Method == "GET" && strings.HasPrefix(r.URL.Path, "/api/tokens/") {
+			w.Write([]byte(`{"serviceName":"svc","tokenType":"` + h.existingTyp + `"}`))
+			return
 		}
 		if r.URL.Path != "/api/vault/store-ticket" {
 			t.Errorf("unexpected TV path %s", r.URL.Path)
@@ -660,6 +666,37 @@ func TestSetTokenValue_TicketFirst(t *testing.T) {
 	}
 	if h.tvHits["/api/tokens"] != 0 || h.tvHits["/api/vault/store-ticket"] != 1 {
 		t.Errorf("tv hits = %+v, want only one store-ticket", h.tvHits)
+	}
+}
+
+// TestSetTokenValue_KeepsTheType: set re-sends the token's current type, so
+// an SSH key lands in sshPrivateKey and stays an SSHKey.
+func TestSetTokenValue_KeepsTheType(t *testing.T) {
+	h := newTicketHarness(t, "NEW-KEY")
+	h.existingTyp = "SSHKey"
+	if err := h.client().SetTokenValue("svc", "NEW-KEY"); err != nil {
+		t.Fatalf("SetTokenValue errored: %v", err)
+	}
+	td := h.tokenData(t)
+	if td["tokenType"] != "SSHKey" || td["sshPrivateKey"] != "NEW-KEY" || td["accessToken"] != nil {
+		t.Errorf("tokenData = %v, want SSHKey in sshPrivateKey", td)
+	}
+}
+
+// TestStoreViaTicket_DryRun prints both steps with the value redacted and
+// sends nothing.
+func TestStoreViaTicket_DryRun(t *testing.T) {
+	var sink bytes.Buffer
+	c := &Client{BaseURL: "https://unused.example", DryRun: true, DryRunOut: &sink}
+	if err := c.CreateToken(CreateTokenRequest{ServiceName: "svc", Type: "PlainText", Credential: "s3cret"}); err != nil {
+		t.Fatalf("dry-run create errored: %v", err)
+	}
+	out := sink.String()
+	if !strings.Contains(out, "/api/vault/store-ticket") || !strings.Contains(out, "/v1/store") {
+		t.Errorf("dry-run output missing steps: %q", out)
+	}
+	if strings.Contains(out, "s3cret") {
+		t.Errorf("dry-run printed the secret: %q", out)
 	}
 }
 
@@ -715,7 +752,9 @@ func TestStoreTokenViaWebhook_WebhookError(t *testing.T) {
 	if !errors.As(err, &ce) {
 		t.Fatalf("not a CLIError: %T", err)
 	}
-	if ce.Kind != clierr.KindAuth {
-		t.Errorf("Kind = %v, want KindAuth (401 → 2)", ce.Kind)
+	// A webhook 401 is a refused ticket, not a bad CLI login: logging in
+	// again would not help, so it maps to the server kind, not auth.
+	if ce.Kind != clierr.KindServer {
+		t.Errorf("Kind = %v, want KindServer for a webhook 401", ce.Kind)
 	}
 }
