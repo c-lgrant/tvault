@@ -177,7 +177,11 @@ var agentsCreateCmd = &cobra.Command{
 
 		// The backend has no grants field on POST /api/agents — create the
 		// agent first, then apply grants via the grants endpoint.
-		res, err := cc.Client.CreateAgentWithKind(name, kind, scopes)
+		var res *api.CreateAgentResult
+		err = withReauth(cmd, cc, func() (e error) {
+			res, e = cc.Client.CreateAgentWithKind(name, kind, scopes)
+			return e
+		})
 		if err != nil {
 			return enrich(cmd, cc, err)
 		}
