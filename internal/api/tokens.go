@@ -366,9 +366,16 @@ func (c *Client) CreateToken(req CreateTokenRequest) error {
 
 // SetTokenValue rotates the credential value through the store-ticket flow,
 // so the new value goes straight to the user's webhook and never to TV.
-// Empty tokenType: set semantics rotate the value only, not the type.
+// The webhook replaces the whole document, so the token's current type is
+// read first (metadata only, no secret) and sent again: an SSH key or TOTP
+// secret then lands in its own field and keeps its type. If the read fails,
+// the value is stored as PlainText.
 func (c *Client) SetTokenValue(service, credential string) error {
-	return c.StoreTokenViaWebhook(service, "", credential)
+	typ := "PlainText"
+	if t, err := c.GetToken(service); err == nil && t.Type != "" {
+		typ = t.Type
+	}
+	return c.StoreTokenViaWebhook(service, typ, credential)
 }
 
 // StoreTokenViaWebhook is the webhook-mode equivalent of CreateToken /
@@ -380,6 +387,15 @@ func (c *Client) StoreTokenViaWebhook(service, tokenType, credential string) err
 }
 
 func (c *Client) storeViaTicket(service, tokenType, credential string, extra map[string]any) error {
+	if c.DryRun {
+		out := c.DryRunOut
+		if out == nil {
+			out = os.Stderr
+		}
+		fmt.Fprintf(out, "[dry-run] POST /api/vault/store-ticket {serviceName: %q}\n", service)
+		fmt.Fprintf(out, "[dry-run] POST <webhook>/v1/store (%s, value redacted)\n", credentialFieldForType(tokenType))
+		return nil
+	}
 	ticket, err := c.VaultStoreTicket(service)
 	if err != nil {
 		return err
@@ -442,8 +458,15 @@ func (c *Client) postWebhookStore(webhookURL string, payload any) error {
 		if er.Message == "" {
 			er.Message = string(body)
 		}
+		kind := kindForStatus(resp.StatusCode)
+		if resp.StatusCode == 401 {
+			// A 401 from the webhook means the store ticket was refused
+			// (ticket_invalid / ticket_expired), not that the CLI login is
+			// bad: logging in again would not help, so it is a server error.
+			kind = clierr.KindServer
+		}
 		return &clierr.CLIError{
-			Kind: kindForStatus(resp.StatusCode), Request: reqLine,
+			Kind: kind, Request: reqLine,
 			Response: fmt.Sprintf("%d", resp.StatusCode), Message: er.Message,
 		}
 	}
