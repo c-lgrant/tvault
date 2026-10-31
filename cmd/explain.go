@@ -118,7 +118,7 @@ var errorExplanations = map[string]struct {
 	},
 	"REAUTH_REQUIRED": {
 		What: "Creating a key as a human needs a fresh browser sign-in (exit code 2).",
-		Fix:  "Run `tvault login` again, then retry the command.",
+		Fix:  "Run `tvault login` again, then retry the command. (`agents create`, `add --for` and `connect` do this inline in an interactive admin context.)",
 	},
 	"WEBHOOK_AUTH_FAILED": {
 		What: "The webhook rejected Token Vault's HMAC authentication.",
