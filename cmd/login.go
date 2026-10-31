@@ -8,6 +8,7 @@ import (
 
 	"github.com/c-lgrant/tvault/internal/auth"
 	"github.com/c-lgrant/tvault/internal/clierr"
+	"github.com/c-lgrant/tvault/internal/config"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 )
@@ -31,6 +32,18 @@ var loginCmd = &cobra.Command{
 		frontendURL, _ := cmd.Flags().GetString("frontend-url")
 		keyStdin, _ := cmd.Flags().GetBool("key-stdin")
 
+		// `tvault --ctx dev login` signs the dev context in again: --ctx names
+		// the context like --as, and a known context keeps its own server.
+		if asName == "" {
+			asName = contextOverride(cmd)
+		}
+		apiURLSet := cmd.Flags().Changed("api-url")
+		if !apiURLSet {
+			if stored := storedAPIURL(asName); stored != "" {
+				apiURL, apiURLSet = stored, true
+			}
+		}
+
 		if keyStdin {
 			if apiKey != "" {
 				return &clierr.CLIError{Kind: clierr.KindUser, Command: "login", Message: "--key and --key-stdin are mutually exclusive"}
@@ -50,11 +63,11 @@ var loginCmd = &cobra.Command{
 			return nil
 		}
 
-		if cmd.Flags().Changed("api-url") && !cmd.Flags().Changed("frontend-url") {
+		if apiURLSet && !cmd.Flags().Changed("frontend-url") {
 			derived, ok := deriveFrontendURL(apiURL)
 			if !ok {
 				return &clierr.CLIError{Kind: clierr.KindUser, Command: "login",
-					Message: "cannot derive the frontend URL from --api-url " + apiURL,
+					Message: "cannot derive the frontend URL from the API URL " + apiURL,
 					Hint:    "pass --frontend-url too (the site that hosts /cli/auth)"}
 			}
 			frontendURL = derived
@@ -76,6 +89,22 @@ var loginCmd = &cobra.Command{
 		cmd.Printf("Logged in — context %q is now active.\n", name)
 		return nil
 	},
+}
+
+// storedAPIURL returns the API URL saved for the named context, or "" when the
+// name is empty, unknown or the config can't be read (login then uses the flags).
+func storedAPIURL(name string) string {
+	if name == "" {
+		name = "default"
+	}
+	cfg, err := config.Load()
+	if err != nil {
+		return ""
+	}
+	if c, ok := cfg.Contexts[name]; ok && c != nil {
+		return c.APIURL
+	}
+	return ""
 }
 
 // deriveFrontendURL maps an API base URL to the frontend that issued its login
