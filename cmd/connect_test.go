@@ -149,8 +149,8 @@ func fakeClaude(t *testing.T, onPath bool, getOut string, getErr error) *[]strin
 	t.Helper()
 	var ran []string
 	origLook, origRun, origGet := claudeLookPath, claudeRun, claudeGet
-	claudeGet = func() (string, error) {
-		ran = append(ran, "mcp get tokenvault")
+	claudeGet = func(name string) (string, error) {
+		ran = append(ran, "mcp get "+name)
 		return strings.ReplaceAll(getOut, "%URL%", lastBackend.srv.URL), getErr
 	}
 	claudeLookPath = func() (string, error) {

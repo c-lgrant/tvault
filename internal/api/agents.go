@@ -216,16 +216,44 @@ func (r GrantResult) Err() error {
 // bulk/array grant route, so we issue one request per service. On the first
 // failure we stop and report which services succeeded and which were skipped.
 func (c *Client) AddGrants(agentID string, services []string) GrantResult {
-	res := GrantResult{Failed: map[string]error{}}
+	specs := make([]GrantSpec, len(services))
 	for i, svc := range services {
-		_, err := c.doRequest("POST", "/api/agents/"+agentID+"/grants",
-			map[string]string{"agentId": agentID, "serviceName": svc}, nil)
+		specs[i] = GrantSpec{Service: svc}
+	}
+	return c.AddGrantSpecs(agentID, specs)
+}
+
+// GrantSpec is one grant to create: a service plus, optionally, what it may
+// be used for. Uses holds "value" and/or "tools"; empty means the server's
+// default (value only). Servers narrows a tools grant to the named MCP
+// servers; empty means every server of the credential. Only these words are
+// sent, never a credential value.
+type GrantSpec struct {
+	Service string
+	Uses    []string
+	Servers []string
+}
+
+// AddGrantSpecs is AddGrants with per-service uses and servers.
+func (c *Client) AddGrantSpecs(agentID string, specs []GrantSpec) GrantResult {
+	res := GrantResult{Failed: map[string]error{}}
+	for i, s := range specs {
+		body := map[string]any{"agentId": agentID, "serviceName": s.Service}
+		if len(s.Uses) > 0 {
+			body["uses"] = s.Uses
+		}
+		if len(s.Servers) > 0 {
+			body["servers"] = s.Servers
+		}
+		_, err := c.doRequest("POST", "/api/agents/"+agentID+"/grants", body, nil)
 		if err != nil {
-			res.Failed[svc] = err
-			res.Skipped = append(res.Skipped, services[i+1:]...)
+			res.Failed[s.Service] = err
+			for _, rest := range specs[i+1:] {
+				res.Skipped = append(res.Skipped, rest.Service)
+			}
 			return res
 		}
-		res.OK = append(res.OK, svc)
+		res.OK = append(res.OK, s.Service)
 	}
 	return res
 }
