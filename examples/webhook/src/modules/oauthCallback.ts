@@ -43,6 +43,7 @@ import {
   pkceChallenge,
   sha256Hex,
 } from "../core/protocol/oauthConnect.ts";
+import { assertStoreConstraints } from "../core/protocol/constraints.ts";
 import { verifyTicket } from "../core/protocol/tickets.ts";
 import { buildEncryptedTokenDocument } from "../core/protocol/tokendoc.ts";
 import type { TicketPayload } from "../core/protocol/types.ts";
@@ -207,6 +208,16 @@ export function oauthCallbackModule(): FeatureModule {
           if (providerError) throw new ConnectFailure("access_denied");
           if (!code) throw new ConnectFailure("code_missing");
 
+          // Ticket constraints (`mode`, `cid`), applied as /v1/store does. Checked
+          // before the code is exchanged so a refused create burns nothing.
+          const existing = await ctx.storage.get("tokens", service);
+          try {
+            assertStoreConstraints(payload, existing);
+          } catch (e) {
+            if (e instanceof WebhookError && e.code === "already_exists") throw new ConnectFailure("already_exists");
+            throw new ConnectFailure("state_invalid");
+          }
+
           // Client secret and token URL come from local config / the built-in
           // table; the ticket's copies are only cross-checked.
           const local = ctx.config.oauthProviders?.[provider];
@@ -248,7 +259,6 @@ export function oauthCallbackModule(): FeatureModule {
           if (typeof oauth.access_token !== "string" || !oauth.access_token) throw new ConnectFailure("exchange_failed");
           const refreshToken = typeof oauth.refresh_token === "string" && oauth.refresh_token ? oauth.refresh_token : null;
 
-          const existing = await ctx.storage.get("tokens", service);
           const existingMeta =
             existing?.meta && typeof existing.meta === "object" ? (existing.meta as Record<string, unknown>) : {};
           const now = nowIso();
@@ -261,7 +271,9 @@ export function oauthCallbackModule(): FeatureModule {
             updatedAt: now,
             createdAt: typeof existingMeta.createdAt === "string" ? existingMeta.createdAt : now,
           };
-          if (typeof existingMeta.creationId === "string") meta.creationId = existingMeta.creationId;
+          // The creation this connect belongs to comes from the ticket, exactly as
+          // /v1/store does, never from the document being replaced.
+          if (payload.cid) meta.creationId = payload.cid;
           if (typeof oauth.scope === "string" && oauth.scope) meta.scope = oauth.scope;
           if (typeof oauth.expires_in === "number" && oauth.expires_in > 0) {
             meta.expiryTime = Date.now() + oauth.expires_in * 1000;

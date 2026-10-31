@@ -127,7 +127,9 @@ The stored token records a non-secret `oauth` hint (`provider`, `tokenUrl`,
 `OAUTH_PROVIDERS_JSON` entry. The state ticket is the usual
 `base64url(json).hex_hmac` with `pur: "oauth_connect"` and the extra fields `prv`
 (provider), `tku` (token URL, cross-checked), `clid` (client id), `rdu`
-(redirect URI) and `scp` (space-separated scopes).
+(redirect URI) and `scp` (space-separated scopes). It may also carry the store
+constraints `mode` (`create` refuses an existing service with `already_exists`)
+and `cid` (stored as `meta.creationId`), applied as `/v1/store` applies them.
 
 ## Tests
 

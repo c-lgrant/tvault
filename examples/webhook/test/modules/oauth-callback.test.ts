@@ -223,6 +223,49 @@ describe("GET /v1/oauth/callback", () => {
   });
 });
 
+describe("ticket constraints (mode, cid) as /v1/store applies them", () => {
+  it("stores meta.creationId from the ticket", async () => {
+    const s = setup();
+    stubProvider();
+    await s.callback({ code: "c", state: await s.state({ mode: "create", cid: "creation-A" }) });
+    const meta = (await s.ctx.storage.get("tokens", "my-gmail"))!.meta as Record<string, unknown>;
+    expect(meta.creationId).toBe("creation-A");
+  });
+
+  it("refuses a create over an existing service with already_exists, before exchanging the code", async () => {
+    const s = setup();
+    const fetchMock = stubProvider();
+    await s.callback({ code: "c", state: await s.state({ mode: "create", cid: "creation-A" }) });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const again = resultOf(await s.callback({ code: "c", state: await s.state({ mode: "create", cid: "creation-B" }) }));
+    expect(again.searchParams.get("code")).toBe("already_exists");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const meta = (await s.ctx.storage.get("tokens", "my-gmail"))!.meta as Record<string, unknown>;
+    expect(meta.creationId).toBe("creation-A");
+  });
+
+  it("overwrite replaces the token and takes the ticket's creationId, not the old document's", async () => {
+    const s = setup();
+    stubProvider();
+    await s.callback({ code: "c", state: await s.state({ mode: "create", cid: "old-creation" }) });
+    await s.callback({ code: "c", state: await s.state({ mode: "overwrite", cid: "new-creation" }) });
+    const meta = (await s.ctx.storage.get("tokens", "my-gmail"))!.meta as Record<string, unknown>;
+    expect(meta.creationId).toBe("new-creation");
+    // No cid on the ticket: the old document's creationId is NOT carried over.
+    await s.callback({ code: "c", state: await s.state({ mode: "overwrite" }) });
+    const after = (await s.ctx.storage.get("tokens", "my-gmail"))!.meta as Record<string, unknown>;
+    expect(after.creationId).toBeUndefined();
+  });
+
+  it("refuses an invalid mode", async () => {
+    const s = setup();
+    const fetchMock = stubProvider();
+    const loc = resultOf(await s.callback({ code: "c", state: await s.state({ mode: "bogus" as "create" }) }));
+    expect(loc.searchParams.get("status")).toBe("error");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
 describe("GET /v1/oauth/start (browser binding)", () => {
   it("sets an HttpOnly cookie bound to the nonce and redirects to the provider authorize URL", async () => {
     const s = setup();
