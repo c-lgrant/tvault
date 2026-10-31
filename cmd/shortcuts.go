@@ -49,12 +49,35 @@ var addCmd = &cobra.Command{
 	Use:   "add <service>",
 	Short: "Create a token (shortcut for `tvault tokens create`)",
 	Args:  cobra.ExactArgs(1),
+	Example: `  printf %s "$SECRET" | tvault add stripe
+  tvault add stripe --for my-agent --yes   # store, then grant to my-agent (created if missing)`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		// Forward the positional service into the underlying create handler
 		// via its --service flag. runTokensCreate already reads --type and
 		// --value off the same FlagSet.
 		_ = cmd.Flags().Set("service", args[0])
-		return runTokensCreate(cmd, nil)
+		agentRef, _ := cmd.Flags().GetString("for")
+		if agentRef == "" {
+			return runTokensCreate(cmd, nil)
+		}
+		yes, _ := cmd.Flags().GetBool("yes")
+		cc, err := resolve(cmd)
+		if err != nil {
+			return err
+		}
+		// Settle the agent before asking for the secret, so a refused or
+		// declined agent never costs the user a typed value.
+		agent, err := ensureAgent(cmd, cc, agentRef, "add", yes)
+		if err != nil {
+			return enrich(cmd, cc, err)
+		}
+		if err := runTokensCreate(cmd, nil); err != nil {
+			return err
+		}
+		if err := grantServices(cmd, cc, agent, []string{args[0]}, "add"); err != nil {
+			return enrich(cmd, cc, err)
+		}
+		return nil
 	},
 }
 
@@ -82,9 +105,11 @@ func init() {
 	addCmd.Flags().String("type", "", "token type (defaults to PlainText)")
 	addCmd.Flags().String("service", "", "")
 	_ = addCmd.Flags().MarkHidden("service")
-	addCmd.Flags().String("value", "", "credential value")
+	addValueFlags(addCmd, "credential value")
+	addCmd.Flags().String("for", "", "after storing, grant the credential to this agent (name or id); created if missing")
+	addCmd.Flags().Bool("yes", false, "with --for: create the agent without asking if it does not exist")
 
-	setShortCmd.Flags().String("value", "", "new credential value")
+	addValueFlags(setShortCmd, "new credential value")
 	rmShortCmd.Flags().Bool("force", false, "skip the confirmation prompt")
 	getShortCmd.Flags().Bool("check", false, "exit 0 if the token has a value, 6 if empty; never prints the secret")
 

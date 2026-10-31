@@ -32,9 +32,17 @@ curl -fsSL https://raw.githubusercontent.com/c-lgrant/tvault/main/install.sh | b
 tvault login              # browser-based admin login
 tvault ls                 # list tokens
 tvault get github         # print a credential (stdout only — safe for $(...))
-tvault add stripe --value sk_test_...   # create a token
-tvault set stripe --value sk_test_new   # rotate it (the value goes straight to your webhook)
+tvault add stripe                       # create a token; the value is a hidden prompt
+tvault set stripe                       # rotate it (the value goes straight to your webhook)
+printf %s "$SECRET" | tvault add stripe # or pipe the value in
+tvault add stripe --for my-agent        # store, then grant it to my-agent (created if missing)
+tvault connect my-agent github stripe   # grant existing credentials and set up Claude Code
 ```
+
+Secret values never need to be on the command line: with no `--value`, `add`
+and `set` read a hidden prompt on a terminal, or stdin when it is piped (or with
+`--value-stdin`; one trailing newline is trimmed). `--value` still works but
+prints a warning, since it lands in your shell history.
 
 The most common token verbs are also available at the top level: `get`, `set`,
 `show`, `rm`, `add`, `ls`. They're shortcuts for the equivalent `tokens …`
@@ -78,8 +86,8 @@ scopes, enforced by the server (`SCOPE_DENIED` → exit 8, `HUMAN_ONLY` → exit
 | `tk list` (`ls`) | List tokens. |
 | `tk get <service>` | Print a credential value to stdout — safe for `$(...)`. `--check` exits 0/6 without printing (presence probe). |
 | `tk show <service>` (`info`) | Show token metadata (no secret). |
-| `tk create` (`new`) | Create a token — interactive type-picker wizard, or fully flag-driven with `--type`/`--service`/`--value`. The secret goes straight to your webhook with a store ticket; Token Vault never receives it. |
-| `tk set <service>` (`up`) | Rotate a credential value (`--value`). The new value goes straight to your webhook with a store ticket. |
+| `tk create` (`new`) | Create a token — interactive type-picker wizard, or fully flag-driven with `--type`/`--service`. The value comes from a hidden prompt, stdin (`--value-stdin`, or any piped stdin), or `--value` (warns: shell history). The secret goes straight to your webhook with a store ticket; Token Vault never receives it. |
+| `tk set <service>` (`up`) | Rotate a credential value: hidden prompt, stdin / `--value-stdin`, or `--value`. The new value goes straight to your webhook with a store ticket. An empty value is an error. |
 | `tk edit <service>` | Edit metadata: `--name`, `--notes`, `--tags`. |
 | `tk rm <service>...` (`del`, `d`) | Delete one or more tokens. |
 | `tk refresh <service>` (`ref`) | Force an OAuth token refresh. |
@@ -100,7 +108,7 @@ the backend-assigned ID — the CLI resolves names through `agents list`.
 |---------|---------|
 | `ag list` (`ls`) | List agents. |
 | `ag show <name-or-id>` (`info`) | Show agent details and grants. |
-| `ag create` (`new`) | Create an agent — interactive name + grants wizard, or `--name`/`--grants`. `--kind scoped --scopes a,b` creates a scoped agent. The API key is shown once. |
+| `ag create` (`new`) | Create an agent — interactive name + grants wizard, or `--name`/`--grants`. `--kind scoped --scopes a,b` creates a scoped agent. The API key is shown once. Agents are created MCP-enabled. If the server asks for a fresh sign-in (`REAUTH_REQUIRED`), an interactive admin context runs the browser login and retries once. |
 | `ag rotate-key <name-or-id>` | Replace an agent's API key. The new key is printed once, on stdout (status goes to stderr). |
 | `ag rm <name-or-id>...` (`del`, `d`) | Delete one or more agents. |
 | `ag suspend <name-or-id>` (`off`) | Suspend an agent. |
@@ -190,7 +198,8 @@ type `tokens` / `context` / `agents grants` for every operation.
 |----------|------------|
 | `tvault ls` | `tvault tokens list` |
 | `tvault get <svc>` | `tvault tokens get <svc>` |
-| `tvault add <svc>` | `tvault tokens create --service <svc>` (defaults `--type PlainText`) |
+| `tvault add <svc>` | `tvault tokens create --service <svc>` (defaults `--type PlainText`). `--for <agent>` also grants it to that agent, creating the agent first if missing (asks `Create agent "<name>"? [y/N]` on a terminal; `--yes` skips, and a non-interactive shell needs it). |
+| `tvault connect <agent> [<svc>...]` | Grant existing credentials to an agent (created if missing; `--yes`), then register Token Vault in Claude Code if `claude` is on PATH and has no `tokenvault` MCP server (`claude mcp add --transport http --scope user tokenvault <api>/api/agents/mcp`; a registration for a different control plane is left alone and the switch commands are printed). `--print` only prints that command; `--no-claude` skips it. Finish in Claude Code: `/mcp`, sign in, pick the agent. |
 | `tvault set <svc>` | `tvault tokens set <svc>` |
 | `tvault show <svc>` | `tvault tokens show <svc>` |
 | `tvault rm <svc>...` | `tvault tokens rm <svc>...` |
