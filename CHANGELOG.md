@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.13.0](https://github.com/c-lgrant/tvault/compare/v0.12.0...v0.13.0) (2026-10-31)
+
+
+### Features
+
+* **explain:** add `WEB_CONSOLE_REQUIRED` ([496fd92](https://github.com/c-lgrant/tvault/commit/496fd929bb562408e2656c4f3ec1c4f0add5e2e7))
+
+
+### Bug Fixes
+
+* **cli:** `tvault add` and `tvault set` send credential values to your webhook only, with a store ticket. Before, they sent the value to Token Vault first and used the ticket only after Token Vault refused it. Upgrade to stop that. ([8e17aee](https://github.com/c-lgrant/tvault/commit/8e17aee1a014a6382be418c00c085b900f1ce8cf))
+* **cli:** `tvault set` keeps the token's type; `--dry-run` works on the ticket path; a refused store ticket exits as a server error, not a login error ([#37](https://github.com/c-lgrant/tvault/issues/37)) ([df6e00d](https://github.com/c-lgrant/tvault/commit/df6e00d94023a7e31f81141dbd4c7b7c40adb1e5))
+* **explain:** describe `WEB_CONSOLE_REQUIRED` for any access channel policy ([bb90264](https://github.com/c-lgrant/tvault/commit/bb9026472ed8a7996cb08a4299a3f07a5b3cfe08))
+* **deps:** webhook `wrangler` ^4.156.0 and `@hono/node-server` ^2.1.5, clearing the open undici and serveStatic advisories ([#36](https://github.com/c-lgrant/tvault/issues/36)) ([eaff027](https://github.com/c-lgrant/tvault/commit/eaff027))
+
 ## [0.12.0](https://github.com/c-lgrant/tvault/compare/v0.11.1...v0.12.0) (2026-10-14)
 
 
