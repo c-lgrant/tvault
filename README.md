@@ -199,7 +199,7 @@ type `tokens` / `context` / `agents grants` for every operation.
 | `tvault ls` | `tvault tokens list` |
 | `tvault get <svc>` | `tvault tokens get <svc>` |
 | `tvault add <svc>` | `tvault tokens create --service <svc>` (defaults `--type PlainText`). `--for <agent>` also grants it to that agent, creating the agent first if missing (asks `Create agent "<name>"? [y/N]` on a terminal; `--yes` skips, and a non-interactive shell needs it). |
-| `tvault connect <agent> [<svc>...]` | Grant existing credentials to an agent (created if missing; `--yes`), then register Token Vault in Claude Code if `claude` is on PATH and has no `tokenvault` MCP server (`claude mcp add --transport http tokenvault <api>/api/agents/mcp`). `--print` only prints that command; `--no-claude` skips it. Finish in Claude Code: `/mcp`, sign in, pick the agent. |
+| `tvault connect <agent> [<svc>...]` | Grant existing credentials to an agent (created if missing; `--yes`), then register Token Vault in Claude Code if `claude` is on PATH and has no `tokenvault` MCP server (`claude mcp add --transport http --scope user tokenvault <api>/api/agents/mcp`; a registration for a different control plane is left alone and the switch commands are printed). `--print` only prints that command; `--no-claude` skips it. Finish in Claude Code: `/mcp`, sign in, pick the agent. |
 | `tvault set <svc>` | `tvault tokens set <svc>` |
 | `tvault show <svc>` | `tvault tokens show <svc>` |
 | `tvault rm <svc>...` | `tvault tokens rm <svc>...` |

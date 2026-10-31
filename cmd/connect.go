@@ -13,6 +13,7 @@ import (
 	"github.com/c-lgrant/tvault/internal/clierr"
 	"github.com/c-lgrant/tvault/internal/config"
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 )
 
 // Seams for tests.
@@ -24,6 +25,16 @@ var (
 	claudeLookPath = func() (string, error) { return exec.LookPath("claude") }
 	// claudeRun runs `claude <args...>` with its output on stderr (stdout is
 	// reserved for values); it returns the process error, if any.
+	// stderrIsTTY says whether a person is watching: the re-sign-in needs a
+	// browser, not stdin, so a piped stdin must not rule it out.
+	stderrIsTTY = func() bool { return term.IsTerminal(int(os.Stderr.Fd())) }
+	// loginFn is the browser login.
+	loginFn = auth.Login
+	// claudeGet runs `claude mcp get tokenvault` and returns its output.
+	claudeGet = func() (string, error) {
+		out, err := exec.Command("claude", "mcp", "get", "tokenvault").CombinedOutput()
+		return string(out), err
+	}
 	claudeRun = func(args ...string) error {
 		c := exec.Command("claude", args...)
 		c.Stdout, c.Stderr, c.Stdin = os.Stderr, os.Stderr, os.Stdin
@@ -42,7 +53,7 @@ func isReauthRequired(err error) bool {
 // contexts, and non-interactive shells, keep the plain error.
 func withReauth(cmd *cobra.Command, cc *cmdContext, fn func() error) error {
 	err := fn()
-	if !isReauthRequired(err) || cc.Ctx.Type != "admin" || !stdinIsTTY() {
+	if !isReauthRequired(err) || cc.Ctx.Type != "admin" || !stderrIsTTY() {
 		return err
 	}
 	cmd.PrintErrln("This action needs a fresh sign-in. Opening the browser login...")
@@ -69,7 +80,7 @@ func reauthViaBrowser(cmd *cobra.Command, cc *cmdContext) error {
 	if err != nil {
 		return err
 	}
-	if err := auth.Login(auth.LoginOptions{
+	if err := loginFn(auth.LoginOptions{
 		ContextName: cc.ContextName, APIURL: apiURL, FrontendURL: frontend,
 	}); err != nil {
 		return err
@@ -77,6 +88,20 @@ func reauthViaBrowser(cmd *cobra.Command, cc *cmdContext) error {
 	cfg, err := config.Load()
 	if err != nil {
 		return err
+	}
+	// The browser may have signed in as someone else. Login already replaced
+	// the stored context, so put the original back and refuse to retry.
+	if nc := cfg.Contexts[cc.ContextName]; nc != nil && cc.Ctx.Identity != "" &&
+		!strings.EqualFold(nc.Identity, cc.Ctx.Identity) {
+		if old := prev.Contexts[cc.ContextName]; old != nil {
+			cfg.Contexts[cc.ContextName] = old
+		}
+		cfg.Current = prev.Current
+		_ = cfg.Save()
+		return &clierr.CLIError{Kind: clierr.KindAuth, Command: cmd.CommandPath(),
+			Message: fmt.Sprintf("signed in as %s, but context %q belongs to %s; nothing was changed",
+				safeText(nc.Identity), cc.ContextName, safeText(cc.Ctx.Identity)),
+			Hint: "sign in with the same account, or log in again under a different context name (`tvault login --as <name>`)"}
 	}
 	if cfg.Current != prev.Current { // keep the user's active context
 		cfg.Current = prev.Current
@@ -118,6 +143,11 @@ func ensureAgent(cmd *cobra.Command, cc *cmdContext, ref, command string, yes bo
 	// pickRef passes an unmatched ref through with no name; an ID-shaped ref
 	// is trusted as an ID (listing may be denied), anything else is a miss.
 	if rs[0].Name != "" || agentIDPattern.MatchString(ref) {
+		// The agent can't be used from Claude Code while MCP is off for it.
+		// Best effort: a denied lookup or an older server stays silent.
+		if a, gerr := cc.Client.GetAgent(rs[0].ID); gerr == nil && a.MCPEnabled != nil && !*a.MCPEnabled {
+			cmd.PrintErrf("warning: MCP is turned off for agent %s, so Claude Code will not be able to use it. Turn it on in the console.\n", rs[0].label())
+		}
 		return rs[0], nil
 	}
 	if !yes {
@@ -214,7 +244,7 @@ func runConnect(cmd *cobra.Command, args []string) error {
 // and grants already exist, so the manual command is printed instead.
 func registerWithClaude(cmd *cobra.Command, cc *cmdContext, printOnly bool) {
 	mcpURL := strings.TrimRight(cc.Ctx.APIURL, "/") + "/api/agents/mcp"
-	add := []string{"mcp", "add", "--transport", "http", "tokenvault", mcpURL}
+	add := []string{"mcp", "add", "--transport", "http", "--scope", "user", "tokenvault", mcpURL}
 	line := "claude " + strings.Join(add, " ")
 	if printOnly || cc.Client.DryRun {
 		cmd.PrintErrf("To register Token Vault with Claude Code, run:\n  %s\n", line)
@@ -224,8 +254,14 @@ func registerWithClaude(cmd *cobra.Command, cc *cmdContext, printOnly bool) {
 		cmd.PrintErrf("Claude Code (`claude`) is not on PATH. To register Token Vault later, run:\n  %s\n", line)
 		return
 	}
-	if claudeRun("mcp", "get", "tokenvault") == nil {
-		cmd.PrintErrln("Claude Code already has a \"tokenvault\" MCP server.")
+	if out, err := claudeGet(); err == nil {
+		if strings.Contains(out, mcpURL) {
+			cmd.PrintErrln("Claude Code already has a \"tokenvault\" MCP server for this control plane.")
+			return
+		}
+		// Registered, but pointing somewhere else (another environment).
+		// Replacing it is the user's call, so only print the commands.
+		cmd.PrintErrf("Claude Code already has a \"tokenvault\" MCP server, but not for %s.\nTo switch it, run:\n  claude mcp remove tokenvault\n  %s\n", mcpURL, line)
 		return
 	}
 	cmd.PrintErrf("Registering Token Vault with Claude Code:\n  %s\n", line)

@@ -18,9 +18,11 @@ import (
 // the list endpoint returns "grantCount" instead. Grants here is populated
 // from the single-agent GET via GetAgent.
 type Agent struct {
-	ID         string   `json:"id"`
-	Name       string   `json:"name"`
-	Status     string   `json:"status"` // "active" | "suspended"
+	ID     string `json:"id"`
+	Name   string `json:"name"`
+	Status string `json:"status"` // "active" | "suspended"
+	// MCPEnabled is nil when the server doesn't report it.
+	MCPEnabled *bool    `json:"mcpEnabled,omitempty"`
 	GrantCount looseInt `json:"grantCount,omitempty"`
 	Grants     []Grant  `json:"grants,omitempty"`
 	// LastActiveAt is an RFC 3339 timestamp, or "" if the agent has never

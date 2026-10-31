@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/c-lgrant/tvault/internal/api"
+	"github.com/c-lgrant/tvault/internal/auth"
 	"github.com/c-lgrant/tvault/internal/clierr"
 	"github.com/c-lgrant/tvault/internal/config"
 	"github.com/spf13/cobra"
@@ -19,17 +20,19 @@ import (
 // agentBackend is a fake control plane with a fixed agent list, recording
 // creates, grants and stored values.
 type agentBackend struct {
-	srv     *httptest.Server
-	mu      sync.Mutex
-	agents  string // JSON array served by GET /api/agents
-	creates []map[string]any
-	grants  []string // "agentID/service"
-	stored  []string
+	srv        *httptest.Server
+	mu         sync.Mutex
+	agents     string // JSON array served by GET /api/agents
+	creates    []map[string]any
+	grants     []string // "agentID/service"
+	stored     []string
+	mcpEnabled string // value of mcpEnabled served by GET /api/agents/{id}
 }
 
 func newAgentBackend(t *testing.T, agentsJSON string) *agentBackend {
 	t.Helper()
-	b := &agentBackend{agents: agentsJSON}
+	b := &agentBackend{agents: agentsJSON, mcpEnabled: "true"}
+	lastBackend = b
 	b.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		b.mu.Lock()
 		defer b.mu.Unlock()
@@ -39,6 +42,8 @@ func newAgentBackend(t *testing.T, agentsJSON string) *agentBackend {
 		switch {
 		case r.Method == "GET" && r.URL.Path == "/api/agents":
 			w.Write([]byte(b.agents))
+		case r.Method == "GET" && strings.HasPrefix(r.URL.Path, "/api/agents/"):
+			w.Write([]byte(`{"id":"abcdefghij0123456789","name":"my-agent","mcpEnabled":` + b.mcpEnabled + `}`))
 		case r.Method == "POST" && r.URL.Path == "/api/agents":
 			b.creates = append(b.creates, body)
 			w.WriteHeader(201)
@@ -62,6 +67,8 @@ func newAgentBackend(t *testing.T, agentsJSON string) *agentBackend {
 	setupContext(t, &config.Context{Type: "key", APIURL: b.srv.URL, Identity: "ci", APIKey: "tvkey_k"})
 	return b
 }
+
+var lastBackend *agentBackend
 
 const existingAgent = `[{"id":"abcdefghij0123456789","name":"my-agent","status":"active"}]`
 
@@ -138,10 +145,14 @@ func TestAddFor_PromptsOnTTY(t *testing.T) {
 
 // fakeClaude stubs the Claude Code seams. getErr is what `claude mcp get`
 // returns; ran records every invocation.
-func fakeClaude(t *testing.T, onPath bool, getErr error) *[]string {
+func fakeClaude(t *testing.T, onPath bool, getOut string, getErr error) *[]string {
 	t.Helper()
 	var ran []string
-	origLook, origRun := claudeLookPath, claudeRun
+	origLook, origRun, origGet := claudeLookPath, claudeRun, claudeGet
+	claudeGet = func() (string, error) {
+		ran = append(ran, "mcp get tokenvault")
+		return strings.ReplaceAll(getOut, "%URL%", lastBackend.srv.URL), getErr
+	}
 	claudeLookPath = func() (string, error) {
 		if onPath {
 			return "/usr/bin/claude", nil
@@ -155,14 +166,14 @@ func fakeClaude(t *testing.T, onPath bool, getErr error) *[]string {
 		}
 		return nil
 	}
-	t.Cleanup(func() { claudeLookPath, claudeRun = origLook, origRun })
+	t.Cleanup(func() { claudeLookPath, claudeRun, claudeGet = origLook, origRun, origGet })
 	return &ran
 }
 
 func TestConnect_GrantsAndRegistersWithClaude(t *testing.T) {
 	b := newAgentBackend(t, existingAgent)
 	withStdin(t, "", false, "")
-	ran := fakeClaude(t, true, errors.New("exit status 1"))
+	ran := fakeClaude(t, true, "", errors.New("exit status 1"))
 	stdout, stderr, err := runCLI(t, "connect", "my-agent", "github", "stripe")
 	if err != nil {
 		t.Fatal(err)
@@ -170,7 +181,7 @@ func TestConnect_GrantsAndRegistersWithClaude(t *testing.T) {
 	if len(b.grants) != 2 {
 		t.Errorf("grants = %q", b.grants)
 	}
-	want := "mcp add --transport http tokenvault " + b.srv.URL + "/api/agents/mcp"
+	want := "mcp add --transport http --scope user tokenvault " + b.srv.URL + "/api/agents/mcp"
 	if len(*ran) != 2 || (*ran)[0] != "mcp get tokenvault" || (*ran)[1] != want {
 		t.Errorf("claude invocations = %q, want get then %q", *ran, want)
 	}
@@ -188,7 +199,7 @@ func TestConnect_GrantsAndRegistersWithClaude(t *testing.T) {
 func TestConnect_AlreadyRegisteredDoesNotAdd(t *testing.T) {
 	newAgentBackend(t, existingAgent)
 	withStdin(t, "", false, "")
-	ran := fakeClaude(t, true, nil)
+	ran := fakeClaude(t, true, "tokenvault: %URL%/api/agents/mcp (HTTP)", nil)
 	if _, _, err := runCLI(t, "connect", "my-agent", "github"); err != nil {
 		t.Fatal(err)
 	}
@@ -201,7 +212,7 @@ func TestConnect_PrintAndNoClaudeRunNothing(t *testing.T) {
 	for _, flag := range []string{"--print", "--no-claude"} {
 		newAgentBackend(t, existingAgent)
 		withStdin(t, "", false, "")
-		ran := fakeClaude(t, true, errors.New("x"))
+		ran := fakeClaude(t, true, "", errors.New("x"))
 		_, stderr, err := runCLI(t, "connect", "my-agent", "github", flag)
 		if err != nil {
 			t.Fatal(err)
@@ -209,7 +220,7 @@ func TestConnect_PrintAndNoClaudeRunNothing(t *testing.T) {
 		if len(*ran) != 0 {
 			t.Errorf("%s: ran claude: %q", flag, *ran)
 		}
-		if flag == "--print" && !strings.Contains(stderr, "claude mcp add --transport http tokenvault") {
+		if flag == "--print" && !strings.Contains(stderr, "claude mcp add --transport http --scope user tokenvault") {
 			t.Errorf("--print should show the command: %q", stderr)
 		}
 		if flag == "--no-claude" && strings.Contains(stderr, "claude mcp add") {
@@ -221,7 +232,7 @@ func TestConnect_PrintAndNoClaudeRunNothing(t *testing.T) {
 func TestConnect_NoClaudeOnPathPrintsCommand(t *testing.T) {
 	newAgentBackend(t, existingAgent)
 	withStdin(t, "", false, "")
-	ran := fakeClaude(t, false, nil)
+	ran := fakeClaude(t, false, "", nil)
 	_, stderr, err := runCLI(t, "connect", "my-agent", "github")
 	if err != nil {
 		t.Fatal(err)
@@ -234,7 +245,7 @@ func TestConnect_NoClaudeOnPathPrintsCommand(t *testing.T) {
 func TestConnect_MissingAgentNeedsYes(t *testing.T) {
 	b := newAgentBackend(t, `[]`)
 	withStdin(t, "", false, "")
-	fakeClaude(t, false, nil)
+	fakeClaude(t, false, "", nil)
 	if _, _, err := runCLI(t, "connect", "fresh", "github"); err == nil || clierr.ExitCode(err) != userExit {
 		t.Fatalf("err = %v, want a user error", err)
 	}
@@ -268,14 +279,14 @@ func reauthServer(t *testing.T, failures int) (*httptest.Server, *int) {
 func withReauthStub(t *testing.T, tty bool, srvURL string) *int {
 	t.Helper()
 	var logins int
-	origTTY, origLogin := stdinIsTTY, reauthLogin
-	stdinIsTTY = func() bool { return tty }
+	origTTY, origLogin := stderrIsTTY, reauthLogin
+	stderrIsTTY = func() bool { return tty }
 	reauthLogin = func(_ *cobra.Command, cc *cmdContext) error {
 		logins++
 		cc.Client = &api.Client{BaseURL: srvURL, HTTP: http.DefaultClient}
 		return nil
 	}
-	t.Cleanup(func() { stdinIsTTY, reauthLogin = origTTY, origLogin })
+	t.Cleanup(func() { stderrIsTTY, reauthLogin = origTTY, origLogin })
 	return &logins
 }
 
@@ -318,5 +329,69 @@ func TestWithReauth_NonTTYAndKeyContextsKeepTheError(t *testing.T) {
 		if code := clierr.ExitCode(err); code != 2 {
 			t.Errorf("%s: exit = %d, want 2", name, code)
 		}
+	}
+}
+
+func TestWithReauth_PipedStdinStillSignsInWhenStderrIsTTY(t *testing.T) {
+	srv, _ := reauthServer(t, 1)
+	logins := withReauthStub(t, true, srv.URL) // stderr is a TTY
+	origStdin := stdinIsTTY
+	stdinIsTTY = func() bool { return false } // stdin is a pipe
+	t.Cleanup(func() { stdinIsTTY = origStdin })
+	cc := &cmdContext{Ctx: &config.Context{Type: "admin"}, Client: &api.Client{BaseURL: srv.URL, HTTP: srv.Client()}}
+	err := withReauth(rootCmd, cc, func() error { _, e := cc.Client.CreateAgent("x"); return e })
+	if err != nil || *logins != 1 {
+		t.Errorf("err=%v logins=%d", err, *logins)
+	}
+}
+
+func TestConnect_ExistingRegistrationForOtherControlPlanePrintsSwitch(t *testing.T) {
+	newAgentBackend(t, existingAgent)
+	withStdin(t, "", false, "")
+	ran := fakeClaude(t, true, "tokenvault: https://api.other.example/api/agents/mcp (HTTP)", nil)
+	_, stderr, err := runCLI(t, "connect", "my-agent", "github")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(*ran) != 1 {
+		t.Errorf("must not change Claude's config on its own: %q", *ran)
+	}
+	if !strings.Contains(stderr, "claude mcp remove tokenvault") || !strings.Contains(stderr, "--scope user tokenvault") {
+		t.Errorf("should print remove + add: %q", stderr)
+	}
+}
+
+func TestConnect_WarnsWhenAgentHasMCPOff(t *testing.T) {
+	b := newAgentBackend(t, existingAgent)
+	b.mcpEnabled = "false"
+	withStdin(t, "", false, "")
+	fakeClaude(t, false, "", nil)
+	_, stderr, err := runCLI(t, "connect", "my-agent", "github")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stderr, "MCP is turned off") {
+		t.Errorf("no MCP warning: %q", stderr)
+	}
+}
+
+func TestReauthViaBrowser_IdentityMismatchRestoresContextAndAborts(t *testing.T) {
+	setupContext(t, &config.Context{Type: "admin", APIURL: "https://api.example.test", Identity: "me@example.com", RefreshToken: "old-rt"})
+	origLogin := loginFn
+	loginFn = func(opts auth.LoginOptions) error { // browser signed in as someone else
+		cfg, _ := config.Load()
+		cfg.Contexts[opts.ContextName] = &config.Context{Type: "admin", APIURL: opts.APIURL, Identity: "other@example.com", RefreshToken: "new-rt"}
+		return cfg.Save()
+	}
+	t.Cleanup(func() { loginFn = origLogin })
+	cc := &cmdContext{ContextName: "t", Ctx: &config.Context{Type: "admin", APIURL: "https://api.example.test", Identity: "me@example.com"},
+		Client: &api.Client{}}
+	err := reauthViaBrowser(rootCmd, cc)
+	if err == nil || clierr.ExitCode(err) != 2 || !strings.Contains(err.Error(), "other@example.com") {
+		t.Fatalf("err = %v, want an auth error naming the other account", err)
+	}
+	cfg, _ := config.Load()
+	if got := cfg.Contexts["t"]; got == nil || got.Identity != "me@example.com" || got.RefreshToken != "old-rt" {
+		t.Errorf("context not restored: %+v", got)
 	}
 }
