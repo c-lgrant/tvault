@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"net/url"
+	"strconv"
 )
 
 // MCPServer is one MCP server attached to a credential. Headers are header
@@ -17,6 +18,38 @@ type MCPServer struct {
 	Headers     map[string]string `json:"headers"`
 	Template    string            `json:"template,omitempty"`
 	URLRedacted bool              `json:"urlRedacted,omitempty"`
+	Tools       *MCPToolsSummary  `json:"tools,omitempty"`
+}
+
+// MCPToolsSummary is the cached tool list's summary (count, never the tools).
+type MCPToolsSummary struct {
+	Count     int    `json:"count"`
+	FetchedAt string `json:"fetchedAt,omitempty"`
+	Error     string `json:"error,omitempty"`
+	Truncated bool   `json:"truncated,omitempty"`
+	Stale     bool   `json:"stale,omitempty"`
+}
+
+// String renders the summary for a table cell: "12", "12 (stale)", "pending",
+// or the last fetch's error code.
+func (t *MCPToolsSummary) String() string {
+	if t == nil {
+		return ""
+	}
+	if t.Error != "" {
+		return t.Error
+	}
+	if t.FetchedAt == "" {
+		return "pending"
+	}
+	s := strconv.Itoa(t.Count)
+	if t.Truncated {
+		s += "+"
+	}
+	if t.Stale {
+		s += " (stale)"
+	}
+	return s
 }
 
 // MCPTemplate is a preset from GET /api/config/mcp-templates.
@@ -56,7 +89,8 @@ func (c *Client) PutMCPServers(service string, servers []MCPServer) ([]MCPServer
 		if servers[i].Headers == nil {
 			servers[i].Headers = map[string]string{}
 		}
-		servers[i].URLRedacted = false // read-only view flag, never sent back
+		servers[i].URLRedacted = false // read-only view fields, never sent back
+		servers[i].Tools = nil
 	}
 	body, err := c.doRequest("PUT", "/api/tokens/"+url.PathEscape(service)+"/mcp-servers",
 		mcpServersBody{Servers: servers}, nil)

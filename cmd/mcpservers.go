@@ -95,13 +95,13 @@ var mcpServersListCmd = &cobra.Command{
 				url += " (path hidden)"
 			}
 			rows[i] = map[string]string{
-				"name": s.Name, "url": url, "template": s.Template,
+				"name": s.Name, "url": url, "template": s.Template, "tools": s.Tools.String(),
 				"headers": headerSummary(s.Headers), "endpoint": mcpEndpoint(cc.Ctx.APIURL, args[0], s.Name),
 			}
 		}
-		cols := []string{"name", "url", "template", "endpoint"}
+		cols := []string{"name", "url", "template", "tools", "endpoint"}
 		if cc.Format == output.FormatWide {
-			cols = []string{"name", "url", "template", "headers", "endpoint"}
+			cols = []string{"name", "url", "template", "tools", "headers", "endpoint"}
 		}
 		return output.Render(os.Stdout, cc.Format, cols, rows)
 	},
