@@ -90,8 +90,14 @@ export interface OAuthProviderConfig {
   clientSecret: string;
   /** Client ID; falls back to the refresh hint when omitted. */
   clientId?: string;
-  /** Token endpoint; falls back to the refresh hint when omitted. */
+  /**
+   * Token endpoint. Optional for google/github/spotify (built in). For any
+   * other provider it is required: the client secret is only ever sent to this
+   * URL or a built-in one, never to a URL a request or hint names.
+   */
   tokenUrl?: string;
+  /** Authorize endpoint, for a provider outside the built-in table (oauth-callback). */
+  authorizeUrl?: string;
 }
 
 /**

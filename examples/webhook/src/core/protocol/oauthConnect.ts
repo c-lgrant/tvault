@@ -41,15 +41,33 @@ export async function pkceChallenge(verifier: string): Promise<string> {
   return base64UrlEncodeNoPad(new Uint8Array(await crypto.subtle.digest("SHA-256", utf8(verifier))));
 }
 
+/** Start path: the browser lands here first so the flow can be bound to it with a cookie. */
+export const OAUTH_START_PATH = "/v1/oauth/start";
+
+/** Cookie binding the browser that started the flow to the callback. Value: sha256 hex of the state nonce. */
+export const OAUTH_COOKIE = "tv_oauth_state";
+
 /**
  * Token endpoints the webhook will send a client secret to without being told
- * so locally. Deliberately a fixed table: a state ticket's `tku` is only ever
- * cross-checked against it (or against the operator's OAUTH_PROVIDERS_JSON
- * `tokenUrl`), never trusted, so a compromised control plane cannot point the
- * client secret at a server of its choosing.
+ * so locally. Deliberately a fixed table: a state ticket's, refresh hint's or
+ * stored hint's token URL is only ever cross-checked against it (or against the
+ * operator's OAUTH_PROVIDERS_JSON `tokenUrl`), never trusted, so a compromised
+ * control plane cannot point the client secret at a server of its choosing.
  */
 export const BUILTIN_TOKEN_URLS: Readonly<Record<string, string>> = {
   google: "https://oauth2.googleapis.com/token",
   github: "https://github.com/login/oauth/access_token",
   spotify: "https://accounts.spotify.com/api/token",
 };
+
+/** Authorize endpoints (and fixed extra params) the webhook builds the provider redirect from. */
+export const BUILTIN_AUTHORIZE: Readonly<Record<string, { url: string; extra: Record<string, string> }>> = {
+  google: { url: "https://accounts.google.com/o/oauth2/v2/auth", extra: { access_type: "offline", prompt: "consent" } },
+  github: { url: "https://github.com/login/oauth/authorize", extra: {} },
+  spotify: { url: "https://accounts.spotify.com/authorize", extra: {} },
+};
+
+export async function sha256Hex(s: string): Promise<string> {
+  const d = new Uint8Array(await crypto.subtle.digest("SHA-256", utf8(s)));
+  return Array.from(d, (b) => b.toString(16).padStart(2, "0")).join("");
+}

@@ -6,14 +6,17 @@
 // from LOCAL provider config (ctx.config.oauthProviders), NEVER from the
 // TV-supplied refresh hint. The reference trusts hint.clientSecret
 // (refresh.py:246) — that lets the control plane influence the credential
-// exchange, which breaks the trust model. Here the hint may supply only the
-// non-secret tokenUrl/clientId (and even those prefer local config).
+// exchange, which breaks the trust model. Here the client secret goes only to
+// a token URL from local config or the built-in table (google, github,
+// spotify); a hint naming any other URL is refused. The hint may supply only
+// a non-secret clientId, and only when local config has none.
 
 import { hmacAuth } from "../core/middleware/hmacAuth.ts";
 import { readJsonBody } from "../core/middleware/body.ts";
 import { sendError } from "../core/middleware/respond.ts";
 import { invalidRequest } from "../core/protocol/errors.ts";
 import { buildEncryptedTokenDocument, decryptTokenField } from "../core/protocol/tokendoc.ts";
+import { BUILTIN_TOKEN_URLS } from "../core/protocol/oauthConnect.ts";
 import type { FeatureModule } from "../core/registry.ts";
 
 function nowIso(): string {
@@ -71,8 +74,24 @@ export function refreshNotifyModule(): FeatureModule {
           const provider = (stored.provider ?? hint.provider ?? "").toLowerCase();
           const local = ctx.config.oauthProviders?.[provider];
           const clientSecret = local?.clientSecret;
-          const tokenUrl = local?.tokenUrl ?? stored.tokenUrl ?? hint.tokenUrl;
+          // The client secret only ever goes to a token URL the operator
+          // configured or the built-in table names. The stored and TV-supplied
+          // hints are cross-checks: a different URL is refused, never followed.
+          const tokenUrl = local?.tokenUrl ?? BUILTIN_TOKEN_URLS[provider];
           const clientId = local?.clientId ?? stored.clientId ?? hint.clientId;
+
+          if (clientSecret && tokenUrl) {
+            for (const claimed of [stored.tokenUrl, hint.tokenUrl]) {
+              if (claimed && claimed !== tokenUrl) {
+                return c.json({ requestId, status: "refresh_failed", message: "Token URL does not match this webhook's provider config" });
+              }
+            }
+            // The webhook's own record of the client that minted the token must
+            // match the configured one (the TV hint's id is TV's, so it is not checked).
+            if (local?.clientId && stored.clientId && stored.clientId !== local.clientId) {
+              return c.json({ requestId, status: "refresh_failed", message: "Client id does not match this webhook's provider config" });
+            }
+          }
 
           if (!tokenUrl || !clientId || !clientSecret) {
             // No local credentials to refresh with — acknowledge only.

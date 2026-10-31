@@ -57,6 +57,8 @@ export interface TicketPayload {
   tku?: string;
   /** OAuth state ticket: the user's OAuth client id (not a secret). */
   clid?: string;
+  /** OAuth state ticket: space-separated scopes to request. */
+  scp?: string;
   /** OAuth state ticket: the redirect URI used at authorize; must be this webhook's callback. */
   rdu?: string;
 }
