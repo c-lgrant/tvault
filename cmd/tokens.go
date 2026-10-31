@@ -132,11 +132,11 @@ var tokensSetCmd = &cobra.Command{
 }
 
 func runTokensSet(cmd *cobra.Command, args []string) error {
-	value, _ := cmd.Flags().GetString("value")
-	if value == "" {
-		return &clierr.CLIError{Kind: clierr.KindUser, Command: "tokens set", Message: "--value is required"}
-	}
 	cc, err := resolve(cmd)
+	if err != nil {
+		return err
+	}
+	value, err := readSecretValue(cmd, "tokens set", false)
 	if err != nil {
 		return err
 	}
@@ -282,16 +282,20 @@ func runTokensCreate(cmd *cobra.Command, _ []string) error {
 
 	typ, _ := cmd.Flags().GetString("type")
 	service, _ := cmd.Flags().GetString("service")
-	value, _ := cmd.Flags().GetString("value")
 
 	var req *api.CreateTokenRequest
-	if typ != "" && service != "" {
+	if service != "" {
+		value, verr := readSecretValue(cmd, "tokens create", true)
+		if verr != nil {
+			return verr
+		}
+		// Service known but type missing → default to PlainText, so
+		// `tvault add foo` works without a --type flag for the most common
+		// case; explicit --type still overrides.
+		if typ == "" {
+			typ = "PlainText"
+		}
 		req = &api.CreateTokenRequest{Type: typ, ServiceName: service, Credential: value}
-	} else if service != "" {
-		// Service known but type missing → default to PlainText. This makes
-		// `tvault add foo --value bar` work without a --type flag for the
-		// most common case; explicit --type still overrides.
-		req = &api.CreateTokenRequest{Type: "PlainText", ServiceName: service, Credential: value}
 	} else {
 		if !cc.IsTTY {
 			return &clierr.CLIError{Kind: clierr.KindUser, Command: "tokens create",
@@ -310,7 +314,7 @@ func runTokensCreate(cmd *cobra.Command, _ []string) error {
 	}
 	if req.Credential == "" {
 		cmd.PrintErrf("Created token %q (no value stored).\n", req.ServiceName)
-		cmd.PrintErrf("  fill with: tvault tokens set %s --value <secret>\n", req.ServiceName)
+		cmd.PrintErrf("  fill with: printf %%s \"$SECRET\" | tvault set %s --value-stdin\n", req.ServiceName)
 	} else {
 		cmd.PrintErrf("Created token %q.\n", req.ServiceName)
 	}
@@ -369,14 +373,14 @@ var tokensStoreTicketCmd = &cobra.Command{
 func init() {
 	tokensGetCmd.Flags().Bool("check", false, "exit 0 if the token has a value, 6 if empty; never prints the secret")
 	// Note: --field, --kv, --json are registered as rootCmd.PersistentFlags() in root.go
-	tokensSetCmd.Flags().String("value", "", "new credential value")
+	addValueFlags(tokensSetCmd, "new credential value")
 	tokensEditCmd.Flags().String("name", "", "display name")
 	tokensEditCmd.Flags().String("notes", "", "freeform notes")
 	tokensEditCmd.Flags().StringSlice("tags", nil, "comma-separated tags")
 	tokensRmCmd.Flags().Bool("force", false, "skip the confirmation prompt")
 	tokensCreateCmd.Flags().String("type", "", "token type (JWT, PlainText, Certificate, SSHKey, RawCredential, TOTP)")
 	tokensCreateCmd.Flags().String("service", "", "service name")
-	tokensCreateCmd.Flags().String("value", "", "credential value")
+	addValueFlags(tokensCreateCmd, "credential value")
 	tokensStoreTicketCmd.Flags().String("value", "", "secret to store on the webhook (omit to print ticket envelope only)")
 	tokensStoreTicketCmd.Flags().String("type", "PlainText", "token type when --value is set")
 

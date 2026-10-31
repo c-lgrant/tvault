@@ -82,9 +82,9 @@ func init() {
 	addCmd.Flags().String("type", "", "token type (defaults to PlainText)")
 	addCmd.Flags().String("service", "", "")
 	_ = addCmd.Flags().MarkHidden("service")
-	addCmd.Flags().String("value", "", "credential value")
+	addValueFlags(addCmd, "credential value")
 
-	setShortCmd.Flags().String("value", "", "new credential value")
+	addValueFlags(setShortCmd, "new credential value")
 	rmShortCmd.Flags().Bool("force", false, "skip the confirmation prompt")
 	getShortCmd.Flags().Bool("check", false, "exit 0 if the token has a value, 6 if empty; never prints the secret")
 
