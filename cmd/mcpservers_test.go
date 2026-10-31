@@ -149,6 +149,23 @@ func TestMCPServers_ListJSONAndTable(t *testing.T) {
 		t.Errorf("wide table = %q", table)
 	}
 
+	b.servers = `[{"name":"github","url":"https://api.githubcopilot.com/mcp","tools":{"count":41,"fetchedAt":"2026-10-31T20:00:00Z","stale":true}},
+	 {"name":"docs","url":"https://docs.example.com/mcp","tools":{"count":0,"fetchedAt":null}}]`
+	table, _, _ = run(t, "mcp-servers", "ls", "github", "--format", "table")
+	if !strings.Contains(table, "41 (stale)") || !strings.Contains(table, "pending") {
+		t.Errorf("tools column = %q", table)
+	}
+	// A write sends the list back without the read-only tool summary.
+	if _, _, err := run(t, "mcp-servers", "add", "github", "--name", "x", "--url", "https://x.example.com/mcp",
+		"--header", "Authorization: Bearer ${TOKEN}"); err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range putServers(t, b, 0) {
+		if _, ok := s["tools"]; ok {
+			t.Errorf("PUT sent tools: %v", s)
+		}
+	}
+
 	b.servers = `[]`
 	stdout, stderr, _ := run(t, "mcp-servers", "ls", "github", "--format", "table")
 	if stdout != "" || !strings.Contains(stderr, "No MCP servers") {
