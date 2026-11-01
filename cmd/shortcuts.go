@@ -3,6 +3,7 @@ package cmd
 import (
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/c-lgrant/tvault/internal/api"
 	"github.com/c-lgrant/tvault/internal/clierr"
@@ -59,7 +60,10 @@ Token Vault.
 
 --for <agent> then grants it to that agent (created if missing). Append =<uses>
 to choose what the grant is for, as in ` + "`tvault grant`" + `: --for my-agent=tools or
---for my-agent=value,tools:github. Plain --for <agent> grants the value.
+--for my-agent=value,tools:github. Plain --for <agent> grants the value. Repeat --for to grant several agents.
+
+--labels work,ai then labels the credential (see ` + "`tvault label --help`" + `). If that
+fails the value stays stored and the retry command is printed.
 
 --mcp <preset> then attaches that MCP server preset to the credential (see
 ` + "`tvault mcp-servers templates`" + `), so agents granted "tools" can call it. If
@@ -72,30 +76,38 @@ attaching fails the value stays stored and the retry command is printed.`,
 		// via its --service flag. runTokensCreate already reads --type and
 		// --value off the same FlagSet.
 		_ = cmd.Flags().Set("service", args[0])
-		forFlag, _ := cmd.Flags().GetString("for")
+		forFlags, _ := cmd.Flags().GetStringArray("for")
 		mcpPreset, _ := cmd.Flags().GetString("mcp")
-		if forFlag == "" && mcpPreset == "" {
+		rawLabels, _ := cmd.Flags().GetStringSlice("labels")
+		labelSet := normLabels(rawLabels)
+		if len(forFlags) == 0 && mcpPreset == "" && len(labelSet) == 0 {
 			return runTokensCreate(cmd, nil)
 		}
-		agentRef, grantArg := splitForFlag(forFlag, args[0])
-		var specs []api.GrantSpec
-		if forFlag != "" {
+		// Each --for value is one agent with its own <uses>; values are never
+		// split on commas because the uses syntax contains them.
+		type forTarget struct {
+			ref, arg string
+			specs    []api.GrantSpec
+			agent    resolved
+		}
+		targets := make([]*forTarget, 0, len(forFlags))
+		for _, f := range forFlags {
+			ref, grantArg := splitForFlag(f, args[0])
 			spec, err := parseGrantSpec(grantArg, "add")
 			if err != nil {
 				return err
 			}
-			specs = []api.GrantSpec{spec}
+			targets = append(targets, &forTarget{ref: ref, arg: grantArg, specs: []api.GrantSpec{spec}})
 		}
 		yes, _ := cmd.Flags().GetBool("yes")
 		cc, err := resolve(cmd)
 		if err != nil {
 			return err
 		}
-		// Settle the agent and the preset before asking for the secret, so a
+		// Settle the agents and the preset before asking for the secret, so a
 		// refused agent or a typo'd preset never costs the user a typed value.
-		var agent resolved
-		if forFlag != "" {
-			if agent, err = ensureAgent(cmd, cc, agentRef, "add", yes); err != nil {
+		for _, tg := range targets {
+			if tg.agent, err = ensureAgent(cmd, cc, tg.ref, "add", yes); err != nil {
 				return enrich(cmd, cc, err)
 			}
 		}
@@ -110,19 +122,42 @@ attaching fails the value stays stored and the retry command is printed.`,
 		}
 		if tpl != nil {
 			if err := attachMCPPreset(cmd, cc, args[0], tpl); err != nil {
-				if forFlag != "" {
-					var ce *clierr.CLIError
-					if errors.As(err, &ce) {
-						ce.Hint += fmt.Sprintf(", then: tvault grant %s %s", agentRef, grantArg)
+				var ce *clierr.CLIError
+				if errors.As(err, &ce) {
+					for _, tg := range targets {
+						ce.Hint += fmt.Sprintf(", then: tvault grant %s %s", tg.ref, tg.arg)
 					}
 				}
 				return enrich(cmd, cc, err)
 			}
 		}
-		if err := grantSpecs(cmd, cc, agent, specs, "add"); err != nil {
-			return enrich(cmd, cc, err)
+		// Grants run before labels: a label problem must not block access the
+		// user asked for. The credential stays stored either way.
+		var firstErr error
+		for _, tg := range targets {
+			if err := grantSpecs(cmd, cc, tg.agent, tg.specs, "add"); err != nil && firstErr == nil {
+				firstErr = enrich(cmd, cc, err)
+			} else if err != nil {
+				cmd.PrintErrln(err)
+			}
 		}
-		return nil
+		if len(labelSet) > 0 {
+			if _, err := cc.Client.PutLabels("credential", args[0], labelSet); err != nil {
+				if ce := new(clierr.CLIError); errors.As(err, &ce) {
+					ce.Hint = fmt.Sprintf("the credential %q is stored; retry with: tvault label set credential %s %s",
+						args[0], args[0], strings.Join(labelSet, " "))
+				}
+				err = enrich(cmd, cc, err)
+				if firstErr == nil {
+					firstErr = err
+				} else {
+					cmd.PrintErrln(err)
+				}
+			} else if !cc.Client.DryRun {
+				cmd.PrintErrf("Labelled %s: %s.\n", args[0], strings.Join(labelSet, ", "))
+			}
+		}
+		return firstErr
 	},
 }
 
@@ -153,7 +188,8 @@ func init() {
 	addCmd.Flags().String("service", "", "")
 	_ = addCmd.Flags().MarkHidden("service")
 	addValueFlags(addCmd, "credential value")
-	addCmd.Flags().String("for", "", "after storing, grant the credential to this agent (name or id); created if missing. <agent>=<uses>[:<server>,...] grants tools and/or value, e.g. my-agent=tools")
+	addCmd.Flags().StringArray("for", nil, "after storing, grant the credential to this agent (name or id); created if missing. <agent>=<uses>[:<server>,...] grants tools and/or value, e.g. my-agent=tools. Repeat for several agents")
+	addCmd.Flags().StringSlice("labels", nil, "after storing, label the credential (comma-separated or repeated), e.g. --labels work,ai")
 	addCmd.Flags().String("mcp", "", "after storing, attach this MCP server preset to the credential (see `tvault mcp-servers templates`)")
 	addCmd.Flags().Bool("yes", false, "with --for: create the agent without asking if it does not exist")
 

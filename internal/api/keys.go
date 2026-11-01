@@ -62,6 +62,7 @@ type Key struct {
 	CreatedAt  string    `json:"createdAt"`
 	LastUsedAt *string   `json:"lastUsedAt"`
 	CreatedBy  CreatedBy `json:"createdBy"`
+	Labels     []string  `json:"labels,omitempty"`
 }
 
 // KeyGrant is one service grant on a key. Source says how the grant came to

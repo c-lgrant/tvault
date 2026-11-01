@@ -26,7 +26,21 @@ type agentBackend struct {
 	creates    []map[string]any
 	grants     []string // "agentID/service"
 	stored     []string
-	mcpEnabled string // value of mcpEnabled served by GET /api/agents/{id}
+	mcpEnabled string   // value of mcpEnabled served by GET /api/agents/{id}
+	labelPuts  []string // "path label,label" for each PUT /api/labels/...
+	labelFail  bool     // answer label PUTs with 422 INVALID_LABELS
+}
+
+func anyStrings(v any) []string {
+	var out []string
+	if arr, ok := v.([]any); ok {
+		for _, x := range arr {
+			if s, ok := x.(string); ok {
+				out = append(out, s)
+			}
+		}
+	}
+	return out
 }
 
 func newAgentBackend(t *testing.T, agentsJSON string) *agentBackend {
@@ -52,6 +66,14 @@ func newAgentBackend(t *testing.T, agentsJSON string) *agentBackend {
 			id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/agents/"), "/grants")
 			b.grants = append(b.grants, id+"/"+body["serviceName"].(string))
 			w.Write([]byte(`{}`))
+		case r.Method == "PUT" && strings.HasPrefix(r.URL.Path, "/api/labels/"):
+			b.labelPuts = append(b.labelPuts, r.URL.Path+" "+strings.Join(anyStrings(body["labels"]), ","))
+			if b.labelFail {
+				w.WriteHeader(422)
+				w.Write([]byte(`{"detail":{"code":"INVALID_LABELS","message":"Invalid label"}}`))
+				return
+			}
+			w.Write([]byte(`{"labels":[],"policies":[]}`))
 		case r.Method == "POST" && r.URL.Path == "/api/vault/store-ticket":
 			w.Write([]byte(`{"ticket":"tk","webhookUrl":"` + b.srv.URL + `/wh","expiresIn":60}`))
 		case r.Method == "POST" && r.URL.Path == "/wh/v1/store":

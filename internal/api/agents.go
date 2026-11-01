@@ -29,6 +29,7 @@ type Agent struct {
 	// fetched a credential.
 	LastActiveAt  string   `json:"lastActiveAt,omitempty"`
 	TotalAccesses looseInt `json:"totalAccesses,omitempty"`
+	Labels        []string `json:"labels,omitempty"`
 }
 
 // looseInt is an int that survives sloppy wire formats. The backend routes
