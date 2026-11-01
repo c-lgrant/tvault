@@ -240,14 +240,32 @@ type `tokens` / `context` / `agents grants` for every operation.
 | Shortcut | Equivalent |
 |----------|------------|
 | `tvault ls` | `tvault tokens list` |
+| `tvault credentials` (`creds`) | `tvault tokens list` |
+| `tvault history <svc>` | `tvault tokens history <svc>` |
 | `tvault get <svc>` | `tvault tokens get <svc>` |
-| `tvault add <svc>` | `tvault tokens create --service <svc>` (defaults `--type PlainText`). `--for <agent>` also grants it to that agent, creating the agent first if missing (asks `Create agent "<name>"? [y/N]` on a terminal; `--yes` skips, and a non-interactive shell needs it). `--for <agent>=<uses>[:<server>,...]` sets what the grant is for (`--for my-agent=tools`). `--mcp <preset>` then attaches that MCP server preset; if that fails the value stays stored and the retry command is printed. |
+| `tvault add <svc>` | `tvault tokens create --service <svc>` (defaults `--type PlainText`). `--for` is repeatable (`--for claude-code=tools --for cursor=tools`), one agent per value. `--labels work,ai` labels the credential after storing it (if that fails the value stays stored and the retry command is printed). `--for <agent>` also grants it to that agent, creating the agent first if missing (asks `Create agent "<name>"? [y/N]` on a terminal; `--yes` skips, and a non-interactive shell needs it). `--for <agent>=<uses>[:<server>,...]` sets what the grant is for (`--for my-agent=tools`). `--mcp <preset>` then attaches that MCP server preset; if that fails the value stays stored and the retry command is printed. |
 | `tvault connect <agent> [<svc>[=<uses>]...]` | Grant existing credentials to an agent (created if missing; `--yes`), then register Token Vault in Claude Code if `claude` is on PATH and has no `tokenvault` MCP server (`claude mcp add --transport http --scope user tokenvault <api>/api/agents/mcp`; a registration for a different control plane is left alone and the switch commands are printed). `--print` only prints that command; `--no-claude` skips it. `--server <svc>/<server>` registers that one credential MCP server instead, as its own entry (`claude mcp add --transport http --scope user tv-<svc>-<server> <api>/api/mcp/<svc>/<server>`; `--name` renames the entry), and notes if the agent still needs `tvault grant <agent> <svc>=tools:<server>`. Finish in Claude Code: `/mcp`, sign in, pick the agent. |
 | `tvault set <svc>` | `tvault tokens set <svc>` |
 | `tvault show <svc>` | `tvault tokens show <svc>` |
 | `tvault rm <svc>...` | `tvault tokens rm <svc>...` |
 | `tvault use <ctx>` | `tvault ctx use <ctx>` |
 | `tvault grant <agent> <svc>...` | `tvault agents grants add <agent> <svc>...` |
+
+### Labels and policies — `tvault label`, `tvault policy`
+
+Labels are short tags (1-32 lowercase letters, digits or hyphens) on
+credentials, agents and keys. A policy attached to a label applies to every
+object carrying it. A label never grants access. `<kind>` is `credential`,
+`agent` or `key`; agents and keys may be named by name or ID.
+
+| Command | Purpose |
+|---------|---------|
+| `label ls` | Every label with how many credentials, agents and keys carry it, and its policy IDs. `--json` prints the raw response. |
+| `label set <kind> <id> <label>...` | Replace the object's labels with exactly these. |
+| `label add <kind> <id> <label>...` | Add labels, keeping the existing ones. |
+| `label rm <kind> <id> <label>...` | Remove labels. Removing one that has policies loosens them, so it needs `policies:write` (`SCOPE_DENIED` → exit 8). |
+| `policy attach <policyId>` | Attach a policy: `--label`, `--credential`, `--agent`, `--key` (each repeatable). |
+| `policy detach <policyId>` | Detach it from the same kinds of target. |
 
 The bare `tvault <service>` form is still the back-compat shim (see below).
 

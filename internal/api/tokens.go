@@ -31,6 +31,7 @@ type Token struct {
 	DisplayName string   `json:"displayName,omitempty"`
 	Notes       string   `json:"description,omitempty"`
 	Tags        []string `json:"tags,omitempty"`
+	Labels      []string `json:"labels,omitempty"`
 }
 
 func (t *Token) UnmarshalJSON(b []byte) error {
