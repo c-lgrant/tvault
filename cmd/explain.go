@@ -17,8 +17,16 @@ var errorExplanations = map[string]struct {
 		Fix:  "Run `tvault vault unlock` (admin only). Agents must wait for the owner to unlock.",
 	},
 	"POLICY_DENIED": {
-		What: "An ABAC policy attached to this entity rejected the request.",
-		Fix:  "Inspect the policy named in the error footer; the request must satisfy every rule.",
+		What: "A policy rejected the request. The CLI says which rule (rate limit, allowed hours, lifetime cap, country, IP allowlist or channel), which policy, and what it is attached to (an agent, key, credential or label). Your own login sees all of that; an agent or key sees the policy name and, when it clears by itself, how long to wait, plus an event id to look up.",
+		Fix:  "Detach or loosen the policy: `tvault policy detach <policy-id> --label <label>` (or --credential, --agent, --key), or edit it in the web console. From an agent or key, ask the owner to look up the event id in Activity.",
+	},
+	"RATE_LIMITED": {
+		What: "Token Vault's own safety limit: this caller is asking faster than allowed, or was locked out briefly after too many refusals. It is not one of your policies (exit code 7).",
+		Fix:  "Wait for the retry time in the hint and slow down. It clears by itself.",
+	},
+	"WEBHOOK_CIRCUIT_OPEN": {
+		What: "Your webhook has been failing, so Token Vault stopped calling it to avoid hammering a broken service.",
+		Fix:  "Fix the webhook (`tvault webhook status`); calls resume after a successful check.",
 	},
 	"WEB_CONSOLE_REQUIRED": {
 		What: "An access channel policy restricts who can read this token, and this change could widen that (a grant, a folder change, a proxy, a key hand-over, or loosening the policy). Only the web console may do that; the CLI, agents and API keys may not.",
