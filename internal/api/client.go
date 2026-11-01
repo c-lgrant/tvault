@@ -97,13 +97,53 @@ type errorResponse struct {
 	Code         string
 	Message      string
 	MissingScope string
+	Denial       *denialFields // POLICY_DENIED extras; nil for any other error
+}
+
+// denialBody is the shape of a POLICY_DENIED body, either top-level (REST) or
+// inside "detail" (principal gate). Every field beyond code/policy/rule/reason
+// is additive: appliedVia and ruleSettings go to the owner's own (human)
+// login only; retryAfter and eventId may reach agents and keys too.
+type denialBody struct {
+	Code         string         `json:"code"`
+	Message      string         `json:"message"`
+	Error        string         `json:"error"`
+	Policy       string         `json:"policy"`
+	Rule         string         `json:"rule"`
+	Reason       string         `json:"reason"`
+	AppliedVia   *appliedVia    `json:"appliedVia"`
+	RuleSettings map[string]any `json:"ruleSettings"`
+	RetryAfter   *int           `json:"retryAfter"`
+	EventID      string         `json:"eventId"`
+}
+
+func (d denialBody) response() errorResponse {
+	msg := d.Message
+	if msg == "" {
+		msg = d.Reason
+	}
+	if msg == "" {
+		msg = d.Error
+	}
+	return errorResponse{Code: d.Code, Message: msg, Denial: &denialFields{
+		Policy: d.Policy, Rule: d.Rule, AppliedVia: d.AppliedVia,
+		RuleSettings: d.RuleSettings, RetryAfter: d.RetryAfter, EventID: d.EventID,
+	}}
 }
 
 func parseErrorBody(body []byte) errorResponse {
 	var probe struct {
 		Detail json.RawMessage `json:"detail"`
+		Code   string          `json:"code"`
 	}
-	if err := json.Unmarshal(body, &probe); err != nil || len(probe.Detail) == 0 {
+	if err := json.Unmarshal(body, &probe); err != nil {
+		return errorResponse{Message: string(body)}
+	}
+	if len(probe.Detail) == 0 {
+		var d denialBody
+		if probe.Code == "POLICY_DENIED" && json.Unmarshal(body, &d) == nil {
+			return d.response()
+		}
 		return errorResponse{Message: string(body)}
 	}
 	// detail may be a bare string …
@@ -118,6 +158,12 @@ func parseErrorBody(body []byte) errorResponse {
 		MissingScope *string `json:"missingScope"`
 	}
 	if err := json.Unmarshal(probe.Detail, &obj); err == nil {
+		if obj.Code == "POLICY_DENIED" {
+			var d denialBody
+			if json.Unmarshal(probe.Detail, &d) == nil {
+				return d.response()
+			}
+		}
 		er := errorResponse{Code: obj.Code, Message: obj.Message}
 		if obj.MissingScope != nil {
 			er.MissingScope = *obj.MissingScope
@@ -363,12 +409,20 @@ func (c *Client) attempt(method, path string, body any, query map[string]string)
 			cliErr.Hint = "use --expires 30d|90d|365d|YYYY-MM-DD|never (must be in the future)"
 		}
 	}
+	explainDenial(cliErr, er, query)
 	if resp.StatusCode == http.StatusTooManyRequests {
+		// A full policy explanation already carries its own hint and retry time.
+		keep := cliErr.Plain != "" && er.Code != "RATE_LIMITED"
 		if secs, err := strconv.Atoi(resp.Header.Get("Retry-After")); err == nil && secs > 0 {
 			cliErr.RetryAfter = time.Duration(secs) * time.Second
-			cliErr.Hint = fmt.Sprintf("rate limited — retry in %ds", secs)
-		} else {
+			if !keep {
+				cliErr.Hint = fmt.Sprintf("rate limited — retry in %ds", secs)
+			}
+		} else if !keep {
 			cliErr.Hint = "rate limited — back off before retrying"
+		}
+		if er.Denial != nil && !er.Denial.explainable() {
+			addEventHint(cliErr, er.Denial.EventID)
 		}
 		return nil, true, cliErr
 	}

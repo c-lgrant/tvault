@@ -70,10 +70,21 @@ type CLIError struct {
 	Response   string        // e.g. "403 POLICY_DENIED — agent quota exceeded"
 	Hint       string        // a likely fix; rendered only when known
 	RetryAfter time.Duration // server-provided backoff (429 Retry-After); 0 = unknown
+	// Plain, when set, replaces the multi-line footer with a two-line
+	// explanation: "denied: <Plain>" then "hint: <Hint>". Used for policy and
+	// access refusals, whose sentence already says everything the footer would.
+	Plain string
 }
 
 func (e *CLIError) Error() string {
 	var b strings.Builder
+	if e.Plain != "" {
+		fmt.Fprintf(&b, "denied: %s", e.Plain)
+		if e.Hint != "" {
+			fmt.Fprintf(&b, "\nhint: %s", e.Hint)
+		}
+		return b.String()
+	}
 	cmd := e.Command
 	if cmd == "" {
 		cmd = "error"
