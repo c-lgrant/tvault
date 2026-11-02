@@ -44,6 +44,7 @@ import {
   sha256Hex,
 } from "../core/protocol/oauthConnect.ts";
 import { assertStoreConstraints } from "../core/protocol/constraints.ts";
+import { postTokenRequest, tokenAuthMethod } from "../core/protocol/oauthRefresh.ts";
 import { verifyTicket } from "../core/protocol/tickets.ts";
 import { buildEncryptedTokenDocument } from "../core/protocol/tokendoc.ts";
 import type { TicketPayload } from "../core/protocol/types.ts";
@@ -51,7 +52,14 @@ import type { FeatureModule } from "../core/registry.ts";
 import type { ReplayGuard, RuntimeContext } from "../runtime/context.ts";
 import { resolveExternalUrl } from "./webhookLinks.ts";
 
-const EXCHANGE_TIMEOUT_MS = 10_000;
+/** Only string-valued entries of an operator-supplied params map. */
+function stringParams(raw: unknown): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (raw && typeof raw === "object") {
+    for (const [k, v] of Object.entries(raw as Record<string, unknown>)) if (typeof v === "string") out[k] = v;
+  }
+  return out;
+}
 
 function nowIso(): string {
   return new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
@@ -153,14 +161,17 @@ export function oauthCallbackModule(): FeatureModule {
 
           const verifier = await derivePkceVerifier(st.secret, st.payload.nonce);
           const url = new URL(authorizeUrl);
+          // Provider extras first (built-in, then the operator's), so they can
+          // never replace a parameter the flow's security depends on.
           const params: Record<string, string> = {
+            ...(builtin?.extra ?? {}),
+            ...stringParams(local.authorizeParams),
             response_type: "code",
             client_id: clientId,
             redirect_uri: st.redirectUri,
             state: c.req.query("state")!,
             code_challenge: await pkceChallenge(verifier),
             code_challenge_method: "S256",
-            ...(builtin?.extra ?? {}),
           };
           if (st.payload.scp) params.scope = st.payload.scp;
           for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
@@ -230,34 +241,16 @@ export function oauthCallbackModule(): FeatureModule {
           if (local.clientId && payload.clid !== local.clientId) throw new ConnectFailure("client_mismatch");
 
           const verifier = await derivePkceVerifier(st.secret, payload.nonce);
-          const form = new URLSearchParams({
-            grant_type: "authorization_code",
-            code,
-            redirect_uri: st.redirectUri,
-            client_id: clientId,
-            client_secret: local.clientSecret,
-            code_verifier: verifier,
-          });
-          let resp: Response;
-          try {
-            resp = await fetch(tokenUrl, {
-              method: "POST",
-              headers: { "content-type": "application/x-www-form-urlencoded", accept: "application/json" },
-              body: form,
-              signal: AbortSignal.timeout(EXCHANGE_TIMEOUT_MS),
-            });
-          } catch {
-            throw new ConnectFailure("exchange_unreachable");
+          const exchanged = await postTokenRequest(
+            tokenUrl,
+            { grant_type: "authorization_code", code, redirect_uri: st.redirectUri, code_verifier: verifier },
+            { clientId, clientSecret: local.clientSecret, method: tokenAuthMethod(provider, local) },
+          );
+          if (!exchanged.ok) {
+            throw new ConnectFailure(exchanged.error === "provider_unreachable" ? "exchange_unreachable" : "exchange_failed");
           }
-          if (!resp.ok) throw new ConnectFailure("exchange_failed");
-          let oauth: { access_token?: unknown; refresh_token?: unknown; expires_in?: unknown; scope?: unknown };
-          try {
-            oauth = (await resp.json()) as typeof oauth;
-          } catch {
-            throw new ConnectFailure("exchange_failed");
-          }
-          if (typeof oauth.access_token !== "string" || !oauth.access_token) throw new ConnectFailure("exchange_failed");
-          const refreshToken = typeof oauth.refresh_token === "string" && oauth.refresh_token ? oauth.refresh_token : null;
+          const oauth = exchanged.tokens;
+          const refreshToken = oauth.refreshToken;
 
           const existingMeta =
             existing?.meta && typeof existing.meta === "object" ? (existing.meta as Record<string, unknown>) : {};
@@ -274,13 +267,12 @@ export function oauthCallbackModule(): FeatureModule {
           // The creation this connect belongs to comes from the ticket, exactly as
           // /v1/store does, never from the document being replaced.
           if (payload.cid) meta.creationId = payload.cid;
-          if (typeof oauth.scope === "string" && oauth.scope) meta.scope = oauth.scope;
-          if (typeof oauth.expires_in === "number" && oauth.expires_in > 0) {
-            meta.expiryTime = Date.now() + oauth.expires_in * 1000;
-          }
+          if (oauth.scope) meta.scope = oauth.scope;
+          // No expires_in (e.g. a GitHub OAuth App token) = no known expiry.
+          if (oauth.expiresIn) meta.expiryTime = Date.now() + oauth.expiresIn * 1000;
 
           const key = await ctx.secrets.encryptionKey();
-          await ctx.storage.set("tokens", service, await buildEncryptedTokenDocument(key, oauth.access_token, refreshToken, meta));
+          await ctx.storage.set("tokens", service, await buildEncryptedTokenDocument(key, oauth.accessToken, refreshToken, meta));
 
           return done({ status: "ok" });
         } catch (e) {

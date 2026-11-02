@@ -60,6 +60,19 @@ export const BUILTIN_TOKEN_URLS: Readonly<Record<string, string>> = {
   spotify: "https://accounts.spotify.com/api/token",
 };
 
+/** How a client authenticates at the token endpoint (RFC 6749 §2.3.1). */
+export type TokenAuthMethod = "client_secret_post" | "client_secret_basic";
+
+/**
+ * Built-in providers that want HTTP Basic client authentication. Spotify's
+ * token endpoint documents `Authorization: Basic base64(client_id:client_secret)`
+ * for both the code exchange and refresh; every other built-in takes the
+ * credentials in the form body.
+ */
+export const BUILTIN_TOKEN_AUTH: Readonly<Record<string, TokenAuthMethod>> = {
+  spotify: "client_secret_basic",
+};
+
 /** Authorize endpoints (and fixed extra params) the webhook builds the provider redirect from. */
 export const BUILTIN_AUTHORIZE: Readonly<Record<string, { url: string; extra: Record<string, string> }>> = {
   google: { url: "https://accounts.google.com/o/oauth2/v2/auth", extra: { access_type: "offline", prompt: "consent" } },

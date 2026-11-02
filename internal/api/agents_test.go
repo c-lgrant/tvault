@@ -74,8 +74,8 @@ func TestCreateAgentReturnsKey(t *testing.T) {
 		if body["name"] != "pi-mixer" {
 			t.Errorf("body = %v", body)
 		}
-		if body["mcpEnabled"] != true {
-			t.Errorf("create body must set mcpEnabled: %v", body)
+		if _, ok := body["mcpEnabled"]; ok {
+			t.Errorf("create body must not send mcpEnabled: %v", body)
 		}
 		// Backend create body has no "grants" field — grants are added
 		// via separate POST /api/agents/{id}/grants calls.

@@ -2,7 +2,8 @@
 // capability list (buildRegistryView preserves order) so /v1/exchange and
 // /v1/health report exactly:
 //   ["store","credential","proxy","refresh","tv-refresh","storage","totp","ticketConstraints","oauth-callback"]
-// matching the TV backend's CAPABILITIES set. Interceptor order also follows
+// matching the TV backend's CAPABILITIES set. "tv-refresh" is present only
+// when TV_REFRESH_ENABLED=true; otherwise it is omitted from the list. Interceptor order also follows
 // from here: TOTP is registered before GCP, so a TOTP token is intercepted
 // first (the two are mutually exclusive, but this mirrors the reference).
 
@@ -23,14 +24,16 @@ import { exchangeModule } from "./exchange.ts";
 import { landingModule } from "./landing.ts";
 
 /** Every feature module, in the order that yields the canonical capability list. */
-export function allModules(): FeatureModule[] {
+export function allModules(opts: { tvRefreshEnabled?: boolean } = {}): FeatureModule[] {
   return [
     // Capability-bearing modules, in canonical order.
     storeModule(),
     credentialModule(),
     proxyModule(),
     refreshNotifyModule(),
-    tvRefreshModule(),
+    // Legacy, opt-in (TV_REFRESH_ENABLED=true): the only path that returns a
+    // refresh token to the control plane.
+    ...(opts.tvRefreshEnabled ? [tvRefreshModule()] : []),
     storageModule(),
     totpModule(),
     ticketConstraintsModule(),

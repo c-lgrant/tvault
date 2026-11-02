@@ -12,6 +12,7 @@ import { invalidRequest, ticketInvalid, tokenNotFound, upstreamError, upstreamTi
 import { verifyTicket } from "../core/protocol/tickets.ts";
 import { decryptTokenField } from "../core/protocol/tokendoc.ts";
 import { assertCreationMatches } from "../core/protocol/constraints.ts";
+import { freshDocument } from "../core/protocol/oauthRefresh.ts";
 import type { FeatureModule } from "../core/registry.ts";
 import { isGcpServiceAccount, mintGcpAccessToken } from "./interceptors/gcpSa.ts";
 
@@ -52,10 +53,11 @@ export function proxyModule(): FeatureModule {
             return sendError(c, ticketInvalid(`Ticket is for service '${payload.svc}', not '${service}'`));
           }
 
-          const storedDoc = await ctx.storage.get("tokens", service);
+          let storedDoc = await ctx.storage.get("tokens", service);
           if (!storedDoc) return sendError(c, tokenNotFound(`No token stored for service '${service}'`));
 
           assertCreationMatches(payload, storedDoc);
+          storedDoc = await freshDocument(ctx, service, storedDoc);
 
           const key = await ctx.secrets.encryptionKey();
           let accessToken: string | null;

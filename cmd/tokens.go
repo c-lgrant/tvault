@@ -44,7 +44,7 @@ func runTokensList(cmd *cobra.Command, _ []string) error {
 	rows := make([]map[string]string, len(toks))
 	for i, t := range toks {
 		rows[i] = map[string]string{
-			"service": t.ServiceName, "type": t.Type,
+			"service": t.ServiceName, "type": t.TypeLabel(),
 		}
 	}
 	return output.Render(os.Stdout, cc.Format,
@@ -114,7 +114,7 @@ func runTokensShow(cmd *cobra.Command, args []string) error {
 		return enrich(cmd, cc, err)
 	}
 	rows := []map[string]string{{
-		"service": t.ServiceName, "type": t.Type,
+		"service": t.ServiceName, "type": t.TypeLabel(),
 		"display_name": t.DisplayName, "notes": t.Notes,
 		"tags": strings.Join(t.Tags, ","),
 	}}
@@ -135,6 +135,10 @@ func runTokensSet(cmd *cobra.Command, args []string) error {
 	cc, err := resolve(cmd)
 	if err != nil {
 		return err
+	}
+	// A sign-in credential has no value: say so before asking for one.
+	if t, gerr := cc.Client.GetToken(args[0]); gerr == nil && t.Kind == api.KindSignIn {
+		return enrich(cmd, cc, api.SignInNoValueError(args[0], "GET /api/tokens/"+args[0]))
 	}
 	value, err := readSecretValue(cmd, "tokens set", false)
 	if err != nil {
