@@ -26,7 +26,7 @@ async function main(): Promise<void> {
 
   await runStartup(ctx);
 
-  const app = createApp(ctx, allModules());
+  const app = createApp(ctx, allModules({ tvRefreshEnabled: ctx.config.tvRefreshEnabled === true }));
 
   const port = Number(process.env.PORT) || 8080;
   serve({ fetch: app.fetch, port, hostname: "0.0.0.0" });

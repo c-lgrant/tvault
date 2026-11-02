@@ -52,7 +52,7 @@ async function buildApp(env: Env): Promise<Hono<AppEnv>> {
     replay: new CacheReplayGuard(),
   };
   await runStartup(ctx); // once per isolate, unless concurrent cold requests race
-  return createApp(ctx, allModules());
+  return createApp(ctx, allModules({ tvRefreshEnabled: ctx.config.tvRefreshEnabled === true }));
 }
 
 export default {

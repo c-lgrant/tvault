@@ -131,6 +131,18 @@ The stored token records a non-secret `oauth` hint (`provider`, `tokenUrl`,
 constraints `mode` (`create` refuses an existing service with `already_exists`)
 and `cid` (stored as `meta.creationId`), applied as `/v1/store` applies them.
 
+## Legacy `tv-refresh` (opt-in)
+
+`tv-refresh` is the legacy refresh path where the control plane refreshes tokens
+minted with its own built-in OAuth apps. It is the only path that returns a
+refresh token to the control plane, so it is **off by default**: the module is
+not registered and `/v1/exchange` and `/v1/health` do not list the capability.
+Webhook-owned refresh (`refresh`, `/v1/refresh-notify`) covers every other case.
+
+To enable it, set `TV_REFRESH_ENABLED=true` (a Worker `[vars]` entry or a Node
+environment variable; any other value leaves it off). After changing the switch,
+press **Verify Connection** in the console so the capability list is re-read.
+
 ## Tests
 
 ```bash

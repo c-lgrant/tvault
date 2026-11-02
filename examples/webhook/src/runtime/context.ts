@@ -60,6 +60,11 @@ export interface WebhookConfig {
    */
   adminSecret?: string;
   /**
+   * Register the legacy `tv-refresh` module (and advertise the capability).
+   * Set via TV_REFRESH_ENABLED=true; absent/anything else leaves it off.
+   */
+  tvRefreshEnabled?: boolean;
+  /**
    * Client IPs that must be rejected on the credential + store endpoints.
    * Token Vault's own server egress IP belongs here: a real ticket replayed
    * from TV's IP must NOT yield a credential (TV stays zero-knowledge).

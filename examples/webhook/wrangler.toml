@@ -26,6 +26,12 @@ TOKENVAULT_FRONTEND_URL = "https://tokenvault.uk"
 # "same IP > 300 requests / 1 min on this route → block for 1 min"; the free
 # tier includes one rule).
 TV_RATE_LIMIT_PER_MINUTE = "300"
+# TV_REFRESH_ENABLED — legacy `tv-refresh` capability, OFF by default. Set to
+# "true" only to let the control plane refresh tokens minted with its own
+# built-in OAuth apps (the one path that returns a refresh token to the control
+# plane). After changing it, press Verify Connection in the console so the
+# capability list is re-read.
+# TV_REFRESH_ENABLED = "true"
 
 # ── D1 database (credential storage) ──────────────────────────────────────────
 # Credentials live in D1 — durable and strongly-consistent (read-your-writes,

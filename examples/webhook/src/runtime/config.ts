@@ -7,6 +7,7 @@
 //   DENY_IPS, DENY_ORIGINS   comma-separated denylists (credential/store/totp)
 //   TOKENVAULT_IP            TV egress IP, folded into DENY_IPS
 //   OAUTH_PROVIDERS_JSON     provider→{clientSecret,clientId?,tokenUrl?} map
+//   TV_REFRESH_ENABLED       "true" registers the legacy tv-refresh module (default off)
 
 import { TIMESTAMP_TOLERANCE, WEBHOOK_VERSION } from "../core/protocol/types.ts";
 import type { OAuthProviderConfig, WebhookConfig } from "./context.ts";
@@ -52,6 +53,7 @@ export function configFromEnv(get: Getenv): WebhookConfig {
   }
 
   const adminSecret = get("TV_ADMIN_SECRET");
+  const tvRefreshEnabled = get("TV_REFRESH_ENABLED")?.trim().toLowerCase() === "true";
 
   const ratePerMinute = Number(get("TV_RATE_LIMIT_PER_MINUTE"));
   const rateLimit =
@@ -70,5 +72,6 @@ export function configFromEnv(get: Getenv): WebhookConfig {
     ...(oauthProviders ? { oauthProviders } : {}),
     ...(adminSecret ? { adminSecret } : {}),
     ...(rateLimit ? { rateLimit } : {}),
+    ...(tvRefreshEnabled ? { tvRefreshEnabled } : {}),
   };
 }
