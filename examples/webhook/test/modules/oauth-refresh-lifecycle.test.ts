@@ -26,7 +26,7 @@ import { sha256Hex } from "../../src/core/protocol/oauthConnect.ts";
 import { readTokenObject } from "../../src/core/protocol/tokendoc.ts";
 import { computeRequestSignature } from "../../src/core/protocol/hmac.ts";
 import { utf8 } from "../../src/core/crypto/encoding.ts";
-import { refreshDueTokens } from "../../src/core/protocol/oauthRefresh.ts";
+import { freshDocument, refreshDueTokens } from "../../src/core/protocol/oauthRefresh.ts";
 import type { TicketPayload } from "../../src/core/protocol/types.ts";
 import type { OAuthProviderConfig } from "../../src/runtime/context.ts";
 import { makeContext } from "../conformance/_harness.ts";
@@ -380,6 +380,19 @@ describe("own-app lifecycle (Google)", () => {
     expect(got.status).toBe(200);
     expect(got.body.token!.accessToken).toBe("AT-2");
     expect(got.body.token!.expiryTime as number).toBeGreaterThan(Date.now());
+  });
+
+  it("a fetch-time refresh never hands over a credential replaced after the ticket check", async () => {
+    const w = setup({ google: GOOGLE });
+    await w.connect("google", "gmail", { cid: "old" });
+    await w.expireIn("gmail", -10 * 60_000);
+    const checked = (await w.ctx.storage.get("tokens", "gmail"))!;
+    w.fakes.google!.beforeRefreshAnswer = async () => {
+      w.fakes.google!.beforeRefreshAnswer = null;
+      await w.connect("google", "gmail", { cid: "new" });
+    };
+    const served = await freshDocument(w.ctx, "gmail", checked);
+    expect((served.meta as Record<string, unknown>).creationId).toBe("old");
   });
 
   it("an agent fetching an expired token whose refresh fails still gets what is stored", async () => {
