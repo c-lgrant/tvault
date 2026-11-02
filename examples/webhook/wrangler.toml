@@ -46,6 +46,15 @@ TV_RATE_LIMIT_PER_MINUTE = "300"
 binding = "DB"
 database_name = "tv-webhook"
 
+# ── Scheduled OAuth refresh ───────────────────────────────────────────────────
+# Every 10 minutes the Worker refreshes own-app OAuth tokens (connected through
+# /v1/oauth/callback) that expire within TV_REFRESH_WINDOW_SECONDS (default
+# 1200). Token Vault does not schedule this: refresh is the webhook's job.
+# Removing the trigger leaves only Refresh in Token Vault and the fetch-time
+# refresh of an already-expired token.
+[triggers]
+crons = ["*/10 * * * *"]
+
 # ── Observability (Workers Logs + invocation traces) ──────────────────────────
 # Persists structured logs and per-invocation traces, viewable in the dashboard
 # (Workers & Pages → this worker → Logs / Observability) and live via
@@ -64,8 +73,9 @@ head_sampling_rate = 1
 # provisions this Secret on the first deploy when the build token has
 # `Workers Scripts: Edit`, so a git-push deploy is bindable with no manual step.
 # See deploy/cloudflare/README.md.
-#   OAUTH_PROVIDERS_JSON — optional Secret. JSON map provider->{clientSecret,clientId?,tokenUrl?}
-#                          enabling autonomous OAuth refresh (/v1/refresh-notify).
+#   OAUTH_PROVIDERS_JSON — optional Secret. JSON map provider->{clientSecret,clientId?,tokenUrl?,
+#                          authorizeUrl?,authorizeParams?,tokenAuthMethod?} for "connect with
+#                          your own OAuth app" and autonomous refresh (cron + /v1/refresh-notify).
 #   TV_ADMIN_SECRET — optional Secret. When set, this value must be supplied as
 #                     the x-tv-admin-secret request header to access the setup
 #                     endpoints (/bind, /v1/register-url, /v1/exchange) after

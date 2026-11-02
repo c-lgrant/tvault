@@ -86,4 +86,34 @@ describe("worker entry point", () => {
     await (await loadWorker()).fetch(new Request("https://wh.test/v1/health"), env, execCtx); // next isolate
     expect(db.log.filter((q) => q.startsWith("INSERT"))).toEqual([]);
   });
+
+  it("the cron trigger refreshes a due own-app OAuth token", async () => {
+    const { D1StorageAdapter } = await import("../../src/adapters/storage/d1.ts");
+    const { seedDerivedSecrets } = await import("../../src/adapters/secrets/seedDerived.ts");
+    const { buildEncryptedTokenDocument, readTokenObject } = await import("../../src/core/protocol/tokendoc.ts");
+    const db = new FakeD1();
+    const storage = await D1StorageAdapter.create(db as unknown as D1Database);
+    const key = await seedDerivedSecrets(SEED).encryptionKey();
+    const tokenUrl = "https://oauth2.googleapis.com/token";
+    await storage.set(
+      "tokens",
+      "gmail",
+      await buildEncryptedTokenDocument(key, "old-AT", "the-RT", {
+        serviceName: "gmail",
+        oauth: { provider: "google", tokenUrl, clientId: "cid" },
+        expiryTime: Date.now() + 60_000,
+      }),
+    );
+    const fetchMock = vi.fn(async () => Response.json({ access_token: "new-AT", expires_in: 3599 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const worker = await loadWorker();
+    const env = { ...envFor(db), OAUTH_PROVIDERS_JSON: JSON.stringify({ google: { clientSecret: "s" } }) };
+    await worker.scheduled!({} as ScheduledController, env, execCtx);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const tok = await readTokenObject(key, (await storage.get("tokens", "gmail"))!);
+    expect(tok.accessToken).toBe("new-AT");
+    expect(tok.refreshToken).toBe("the-RT");
+  });
 });

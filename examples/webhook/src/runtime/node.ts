@@ -14,6 +14,7 @@ import { FileSecretProvider } from "../adapters/secrets/fileSecret.ts";
 import { MemoryReplayGuard } from "../adapters/replay/memory.ts";
 import { configFromEnv } from "./config.ts";
 import { runStartup } from "./startup.ts";
+import { refreshDueTokens } from "../core/protocol/oauthRefresh.ts";
 
 async function main(): Promise<void> {
   const [storage, secrets] = await Promise.all([FsStorageAdapter.create(), FileSecretProvider.create()]);
@@ -31,7 +32,30 @@ async function main(): Promise<void> {
   const port = Number(process.env.PORT) || 8080;
   serve({ fetch: app.fetch, port, hostname: "0.0.0.0" });
   console.log(`tv-webhook (node) listening on :${port} — webhookId=${await secrets.webhookId()}`);
+
+  // Refresh own-app OAuth tokens before they expire (Workers use a cron
+  // trigger instead). Runs once shortly after start, then every interval.
+  const raw = process.env.TV_REFRESH_INTERVAL_SECONDS;
+  const interval = raw === undefined || raw === "" ? DEFAULT_REFRESH_INTERVAL_SECONDS : Number(raw);
+  if (Number.isFinite(interval) && interval > 0) {
+    let running = false;
+    const sweep = async () => {
+      if (running) return; // never overlap two sweeps
+      running = true;
+      try {
+        await refreshDueTokens(ctx);
+      } catch {
+        console.error("[refresh] sweep failed");
+      } finally {
+        running = false;
+      }
+    };
+    setTimeout(sweep, 5_000).unref();
+    setInterval(sweep, interval * 1000).unref();
+  }
 }
+
+const DEFAULT_REFRESH_INTERVAL_SECONDS = 600;
 
 main().catch((err) => {
   console.error("fatal: failed to start tv-webhook", err);

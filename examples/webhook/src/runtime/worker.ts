@@ -25,6 +25,7 @@ import { D1StorageAdapter } from "../adapters/storage/d1.ts";
 import { CacheReplayGuard } from "../adapters/replay/cache.ts";
 import type { RuntimeContext } from "./context.ts";
 import { runStartup } from "./startup.ts";
+import { refreshDueTokens } from "../core/protocol/oauthRefresh.ts";
 
 export interface Env {
   /** The one persisted secret — AES key + HMAC secret are HKDF-derived from it. */
@@ -36,8 +37,9 @@ export interface Env {
 }
 
 let builtApp: Hono<AppEnv> | null = null;
+let builtCtx: RuntimeContext | null = null;
 
-async function buildApp(env: Env): Promise<Hono<AppEnv>> {
+async function buildContext(env: Env): Promise<RuntimeContext> {
   if (!env.DB) {
     throw new Error(
       "No 'DB' D1 binding — credential storage requires D1. Wrangler auto-provisions it " +
@@ -52,6 +54,11 @@ async function buildApp(env: Env): Promise<Hono<AppEnv>> {
     replay: new CacheReplayGuard(),
   };
   await runStartup(ctx); // once per isolate, unless concurrent cold requests race
+  return ctx;
+}
+
+async function buildApp(env: Env): Promise<Hono<AppEnv>> {
+  const ctx = builtCtx ?? (builtCtx = await buildContext(env));
   return createApp(ctx, allModules());
 }
 
@@ -60,5 +67,12 @@ export default {
     // A failed build caches nothing, so the next request simply tries again.
     const app = builtApp ?? (builtApp = await buildApp(env));
     return app.fetch(request, env, ctx);
+  },
+
+  // Cron trigger (wrangler.toml [triggers]): refresh own-app OAuth tokens
+  // before they expire. Token Vault never asks for this; the webhook owns it.
+  async scheduled(_controller: ScheduledController, env: Env): Promise<void> {
+    const ctx = builtCtx ?? (builtCtx = await buildContext(env));
+    await refreshDueTokens(ctx);
   },
 } satisfies ExportedHandler<Env>;
