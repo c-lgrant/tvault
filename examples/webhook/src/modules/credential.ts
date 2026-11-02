@@ -11,6 +11,7 @@ import { invalidRequest, setupRequired, ticketInvalid, tokenNotFound } from "../
 import { verifyTicket } from "../core/protocol/tickets.ts";
 import { readTokenObject } from "../core/protocol/tokendoc.ts";
 import { assertCreationMatches } from "../core/protocol/constraints.ts";
+import { freshDocument } from "../core/protocol/oauthRefresh.ts";
 import type { FeatureModule } from "../core/registry.ts";
 
 const CREDENTIAL_PURPOSES = new Set(["agent_credential", "user_reveal"]);
@@ -52,12 +53,15 @@ export function credentialModule(): FeatureModule {
             return sendError(c, ticketInvalid(`Ticket is for service '${payload.svc}', not '${service}'`), cors);
           }
 
-          const storedDoc = await ctx.storage.get("tokens", service);
+          let storedDoc = await ctx.storage.get("tokens", service);
           if (!storedDoc) {
             return sendError(c, tokenNotFound(`No token stored for service '${service}'`), cors);
           }
 
           assertCreationMatches(payload, storedDoc);
+          // An own-app OAuth token past its expiry is refreshed before it is
+          // handed out (best effort; the schedule normally got there first).
+          storedDoc = await freshDocument(ctx, service, storedDoc);
 
           const key = await ctx.secrets.encryptionKey();
           let token = await readTokenObject(key, storedDoc);

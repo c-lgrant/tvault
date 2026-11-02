@@ -6,7 +6,13 @@
 //   TIMESTAMP_TOLERANCE      override the 300s default
 //   DENY_IPS, DENY_ORIGINS   comma-separated denylists (credential/store/totp)
 //   TOKENVAULT_IP            TV egress IP, folded into DENY_IPS
-//   OAUTH_PROVIDERS_JSON     provider→{clientSecret,clientId?,tokenUrl?} map
+//   OAUTH_PROVIDERS_JSON     provider→{clientSecret,clientId?,tokenUrl?,authorizeUrl?,
+//                            authorizeParams?,tokenAuthMethod?} map
+//   OAUTH_REFRESH_WINDOW_SECONDS  scheduled refresh renews own-app tokens expiring
+//                            within this window (default 1200)
+//   OAUTH_REFRESH_INTERVAL_SECONDS  Node only: how often the refresh sweep runs
+//                            (default 600; 0 turns it off). Workers use the cron
+//                            trigger in wrangler.toml.
 //   TV_REFRESH_ENABLED       "true" registers the legacy tv-refresh module (default off)
 
 import { TIMESTAMP_TOLERANCE, WEBHOOK_VERSION } from "../core/protocol/types.ts";
@@ -25,7 +31,12 @@ function parseOAuthProviders(raw: string | undefined): Record<string, OAuthProvi
   if (!raw) return undefined;
   try {
     const parsed = JSON.parse(raw) as Record<string, OAuthProviderConfig>;
-    if (parsed && typeof parsed === "object") return parsed;
+    if (parsed && typeof parsed === "object") {
+      // Providers are looked up by lower-case name ("Google" would never match).
+      const out: Record<string, OAuthProviderConfig> = {};
+      for (const [name, cfg] of Object.entries(parsed)) out[name.toLowerCase()] = cfg;
+      return out;
+    }
   } catch {
     console.error("OAUTH_PROVIDERS_JSON is not valid JSON — ignoring");
   }
@@ -61,8 +72,11 @@ export function configFromEnv(get: Getenv): WebhookConfig {
       ? { maxPerMinute: Math.floor(ratePerMinute) }
       : undefined;
 
+  const refreshWindow = Number(get("OAUTH_REFRESH_WINDOW_SECONDS"));
+
   return {
     version: WEBHOOK_VERSION,
+    ...(Number.isFinite(refreshWindow) && refreshWindow > 0 ? { refreshWindowSeconds: Math.floor(refreshWindow) } : {}),
     timestampTolerance: Number.isFinite(tolerance) && tolerance > 0 ? tolerance : TIMESTAMP_TOLERANCE,
     tokenvaultFrontendUrl,
     denyIps,

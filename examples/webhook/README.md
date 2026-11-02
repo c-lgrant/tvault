@@ -123,8 +123,52 @@ code, access token and refresh token never pass through the control plane.
    with only a status, the service name and a short error code.
 
 The stored token records a non-secret `oauth` hint (`provider`, `tokenUrl`,
-`clientId`) in its meta, so `/v1/refresh-notify` can refresh it with the same
-`OAUTH_PROVIDERS_JSON` entry. The state ticket is the usual
+`clientId`) in its meta, so the webhook can refresh it with the same
+`OAUTH_PROVIDERS_JSON` entry.
+
+### Refresh
+
+Refresh is the webhook's job; Token Vault never schedules it. A token with an
+`oauth` hint is refreshed:
+
+- **on a schedule**: a Workers cron trigger (`[triggers]` in `wrangler.toml`,
+  every 10 minutes) or, on Node, a timer (`OAUTH_REFRESH_INTERVAL_SECONDS`, default
+  600, `0` turns it off) renews every such token expiring within
+  `OAUTH_REFRESH_WINDOW_SECONDS` (default 1200);
+- **when you press Refresh** in Token Vault (`POST /v1/refresh-notify`);
+- **at fetch time**: `/v1/credential` and `/v1/proxy` refresh one that is
+  already expired (or within a minute of it) before using it. If that fails the
+  stored token is served as before.
+
+A refresh keeps all of the token's metadata (including `creationId`), stores a
+rotated refresh token when the provider returns one and keeps the old one when it
+does not, and stamps `expiryTime`, `updatedAt` and `lastRefreshed`. A failure
+leaves the credential untouched and records only `refreshError` (the provider's
+short OAuth error code, such as `invalid_grant`, or `provider_unreachable`),
+`refreshFailedAt` and `refreshReconnect` in meta. `refreshReconnect: true`
+(`invalid_grant`, GitHub's `bad_refresh_token`) means only a new consent fixes it:
+the schedule skips that token until you reconnect it or a manual Refresh
+succeeds. `/v1/refresh-notify` answers such a failure with `status:
+"refresh_failed"` plus `error` and `reconnectRequired`. Tokens without an `oauth`
+hint (pasted, or minted with Token Vault's old built-in clients) are never
+refreshed on the schedule.
+
+Optional per-provider keys in `OAUTH_PROVIDERS_JSON`: `authorizeParams` (extra
+authorize-URL parameters; they never replace the ones the webhook sets) and
+`tokenAuthMethod` (`client_secret_post`, the default, or `client_secret_basic`,
+the default for `spotify`).
+
+Provider notes:
+
+- **Google**: the webhook asks for `access_type=offline&prompt=consent`, without
+  which Google issues no refresh token. Refresh answers omit `refresh_token`; the
+  stored one stays valid. While the app's consent screen is in *Testing*, Google
+  expires refresh tokens after 7 days; publish the app to avoid that.
+- **GitHub**: an OAuth App issues non-expiring tokens with no refresh token, so
+  there is nothing to refresh. A GitHub App with expiring user tokens issues
+  8-hour tokens and a new refresh token on every refresh, which the webhook stores.
+- **Spotify**: the client authenticates with HTTP Basic. A refresh may or may not
+  return a new refresh token; both are handled. The state ticket is the usual
 `base64url(json).hex_hmac` with `pur: "oauth_connect"` and the extra fields `prv`
 (provider), `tku` (token URL, cross-checked), `clid` (client id), `rdu`
 (redirect URI) and `scp` (space-separated scopes). It may also carry the store
