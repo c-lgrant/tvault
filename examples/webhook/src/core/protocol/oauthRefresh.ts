@@ -357,7 +357,13 @@ export async function freshDocument(ctx: RuntimeContext, service: string, doc: S
   if (!selfRefreshable(meta) || (meta.expiryTime as number) - Date.now() > ON_DEMAND_REFRESH_SKEW_MS) return doc;
   try {
     const r = await refreshStoredToken(ctx, service);
-    if (r.status === "refreshed") return (await ctx.storage.get("tokens", service)) ?? doc;
+    if (r.status === "refreshed") {
+      const fresh = await ctx.storage.get("tokens", service);
+      // The caller checked its ticket against `doc`. If the credential was
+      // replaced (a new creationId) between that check and this read, serve the
+      // document the ticket was checked against, never the new one.
+      if (fresh && docMeta(fresh).creationId === meta.creationId) return fresh;
+    }
   } catch {
     // fall through: serve what is stored
   }
