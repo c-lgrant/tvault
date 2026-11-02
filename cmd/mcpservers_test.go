@@ -32,6 +32,12 @@ type mcpBackend struct {
 	putBody   string // ... with this body
 	grants    []map[string]any
 	stored    []string
+
+	signIns      []string // serviceName of each POST /api/tokens/sign-in
+	signInStatus int      // when set, sign-in answers this status ...
+	signInBody   string   // ... with this body
+	tokenKind    string   // "kind" served by GET /api/tokens/{service}
+	credReads    int      // POST /api/vault/credential-ticket calls
 }
 
 func newMCPBackend(t *testing.T, ctxType string) *mcpBackend {
@@ -74,8 +80,26 @@ func newMCPBackend(t *testing.T, ctxType string) *mcpBackend {
 		case r.Method == "POST" && strings.HasSuffix(p, "/grants"):
 			b.grants = append(b.grants, body)
 			w.Write([]byte(`{}`))
+		case r.Method == "POST" && p == "/api/tokens/sign-in":
+			if b.signInStatus != 0 {
+				w.WriteHeader(b.signInStatus)
+				w.Write([]byte(b.signInBody))
+				return
+			}
+			b.signIns = append(b.signIns, body["serviceName"].(string))
+			w.Write([]byte(`{"success":true,"serviceName":"` + body["serviceName"].(string) + `","kind":"tv_signin"}`))
+		case r.Method == "POST" && p == "/api/vault/credential-ticket":
+			b.credReads++
+			w.WriteHeader(409)
+			w.Write([]byte(`{"detail":{"code":"SIGNIN_NO_VALUE","message":"a sign-in credential has no value"}}`))
 		case r.Method == "GET" && strings.HasPrefix(p, "/api/tokens/"):
-			w.Write([]byte(`{"serviceName":"github","tokenType":"PlainText"}`))
+			kind := ""
+			if b.tokenKind != "" {
+				kind = `,"kind":"` + b.tokenKind + `"`
+			}
+			w.Write([]byte(`{"serviceName":"github","tokenType":"PlainText"` + kind + `}`))
+		case r.Method == "GET" && p == "/api/tokens":
+			w.Write([]byte(`[{"serviceName":"notes","tokenType":"TVSignIn","kind":"tv_signin"},{"serviceName":"stripe","tokenType":"PlainText"}]`))
 		case r.Method == "POST" && p == "/api/vault/store-ticket":
 			w.Write([]byte(`{"ticket":"tk","webhookUrl":"` + b.srv.URL + `/wh","expiresIn":60}`))
 		case r.Method == "POST" && p == "/wh/v1/store":

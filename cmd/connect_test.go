@@ -115,14 +115,14 @@ func TestAddFor_ExistingAgentStoresThenGrants(t *testing.T) {
 	}
 }
 
-func TestAddFor_MissingAgentWithYesCreatesMCPEnabled(t *testing.T) {
+func TestAddFor_MissingAgentWithYesCreatesAgentWithoutMCPSwitch(t *testing.T) {
 	b := newAgentBackend(t, `[]`)
 	withStdin(t, "v\n", false, "")
 	stdout, _, err := runCLI(t, "add", "stripe", "--for", "fresh", "--yes")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(b.creates) != 1 || b.creates[0]["name"] != "fresh" || b.creates[0]["mcpEnabled"] != true {
+	if len(b.creates) != 1 || b.creates[0]["name"] != "fresh" || b.creates[0]["mcpEnabled"] != nil {
 		t.Errorf("creates = %v", b.creates)
 	}
 	if len(b.grants) != 1 || b.grants[0] != "newagent/stripe" || len(b.stored) != 1 {

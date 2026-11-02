@@ -190,6 +190,9 @@ func kindForError(status int, code string) clierr.Kind {
 		return clierr.KindInvalidKey
 	case "VAULT_LOCKED":
 		return clierr.KindVaultLocked
+	case "SIGNIN_NO_VALUE":
+		// A sign-in credential has no value: same exit code as an empty one.
+		return clierr.KindEmpty
 	}
 	return kindForStatus(status)
 }
@@ -403,6 +406,10 @@ func (c *Client) attempt(method, path string, body any, query map[string]string)
 			cliErr.Hint = "a key or agent can't loosen its own controls — ask the account owner to make this change"
 		case "ROTATION_CONFLICT":
 			cliErr.Hint = "another rotation of this key won the race — use the key it returned, or rotate again"
+		case "SIGNIN_NO_VALUE":
+			cliErr.Hint = "this is a Token Vault sign-in credential: it has no value to read or change. Agents use it through its MCP server (grant with `tvault grant <agent> <name>=tools`). See `tvault explain SIGNIN_NO_VALUE`"
+		case "SIGNIN_TOOLS_ONLY":
+			cliErr.Hint = "a Token Vault sign-in credential can only be granted for tools: `tvault grant <agent> <name>=tools`"
 		case "UNKNOWN_SCOPE":
 			cliErr.Hint = "see the scope list in the README (Keys section)"
 		case "INVALID_EXPIRY":

@@ -32,6 +32,31 @@ type Token struct {
 	Notes       string   `json:"description,omitempty"`
 	Tags        []string `json:"tags,omitempty"`
 	Labels      []string `json:"labels,omitempty"`
+	// Kind is "tv_signin" for a "Token Vault sign-in" credential (no stored
+	// value); empty for an ordinary credential.
+	Kind string `json:"kind,omitempty"`
+}
+
+// KindSignIn is the Token.Kind of a "Token Vault sign-in" credential.
+const KindSignIn = "tv_signin"
+
+// SignInLabel is how the CLI shows a sign-in credential's type.
+const SignInLabel = "Token Vault sign-in"
+
+// TypeLabel is the type shown by list/show: "Token Vault sign-in" for a
+// sign-in credential, otherwise the stored token type.
+func (t Token) TypeLabel() string {
+	if t.Kind == KindSignIn {
+		return SignInLabel
+	}
+	return t.Type
+}
+
+// CreateSignIn creates a "Token Vault sign-in" credential: a name with no
+// stored value. Its MCP server is attached separately with PutMCPServers.
+func (c *Client) CreateSignIn(service string) error {
+	_, err := c.doRequest("POST", "/api/tokens/sign-in", map[string]any{"serviceName": service}, nil)
+	return err
 }
 
 func (t *Token) UnmarshalJSON(b []byte) error {
@@ -135,7 +160,26 @@ func (c *Client) GetTokenValue(service string) (string, error) {
 	if v := firstSecretField(body); v != "" {
 		return v, nil
 	}
+	var meta struct {
+		Kind string `json:"kind"`
+	}
+	if json.Unmarshal(body, &meta) == nil && meta.Kind == KindSignIn {
+		return "", SignInNoValueError(service, "GET /api/tokens/"+service)
+	}
 	return c.getTokenValueZK(service)
+}
+
+// SignInNoValueError is the error for reading or changing the value of a
+// "Token Vault sign-in" credential, which has none. It uses the same exit code
+// as an empty credential (6) and carries the server's SIGNIN_NO_VALUE code.
+func SignInNoValueError(service, request string) *clierr.CLIError {
+	return &clierr.CLIError{
+		Kind:    clierr.KindEmpty,
+		Code:    "SIGNIN_NO_VALUE",
+		Request: request,
+		Message: service + " is a Token Vault sign-in credential: it has no value to read or change",
+		Hint:    "agents use it through its MCP server; grant with `tvault grant <agent> " + service + "=tools`. See `tvault explain SIGNIN_NO_VALUE`",
+	}
 }
 
 // getTokenValueAgent is the agent-persona path. In platform mode the
@@ -373,8 +417,13 @@ func (c *Client) CreateToken(req CreateTokenRequest) error {
 // the value is stored as PlainText.
 func (c *Client) SetTokenValue(service, credential string) error {
 	typ := "PlainText"
-	if t, err := c.GetToken(service); err == nil && t.Type != "" {
-		typ = t.Type
+	if t, err := c.GetToken(service); err == nil {
+		if t.Kind == KindSignIn {
+			return SignInNoValueError(service, "GET /api/tokens/"+service)
+		}
+		if t.Type != "" {
+			typ = t.Type
+		}
 	}
 	return c.StoreTokenViaWebhook(service, typ, credential)
 }

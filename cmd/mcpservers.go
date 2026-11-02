@@ -19,6 +19,11 @@ import (
 // credential. It is metadata: the CLI never sees or sends a credential value.
 const tokenPlaceholder = "${TOKEN}"
 
+// agentSessionPlaceholder marks where Token Vault puts a short pass for the
+// calling agent, for a "Token Vault sign-in" credential. Token Vault checks
+// which of the two placeholders fits the credential's kind.
+const agentSessionPlaceholder = "${AGENT_SESSION}"
+
 var mcpServersCmd = &cobra.Command{
 	Use:     "mcp-servers",
 	Aliases: []string{"mcp"},
@@ -29,7 +34,11 @@ the value: your webhook puts the credential into the request.
 
 Header templates mark where the credential goes with the literal text ${TOKEN}.
 Quote it so your shell does not expand it:  --header 'Authorization: Bearer ${TOKEN}'
-Only the template is sent to Token Vault, never a credential value.`,
+Only the template is sent to Token Vault, never a credential value.
+
+A "Token Vault sign-in" credential (` + "`tvault add <name> --sign-in <url>`" + `) has no
+value. Its headers use ${AGENT_SESSION} instead: Token Vault puts a short pass
+for the calling agent there, and only that MCP server accepts it.`,
 }
 
 // mcpEndpoint is the per-server MCP URL an OAuth client or agent connects to.
@@ -196,10 +205,10 @@ func buildMCPServer(tpl *api.MCPTemplate, name, url string, headerFlags []string
 	}
 	found := false
 	for _, v := range s.Headers {
-		found = found || strings.Contains(v, tokenPlaceholder)
+		found = found || strings.Contains(v, tokenPlaceholder) || strings.Contains(v, agentSessionPlaceholder)
 	}
 	if !found {
-		return userErr("no header contains the literal "+tokenPlaceholder+", so the credential would not be sent anywhere",
+		return userErr("no header contains the literal "+tokenPlaceholder+" (or "+agentSessionPlaceholder+" for a Token Vault sign-in credential), so nothing would be sent to the MCP server",
 			"add --header 'Authorization: Bearer ${TOKEN}' (single quotes: the shell must not expand it)")
 	}
 	return s, nil
@@ -283,7 +292,7 @@ Use --preset for a known upstream (` + "`tvault mcp-servers templates`" + `), or
 text ${TOKEN}: quote it so your shell does not expand it. Only the template is
 sent to Token Vault; your webhook substitutes the credential.
 
-Adding a server, or changing a URL or headers, needs a recent sign-in. In an
+Adding an MCP server, or changing a URL or headers, needs a recent sign-in. In an
 interactive admin context the browser login opens and the command retries once.`,
 	Example: `  tvault mcp-servers add github --preset github
   tvault mcp-servers add github --name docs --url https://mcp.example.com/mcp \
@@ -432,9 +441,9 @@ func attachMCPPreset(cmd *cobra.Command, cc *cmdContext, service string, tpl *ap
 
 func init() {
 	mcpServersAddCmd.Flags().String("preset", "", "start from a preset (see `tvault mcp-servers templates`)")
-	mcpServersAddCmd.Flags().String("name", "", "server name: lowercase letters, digits, - or _ (defaults to the preset id)")
+	mcpServersAddCmd.Flags().String("name", "", "MCP server name: lowercase letters, digits, - or _ (defaults to the preset id)")
 	mcpServersAddCmd.Flags().String("url", "", "upstream https URL (overrides the preset's)")
-	mcpServersAddCmd.Flags().StringArray("header", nil, "header template 'Name: value'; use the literal ${TOKEN} (single-quote it); repeatable")
+	mcpServersAddCmd.Flags().StringArray("header", nil, "header template 'Name: value'; use the literal ${TOKEN}, or ${AGENT_SESSION} for a sign-in credential (single-quote it); repeatable")
 	mcpServersRmCmd.Flags().Bool("force", false, "skip the confirmation prompt")
 	mcpServersCmd.AddCommand(mcpServersListCmd, mcpServersAddCmd, mcpServersRmCmd, mcpServersTemplatesCmd)
 	rootCmd.AddCommand(mcpServersCmd)

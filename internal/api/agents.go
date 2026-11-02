@@ -100,7 +100,7 @@ func (c *Client) GetAgent(id string) (*Agent, error) {
 }
 
 // CreateAgent creates an agent. The backend's POST /api/agents body only
-// accepts {name, description, mcpEnabled} — there is NO grants field, so
+// accepts {name, description} — there is NO grants field, so
 // grants cannot be set at creation time. Callers that want grants must follow
 // up with AddGrants once the agent exists.
 func (c *Client) CreateAgent(name string) (*CreateAgentResult, error) {
@@ -111,9 +111,9 @@ func (c *Client) CreateAgent(name string) (*CreateAgentResult, error) {
 // fields. An empty kind is omitted so the server applies its default
 // ("classic"); scopes are only sent when non-empty.
 func (c *Client) CreateAgentWithKind(name, kind string, scopes []string) (*CreateAgentResult, error) {
-	// mcpEnabled defaults to false server-side, which makes the MCP endpoint
-	// refuse the agent; an agent made from the CLI is meant to be usable there.
-	payload := map[string]any{"name": name, "mcpEnabled": true}
+	// No mcpEnabled: there is no per-agent MCP switch any more. What lets an
+	// agent use an MCP server is its grant (and the mcp:use scope).
+	payload := map[string]any{"name": name}
 	if kind != "" {
 		payload["kind"] = kind
 	}

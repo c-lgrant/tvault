@@ -164,6 +164,54 @@ var errorExplanations = map[string]struct {
 		What: "The acting key or agent holds only a tools grant on this credential, which does not allow reading the value or changing its MCP servers.",
 		Fix:  "Have a person make the change, or give the principal a value grant.",
 	},
+	"SIGNIN_NO_VALUE": {
+		What: "A Token Vault sign-in credential has no value, so there is nothing to read, rotate, store or connect through OAuth (exit code 6).",
+		Fix:  "Agents use it through its MCP server: `tvault grant <agent> <name>=tools`. To change where it signs in, edit its MCP server with `tvault mcp-servers add <name> --name <mcp-server> --url <url> --header 'Authorization: Bearer ${AGENT_SESSION}'`.",
+	},
+	"SIGNIN_TOOLS_ONLY": {
+		What: "A Token Vault sign-in credential can only be granted for tools, to an agent. It has no value to hand out, and a key cannot hold it.",
+		Fix:  "Grant tools only: `tvault grant <agent> <name>=tools` (or `tvault add <name> --sign-in <url> --for <agent>=tools`).",
+	},
+	"SIGNIN_URL_ON_TOKEN_VAULT": {
+		What: "The URL of a Token Vault sign-in MCP server must be a different service. It cannot point back at Token Vault itself.",
+		Fix:  "Use the https URL of your own MCP server: `tvault add <name> --sign-in https://mcp.example.com/mcp`.",
+	},
+	"USE_SIGNIN_ROUTE": {
+		What: "This credential name or kind has to be created as a Token Vault sign-in credential, not as an ordinary one with a value.",
+		Fix:  "Create it with `tvault add <name> --sign-in <url>`.",
+	},
+	"SIGNIN_SESSION_REFUSED": {
+		What: "Token Vault refused to issue the agent a sign-in pass for this MCP server, usually because the account is locked, the agent is suspended, or a policy or missing tools grant stops it.",
+		Fix:  "Unlock the vault or resume the agent (`tvault agents resume <agent>`), check the grant (`tvault grant <agent> <name>=tools`), and look at the denial in Activity.",
+	},
+	"SIGNIN_SESSION_UNAVAILABLE": {
+		What: "Token Vault could not issue a sign-in pass just now (a temporary fault on its side).",
+		Fix:  "Retry in a moment. If it keeps failing, check the status page or try again later.",
+	},
+	"MCP_KEY_RETIRED": {
+		What: "This old app key (an mcp_ key for an old MCP connection) has been switched off. Old app keys stopped working 90 days after the connection was converted.",
+		Fix:  "Point the app at the MCP server's own URL, /api/mcp/<name>/<mcp-server> (see `tvault mcp-servers ls <name>`), and sign in as the agent. Old connection URLs keep working with an agent sign-in.",
+	},
+	"PROXY_CREATE_REMOVED": {
+		What: "You can no longer create old-style MCP connections (proxies).",
+		Fix:  "Attach an MCP server to a credential instead: `tvault mcp-servers add <name> --preset <id>`, or `tvault add <name> --sign-in <url>` for an MCP server that signs the agent in itself.",
+	},
+	"PROXY_FROZEN": {
+		What: "This old MCP connection was converted to an MCP server and is frozen: it can be suspended or deleted but no longer edited.",
+		Fix:  "Change the MCP server it became: `tvault mcp-servers ls <name>` and `tvault mcp-servers add <name> ...`.",
+	},
+	"PROXY_GROUPS_REMOVED": {
+		What: "Old MCP connection groups (proxy groups) can no longer be created or changed.",
+		Fix:  "Use labels to organise credentials and their MCP servers: `tvault label --help`.",
+	},
+	"MCP_TOGGLE_REMOVED": {
+		What: "There is no per-agent MCP switch any more, so it cannot be turned off.",
+		Fix:  "Remove the agent's tools grant (`tvault ag gr rm <agent> <name>`) or suspend the agent (`tvault agents suspend <agent>`).",
+	},
+	"SCOPE_RETIRED": {
+		What: "That scope is retired and can no longer be given to a new key or agent. Keys that already hold it keep it, to delete or suspend old MCP connections.",
+		Fix:  "Create the key without it: `tvault keys create --scopes mcp:use,...`. Use `mcp:use` for MCP servers.",
+	},
 	"WEBHOOK_AUTH_FAILED": {
 		What: "The webhook rejected Token Vault's HMAC authentication.",
 		Fix:  "The HMAC secret is out of sync — re-run the vault webhook setup to rotate it.",
