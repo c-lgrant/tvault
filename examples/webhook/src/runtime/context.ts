@@ -82,6 +82,11 @@ export interface WebhookConfig {
    * Python reference's bug (refresh.py:246 trusts the hint) is fixed by this.
    */
   oauthProviders?: Record<string, OAuthProviderConfig>;
+  /**
+   * The scheduled refresh renews an own-app OAuth token once it expires
+   * within this many seconds (TV_REFRESH_WINDOW_SECONDS; default 1200).
+   */
+  refreshWindowSeconds?: number;
 }
 
 /** Locally-provisioned OAuth client credentials for autonomous refresh. */
@@ -98,6 +103,18 @@ export interface OAuthProviderConfig {
   tokenUrl?: string;
   /** Authorize endpoint, for a provider outside the built-in table (oauth-callback). */
   authorizeUrl?: string;
+  /**
+   * Extra authorize-URL parameters (e.g. `{"audience": "…", "prompt": "consent"}`),
+   * added to the built-in ones. They never replace the parameters the webhook
+   * sets itself (response_type, client_id, redirect_uri, state, PKCE).
+   */
+  authorizeParams?: Record<string, string>;
+  /**
+   * How to send the client secret to the token endpoint: in the form body
+   * (`client_secret_post`, the default) or as HTTP Basic (`client_secret_basic`,
+   * the built-in default for spotify).
+   */
+  tokenAuthMethod?: "client_secret_post" | "client_secret_basic";
 }
 
 /**
