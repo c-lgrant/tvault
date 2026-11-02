@@ -177,16 +177,16 @@ var errorExplanations = map[string]struct {
 		Fix:  "Use the https URL of your own MCP server: `tvault add <name> --sign-in https://mcp.example.com/mcp`.",
 	},
 	"USE_SIGNIN_ROUTE": {
-		What: "This credential name or kind has to be created as a Token Vault sign-in credential, not as an ordinary one with a value.",
+		What: "The request tried to create a Token Vault sign-in credential through the ordinary add route, which only stores credentials with a value.",
 		Fix:  "Create it with `tvault add <name> --sign-in <url>`.",
 	},
 	"SIGNIN_SESSION_REFUSED": {
-		What: "Token Vault refused to issue the agent a sign-in pass for this MCP server, usually because the account is locked, the agent is suspended, or a policy or missing tools grant stops it.",
-		Fix:  "Unlock the vault or resume the agent (`tvault agents resume <agent>`), check the grant (`tvault grant <agent> <name>=tools`), and look at the denial in Activity.",
+		What: "Token Vault refused to issue the agent a sign-in pass for this MCP server: the agent is suspended, expired or gone, its MCP access is switched off, or the MCP server entry is no longer valid.",
+		Fix:  "Resume the agent (`tvault agents resume <agent>`), check its access (`tvault grant <agent> <name>=tools`), and check the MCP server with `tvault mcp-servers ls <name>`.",
 	},
 	"SIGNIN_SESSION_UNAVAILABLE": {
-		What: "Token Vault could not issue a sign-in pass just now (a temporary fault on its side).",
-		Fix:  "Retry in a moment. If it keeps failing, check the status page or try again later.",
+		What: "Token Vault could not issue a sign-in pass just now: the account is locked, or Token Vault could not read its lock state.",
+		Fix:  "If you locked the account, unlock it in the web app. Otherwise retry after the Retry-After delay.",
 	},
 	"MCP_KEY_RETIRED": {
 		What: "This old app key (an mcp_ key for an old MCP connection) has been switched off. Old app keys stopped working 90 days after the connection was converted.",
