@@ -10,7 +10,9 @@ import type { AppEnv } from "../app.ts";
 export function readJsonBody(c: Context<AppEnv>): Record<string, unknown> {
   const raw = c.get("rawBody");
   try {
-    const parsed: unknown = JSON.parse(fromUtf8(raw));
+    // hmacAuth already parsed these exact bytes; reuse it.
+    const cached = c.get("parsedBody");
+    const parsed: unknown = cached !== undefined ? cached : JSON.parse(fromUtf8(raw));
     if (parsed === null || typeof parsed !== "object") throw new Error("body is not an object");
     return parsed as Record<string, unknown>;
   } catch (e) {

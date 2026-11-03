@@ -13,7 +13,9 @@
 //   OAUTH_REFRESH_INTERVAL_SECONDS  Node only: how often the refresh sweep runs
 //                            (default 600; 0 turns it off). Workers use the cron
 //                            trigger in wrangler.toml.
-//   TV_REFRESH_ENABLED       "true" registers the legacy tv-refresh module (default off)
+//   AUDIT_RETENTION_DAYS     delete audit events older than this many days (default 0 =
+//                            keep everything)
+//   TV_REFRESH_ENABLED     "true" registers the legacy tv-refresh module (default off)
 
 import { TIMESTAMP_TOLERANCE, WEBHOOK_VERSION } from "../core/protocol/types.ts";
 import type { OAuthProviderConfig, WebhookConfig } from "./context.ts";
@@ -73,10 +75,12 @@ export function configFromEnv(get: Getenv): WebhookConfig {
       : undefined;
 
   const refreshWindow = Number(get("OAUTH_REFRESH_WINDOW_SECONDS"));
+  const retentionDays = Number(get("AUDIT_RETENTION_DAYS"));
 
   return {
     version: WEBHOOK_VERSION,
     ...(Number.isFinite(refreshWindow) && refreshWindow > 0 ? { refreshWindowSeconds: Math.floor(refreshWindow) } : {}),
+    ...(Number.isFinite(retentionDays) && retentionDays > 0 ? { auditRetentionDays: retentionDays } : {}),
     timestampTolerance: Number.isFinite(tolerance) && tolerance > 0 ? tolerance : TIMESTAMP_TOLERANCE,
     tokenvaultFrontendUrl,
     denyIps,

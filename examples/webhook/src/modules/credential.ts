@@ -8,10 +8,13 @@ import { denylist } from "../core/middleware/denylist.ts";
 import { readJsonBody } from "../core/middleware/body.ts";
 import { sendError } from "../core/middleware/respond.ts";
 import { invalidRequest, setupRequired, ticketInvalid, tokenNotFound } from "../core/protocol/errors.ts";
-import { verifyTicket } from "../core/protocol/tickets.ts";
+import { consumeTicketNonce, verifyTicketSignature } from "../core/protocol/tickets.ts";
+import { readAfterReplayChecks } from "../core/protocol/replay.ts";
 import { readTokenObject } from "../core/protocol/tokendoc.ts";
 import { assertCreationMatches } from "../core/protocol/constraints.ts";
+import { healDoc } from "../core/protocol/totpHeal.ts";
 import { freshDocument } from "../core/protocol/oauthRefresh.ts";
+import { backgroundRunner } from "../core/middleware/background.ts";
 import type { FeatureModule } from "../core/registry.ts";
 
 const CREDENTIAL_PURPOSES = new Set(["agent_credential", "user_reveal"]);
@@ -44,7 +47,16 @@ export function credentialModule(): FeatureModule {
           if (!service) return sendError(c, invalidRequest("Missing 'service' parameter"), cors);
 
           const secret = await ctx.secrets.hmacSecret();
-          const payload = await verifyTicket(ticket, secret, ctx.replay);
+          // Signature first (CPU), then the nonce check and the storage read run
+          // concurrently; nothing is decrypted or returned until the nonce check
+          // has passed.
+          const payload = await verifyTicketSignature(ticket, secret);
+          let storedDoc = await readAfterReplayChecks(
+            [consumeTicketNonce(payload, ctx.replay)],
+            // Raw read: the TOTP-heal wrapper can write, and nothing may be
+            // written until the replay, purpose and service checks have passed.
+            (ctx.rawStorage ?? ctx.storage).get("tokens", service),
+          );
 
           if (!CREDENTIAL_PURPOSES.has(payload.pur)) {
             return sendError(c, ticketInvalid(`Invalid ticket purpose for this endpoint: '${payload.pur}'`), cors);
@@ -53,15 +65,15 @@ export function credentialModule(): FeatureModule {
             return sendError(c, ticketInvalid(`Ticket is for service '${payload.svc}', not '${service}'`), cors);
           }
 
-          let storedDoc = await ctx.storage.get("tokens", service);
           if (!storedDoc) {
             return sendError(c, tokenNotFound(`No token stored for service '${service}'`), cors);
           }
 
           assertCreationMatches(payload, storedDoc);
+          storedDoc = (await healDoc(ctx, ctx.rawStorage ?? ctx.storage, "tokens", service, storedDoc)).doc;
           // An own-app OAuth token past its expiry is refreshed before it is
           // handed out (best effort; the schedule normally got there first).
-          storedDoc = await freshDocument(ctx, service, storedDoc);
+          storedDoc = await freshDocument(ctx, service, storedDoc, backgroundRunner(c));
 
           const key = await ctx.secrets.encryptionKey();
           let token = await readTokenObject(key, storedDoc);

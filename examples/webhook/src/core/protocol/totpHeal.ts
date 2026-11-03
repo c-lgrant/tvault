@@ -70,7 +70,15 @@ export function healingStorage(ctx: Pick<RuntimeContext, "secrets">, raw: Storag
     },
     set: (collection, key, data) => raw.set(collection, key, data),
     delete: (collection, key) => raw.delete(collection, key),
-    count: (collection) => raw.count(collection),
+    count: (collection, opts) => raw.count(collection, opts),
+    // Only the tokens collection is healed; time-ordered audit access, pruning
+    // and atomic create pass straight through (absent on adapters without them).
+    ...(raw.setIfAbsent ? { setIfAbsent: (c: string, k: string, d: StoredDocument) => raw.setIfAbsent!(c, k, d) } : {}),
+    ...(raw.setIfUnchanged
+      ? { setIfUnchanged: (c: string, k: string, e: StoredDocument, d: StoredDocument) => raw.setIfUnchanged!(c, k, e, d) }
+      : {}),
+    ...(raw.list ? { list: (c: string, o: Parameters<NonNullable<StorageAdapter["list"]>>[1]) => raw.list!(c, o) } : {}),
+    ...(raw.prune ? { prune: (c: string, o: string, f: string) => raw.prune!(c, o, f) } : {}),
     async entries(collection) {
       const all = await raw.entries(collection);
       if (collection !== "tokens") return all;

@@ -170,8 +170,10 @@ func TestValueCommandsRefuseSignInPlainly(t *testing.T) {
 	if !errors.As(err, &ce) || ce.Code != "SIGNIN_NO_VALUE" || clierr.ExitCode(err) != 6 || stdout != "" {
 		t.Errorf("get: err=%v stdout=%q", err, stdout)
 	}
-	if b.credReads != 0 {
-		t.Errorf("get must not ask for a credential ticket (%d)", b.credReads)
+	// get goes straight to the ticket route, which refuses a sign-in
+	// credential; nothing reaches the webhook.
+	if b.credReads != 1 {
+		t.Errorf("get asked for %d credential tickets, want 1", b.credReads)
 	}
 	if !strings.Contains(err.Error(), "no value") {
 		t.Errorf("message = %q", err.Error())

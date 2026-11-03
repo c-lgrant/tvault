@@ -33,6 +33,22 @@ export const DEFAULT_REFRESH_WINDOW_SECONDS = 1200;
 /** On-demand refresh at fetch time kicks in this close to expiry. */
 export const ON_DEMAND_REFRESH_SKEW_MS = 60_000;
 
+/**
+ * Hands a promise to the runtime to keep alive after the response (Workers'
+ * `waitUntil`); on Node a detached promise is enough.
+ */
+export type BackgroundRunner = (task: Promise<unknown>) => void;
+
+/**
+ * Services with a background refresh running in this isolate/process. A guard
+ * against duplicate work only: no promise is shared between requests, because
+ * on Workers a promise started by one request can stall if that request is
+ * cancelled (see runtime/worker.ts).
+ */
+const refreshing = new Map<string, number>(); // service -> start time (ms)
+/** A background refresh that has not settled after this long is treated as lost. */
+const BACKGROUND_REFRESH_STALE_MS = 60_000;
+
 /** OAuth error codes that only a new consent fixes (the grant was revoked or expired). */
 const RECONNECT_ERRORS = new Set(["invalid_grant", "bad_refresh_token"]);
 
@@ -185,6 +201,26 @@ async function concurrentOutcome(ctx: RuntimeContext, service: string, before: S
   return { status: "refreshed", expiryTime: Number(docMeta(now).expiryTime) || 0 };
 }
 
+/**
+ * Write a refresh's result only if the stored document is still the one the
+ * refresh started from. Returns null when written; otherwise a result describing
+ * what is stored now (deleted: no_token), and the refresh result is dropped, so a
+ * delete or replace that lands mid-refresh is never overwritten or resurrected.
+ */
+async function storeUnlessChanged(
+  ctx: RuntimeContext,
+  service: string,
+  before: StoredDocument,
+  next: StoredDocument,
+): Promise<RefreshResult | null> {
+  if (!ctx.storage.setIfUnchanged) {
+    await ctx.storage.set("tokens", service, next);
+    return null;
+  }
+  if (await ctx.storage.setIfUnchanged("tokens", service, before, next)) return null;
+  return (await concurrentOutcome(ctx, service, before)) ?? { status: "no_token" };
+}
+
 /** Rebuild the document with new tokens, keeping every other encrypted field. */
 async function rebuild(
   key: Bytes,
@@ -266,7 +302,8 @@ export async function refreshStoredToken(
     const failed: StoredDocument = "fields" in doc
       ? { ...doc, meta: { ...meta, refreshError: result.error, refreshFailedAt: nowIso(), refreshReconnect: reconnect } }
       : { ...doc, refreshError: result.error, refreshFailedAt: nowIso(), refreshReconnect: reconnect };
-    await ctx.storage.set("tokens", service, failed);
+    const kept = await storeUnlessChanged(ctx, service, doc, failed);
+    if (kept) return kept;
     return { status: "refresh_failed", error: result.error, reconnect };
   }
 
@@ -290,7 +327,8 @@ export async function refreshStoredToken(
   // reconnect, or a concurrent refresh that already stored newer tokens).
   const concurrent = await concurrentOutcome(ctx, service, doc);
   if (concurrent) return concurrent;
-  await ctx.storage.set("tokens", service, await rebuild(key, doc, tokens.accessToken, newRefresh, meta));
+  const kept = await storeUnlessChanged(ctx, service, doc, await rebuild(key, doc, tokens.accessToken, newRefresh, meta));
+  if (kept) return kept;
   return { status: "refreshed", expiryTime };
 }
 
@@ -352,9 +390,31 @@ export async function refreshDueTokens(ctx: RuntimeContext, now: number = Date.n
  * refresh it before handing it out. Best effort: on any failure the stored
  * document is returned unchanged, exactly as before this existed.
  */
-export async function freshDocument(ctx: RuntimeContext, service: string, doc: StoredDocument): Promise<StoredDocument> {
+export async function freshDocument(
+  ctx: RuntimeContext,
+  service: string,
+  doc: StoredDocument,
+  background?: BackgroundRunner,
+): Promise<StoredDocument> {
   const meta = docMeta(doc);
-  if (!selfRefreshable(meta) || (meta.expiryTime as number) - Date.now() > ON_DEMAND_REFRESH_SKEW_MS) return doc;
+  const left = (meta.expiryTime as number) - Date.now();
+  if (!selfRefreshable(meta) || left > ON_DEMAND_REFRESH_SKEW_MS) return doc;
+
+  // Inside the skew but not yet expired: the stored token still works, so serve
+  // it now and refresh behind the response. A refresh stampede (every request in
+  // the last minute blocking on its own refresh) becomes one detached refresh per
+  // service per isolate. Already expired: refresh before answering, as before.
+  if (left > 0) {
+    const startedAt = refreshing.get(service);
+    if (startedAt === undefined || Date.now() - startedAt > BACKGROUND_REFRESH_STALE_MS) {
+      refreshing.set(service, Date.now());
+      const task = refreshStoredToken(ctx, service)
+        .catch(() => undefined) // best effort: the sweep and the next request retry
+        .finally(() => refreshing.delete(service));
+      (background ?? ((p) => void p))(task);
+    }
+    return doc;
+  }
   try {
     const r = await refreshStoredToken(ctx, service);
     if (r.status === "refreshed") {

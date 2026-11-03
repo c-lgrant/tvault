@@ -9,14 +9,24 @@
 
 import { type Bytes, bytesToHex, constantTimeEqual, utf8 } from "../crypto/encoding.ts";
 
+// Imported (non-extractable) keys, kept per isolate/process and keyed by the
+// identity of the raw key bytes the secret provider hands out (it returns the
+// same array every call). The CryptoKey is an opaque handle; the raw bytes are
+// not retained here, and the WeakMap drops the entry with them.
+const keyCache = new WeakMap<Bytes, CryptoKey>();
+
 async function importKey(secret: Bytes): Promise<CryptoKey> {
-  return crypto.subtle.importKey(
+  const hit = keyCache.get(secret);
+  if (hit) return hit;
+  const key = await crypto.subtle.importKey(
     "raw",
     secret,
     { name: "HMAC", hash: "SHA-256" },
     false,
     ["sign", "verify"],
   );
+  keyCache.set(secret, key);
+  return key;
 }
 
 /** Low-level: hex HMAC-SHA256 of an arbitrary message. Used by request + ticket auth. */

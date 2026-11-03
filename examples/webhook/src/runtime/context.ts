@@ -92,6 +92,11 @@ export interface WebhookConfig {
    * within this many seconds (OAUTH_REFRESH_WINDOW_SECONDS; default 1200).
    */
   refreshWindowSeconds?: number;
+  /**
+   * Delete audit events older than this many days (AUDIT_RETENTION_DAYS).
+   * Absent or 0 keeps every event.
+   */
+  auditRetentionDays?: number;
 }
 
 /** Locally-provisioned OAuth client credentials for autonomous refresh. */
@@ -173,10 +178,47 @@ export interface StorageAdapter {
   get(collection: string, key: string): Promise<StoredDocument | null>;
   set(collection: string, key: string, data: StoredDocument): Promise<void>;
   delete(collection: string, key: string): Promise<void>;
+  /**
+   * Atomic insert-if-absent: true if written, false if the key already existed.
+   * Optional: callers fall back to read-then-set.
+   */
+  setIfAbsent?(collection: string, key: string, data: StoredDocument): Promise<boolean>;
+  /**
+   * Conditional write: replace the document only if the stored one is still
+   * `expected` (the object this process read). False, with nothing written, if
+   * it was deleted or replaced since: a refresh must not resurrect or overwrite
+   * it. Optional: callers fall back to an unconditional `set`.
+   */
+  setIfUnchanged?(collection: string, key: string, expected: StoredDocument, data: StoredDocument): Promise<boolean>;
   /** All [key, document] pairs in a collection (unshaped). */
   entries(collection: string): Promise<Array<[string, StoredDocument]>>;
-  /** Number of documents in a collection, without loading them. */
-  count(collection: string): Promise<number>;
+  /**
+   * Number of documents in a collection, without loading them. With `since`,
+   * only documents whose timestamp field is >= it (see `TimeQuery`).
+   */
+  count(collection: string, opts?: Pick<TimeQuery, "since" | "timestampField">): Promise<number>;
+  /**
+   * Newest-first window of a collection, ordered and limited by the store
+   * (no full load). Optional: callers fall back to `entries` when absent.
+   */
+  list?(collection: string, opts: TimeQuery): Promise<Array<[string, StoredDocument]>>;
+  /**
+   * Delete documents whose timestamp field is a string older than `olderThan`
+   * (documents without one are kept). Returns the number deleted. Optional.
+   */
+  prune?(collection: string, olderThan: string, timestampField: string): Promise<number>;
+}
+
+/** Newest-first query over a collection's documents, ordered by a string timestamp field. */
+export interface TimeQuery {
+  /** Max documents to return. */
+  limit?: number;
+  /** Only documents with timestamp strictly older than this. */
+  before?: string;
+  /** Only documents with timestamp >= this. */
+  since?: string;
+  /** JSON field holding the ISO timestamp (letters/underscore only). Default "timestamp". */
+  timestampField?: string;
 }
 
 /**

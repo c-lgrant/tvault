@@ -15,6 +15,7 @@ import { MemoryReplayGuard } from "../adapters/replay/memory.ts";
 import { configFromEnv } from "./config.ts";
 import { runStartup } from "./startup.ts";
 import { refreshDueTokens } from "../core/protocol/oauthRefresh.ts";
+import { pruneAudit } from "../core/protocol/retention.ts";
 
 async function main(): Promise<void> {
   const [storage, secrets] = await Promise.all([FsStorageAdapter.create(), FileSecretProvider.create()]);
@@ -32,6 +33,11 @@ async function main(): Promise<void> {
   const port = Number(process.env.PORT) || 8080;
   serve({ fetch: app.fetch, port, hostname: "0.0.0.0" });
   console.log(`tv-webhook (node) listening on :${port} — webhookId=${await secrets.webhookId()}`);
+
+  // Audit retention: shortly after start, then hourly.
+  const prune = () => void pruneAudit(ctx).catch(() => console.error("[retention] audit prune failed"));
+  setTimeout(prune, 10_000).unref();
+  setInterval(prune, 3_600_000).unref();
 
   // Refresh own-app OAuth tokens before they expire (Workers use a cron
   // trigger instead). Runs once shortly after start, then every interval.

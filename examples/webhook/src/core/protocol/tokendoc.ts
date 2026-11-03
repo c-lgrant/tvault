@@ -69,9 +69,13 @@ export async function readTokenObject(
     const fields = (doc.fields ?? {}) as Record<string, string>;
     const meta = (doc.meta ?? {}) as Record<string, unknown>;
     const token: Record<string, unknown> = {};
-    for (const [name, value] of Object.entries(fields)) {
-      if (value) token[name] = await decrypt(key, value);
-    }
+    // Fields decrypt independently: do them in parallel (insertion order kept).
+    const decrypted = await Promise.all(
+      Object.entries(fields).map(async ([name, value]): Promise<[string, string] | null> =>
+        value ? [name, await decrypt(key, value)] : null,
+      ),
+    );
+    for (const entry of decrypted) if (entry) token[entry[0]] = entry[1];
     for (const [name, value] of Object.entries(meta)) {
       if (!(name in token)) token[name] = value;
     }

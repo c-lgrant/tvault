@@ -63,7 +63,19 @@ describe("worker entry point", () => {
       const res = await worker.fetch(new Request("https://wh.test/v1/health"), env, execCtx);
       expect(res.status).toBe(200);
     }
-    expect(db.log.filter((q) => q.startsWith("CREATE TABLE"))).toHaveLength(1);
+    // The table is created only because it was missing (the two parallel startup
+    // reads may each create it: the statement is idempotent), and never again.
+    const creates = () => db.log.filter((q) => q.startsWith("CREATE TABLE")).length;
+    expect(creates()).toBeGreaterThanOrEqual(1);
+    expect(creates()).toBeLessThanOrEqual(2);
+  });
+
+  it("does not issue CREATE TABLE when the schema already exists", async () => {
+    const db = new FakeD1();
+    db.tableExists = true;
+    const res = await (await loadWorker()).fetch(new Request("https://wh.test/v1/health"), envFor(db), execCtx);
+    expect(res.status).toBe(200);
+    expect(db.log.filter((q) => q.startsWith("CREATE TABLE"))).toEqual([]);
   });
 
   it("retries startup on the next request after a failure", async () => {
@@ -71,7 +83,7 @@ describe("worker entry point", () => {
     const db = new FakeD1();
     const env = envFor(db);
 
-    db.fail();
+    db.fail(2); // both startup reads (bind state + schema stamp) fail
     await expect(worker.fetch(new Request("https://wh.test/v1/health"), env, execCtx)).rejects.toThrow();
     const res = await worker.fetch(new Request("https://wh.test/v1/health"), env, execCtx);
     expect(res.status).toBe(200);

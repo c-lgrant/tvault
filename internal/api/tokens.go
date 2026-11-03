@@ -141,30 +141,17 @@ func credentialFieldForType(typ string) string {
 //   - Agent context (AgentKey set): GET /api/agents/credentials?service=X.
 //     For webhook-mode vaults the backend issues a 307 to the user's webhook;
 //     Go's HTTP client follows it transparently.
-//   - Admin context (BearerToken set): GET /api/tokens/{service}. The
-//     response carries the secret in one of several type-specific fields.
-//     In webhook mode the backend strips those (TV never holds plaintext),
-//     and we fall back to the credential-ticket flow (POST
+//   - Admin context (BearerToken set): the credential-ticket flow (POST
 //     /api/vault/credential-ticket → GET <webhook>/v1/credential, bypassing
-//     TV's backend on the credential leg).
+//     TV's backend on the credential leg). The webhook is the only vault
+//     mode, so GET /api/tokens/{service} never carries a value; skipping it
+//     saves a full round trip. The ticket route runs the same policies and
+//     answers 409 SIGNIN_NO_VALUE for a sign-in credential.
 func (c *Client) GetTokenValue(service string) (string, error) {
 	// Agents and scoped keys (credentials:read) both read through the
-	// agent-credentials endpoint; only the admin persona uses /api/tokens.
+	// agent-credentials endpoint.
 	if c.AgentKey != "" || c.APIKey != "" {
 		return c.getTokenValueAgent(service)
-	}
-	body, err := c.doRequest("GET", "/api/tokens/"+service, nil, nil)
-	if err != nil {
-		return "", err
-	}
-	if v := firstSecretField(body); v != "" {
-		return v, nil
-	}
-	var meta struct {
-		Kind string `json:"kind"`
-	}
-	if json.Unmarshal(body, &meta) == nil && meta.Kind == KindSignIn {
-		return "", SignInNoValueError(service, "GET /api/tokens/"+service)
 	}
 	return c.getTokenValueZK(service)
 }
