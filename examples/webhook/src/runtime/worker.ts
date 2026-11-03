@@ -26,6 +26,7 @@ import { CacheReplayGuard } from "../adapters/replay/cache.ts";
 import type { RuntimeContext } from "./context.ts";
 import { runStartup } from "./startup.ts";
 import { refreshDueTokens } from "../core/protocol/oauthRefresh.ts";
+import { pruneAudit } from "../core/protocol/retention.ts";
 
 export interface Env {
   /** The one persisted secret — AES key + HMAC secret are HKDF-derived from it. */
@@ -73,6 +74,11 @@ export default {
   // before they expire. Token Vault never asks for this; the webhook owns it.
   async scheduled(_controller: ScheduledController, env: Env): Promise<void> {
     const ctx = builtCtx ?? (builtCtx = await buildContext(env));
-    await refreshDueTokens(ctx);
+    try {
+      await refreshDueTokens(ctx);
+    } finally {
+      // Audit retention rides the same cron; a failed refresh sweep must not skip it.
+      await pruneAudit(ctx).catch(() => console.error("[retention] audit prune failed"));
+    }
   },
 } satisfies ExportedHandler<Env>;

@@ -137,8 +137,9 @@ Refresh is the webhook's job; Token Vault never schedules it. A token with an
   `OAUTH_REFRESH_WINDOW_SECONDS` (default 1200);
 - **when you press Refresh** in Token Vault (`POST /v1/refresh-notify`);
 - **at fetch time**: `/v1/credential` and `/v1/proxy` refresh one that is
-  already expired (or within a minute of it) before using it. If that fails the
-  stored token is served as before.
+  already expired before using it. A token that is still valid but within a
+  minute of expiry is served as it is and refreshed in the background (once per
+  service per isolate). If a refresh fails the stored token is served as before.
 
 A refresh keeps all of the token's metadata (including `creationId`), stores a
 rotated refresh token when the provider returns one and keeps the old one when it
@@ -186,6 +187,23 @@ Webhook-owned refresh (`refresh`, `/v1/refresh-notify`) covers every other case.
 To enable it, set `TV_REFRESH_ENABLED=true` (a Worker `[vars]` entry or a Node
 environment variable; any other value leaves it off). After changing the switch,
 press **Verify Connection** in the console so the capability list is re-read.
+
+## Protocol notes
+
+- **`/v1/proxy` streams.** The upstream response body is passed through as it
+  arrives (an SSE stream can stay open indefinitely). The 30 s upstream timeout
+  covers waiting for response headers only; slow headers return `upstream_timeout`.
+- **`Server-Timing` (optional response header on `/v1/proxy`).** Lets the control
+  plane split webhook time from upstream time: `tv-wh;dur=<ms>` is time from the
+  start of request handling to just before the upstream call, `tv-up;dur=<ms>` is
+  the upstream call until its response headers arrived (the body streams after
+  that and is not included). Milliseconds with one decimal; durations only. An
+  upstream's own `Server-Timing` value is kept and ours is appended. The
+  `upstream_timeout` and `upstream_error` responses carry `tv-wh` only. Clients
+  that do not read the header can ignore it.
+- **Audit retention.** `audit` events older than 90 days are deleted by the cron
+  trigger (Workers) or an hourly timer (Node). A paginated `/v1/storage` list of
+  `audit` (`options.limit`) is ordered and limited by the store itself.
 
 ## Tests
 

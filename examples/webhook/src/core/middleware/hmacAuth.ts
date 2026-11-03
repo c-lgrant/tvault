@@ -17,22 +17,36 @@ function nowSeconds(): number {
   return Math.floor(Date.now() / 1000);
 }
 
-/** The body's `attemptId` when the signed body is a JSON object that has one. */
-function signedAttemptId(rawBody: Uint8Array | undefined): string | undefined {
-  if (!rawBody || rawBody.length === 0) return undefined;
+/**
+ * Parse the signed body once. Returns the parsed value (undefined when empty or
+ * not JSON) and the `attemptId` it carries, if any.
+ */
+function parseSignedBody(rawBody: Uint8Array | undefined): { parsed?: unknown; attemptId?: string } {
+  if (!rawBody || rawBody.length === 0) return {};
   try {
     const parsed: unknown = JSON.parse(new TextDecoder().decode(rawBody));
     if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
       const v = (parsed as Record<string, unknown>).attemptId;
-      return typeof v === "string" ? v : undefined;
+      return { parsed, ...(typeof v === "string" ? { attemptId: v } : {}) };
     }
+    return { parsed };
   } catch {
     // Not JSON: nothing to cross-check.
+    return {};
   }
-  return undefined;
 }
 
-export const hmacAuth = (ctx: RuntimeContext): MiddlewareHandler<AppEnv> => async (c, next) => {
+export interface HmacAuthOptions {
+  /**
+   * Verify the signature here but leave the request-id replay check to the
+   * handler (`c.get("guardRequestId")`), so it can run concurrently with the
+   * handler's other I/O. The handler must not act on the request (no
+   * decryption, response or upstream call) until that check has passed.
+   */
+  deferReplay?: boolean;
+}
+
+export const hmacAuth = (ctx: RuntimeContext, opts: HmacAuthOptions = {}): MiddlewareHandler<AppEnv> => async (c, next) => {
   if (!(await ctx.secrets.isConfigured())) return sendError(c, setupRequired());
 
   const sig = c.req.header(HEADER_SIGNATURE) ?? "";
@@ -59,11 +73,18 @@ export const hmacAuth = (ctx: RuntimeContext): MiddlewareHandler<AppEnv> => asyn
     // The request-id header is not signed. Spec 2.8.0 puts the same value in the
     // signed body as `attemptId`, so a captured request can't be replayed under a
     // new header id. Older control planes send no attemptId: header only.
-    const attemptId = signedAttemptId(rawBody);
+    const { parsed, attemptId } = parseSignedBody(rawBody);
+    if (parsed !== undefined) c.set("parsedBody", parsed);
     if (attemptId !== undefined && attemptId !== requestId) {
       return sendError(c, authFailed("X-TokenVault-Request-Id does not match the signed attemptId"));
     }
-    await guardRequestId(ctx.replay, requestId);
+    if (opts.deferReplay) {
+      // A missing id needs no I/O to refuse: do it here, ahead of the handler.
+      if (!requestId) throw authFailed("Missing X-TokenVault-Request-Id header");
+      c.set("guardRequestId", () => guardRequestId(ctx.replay, requestId));
+    } else {
+      await guardRequestId(ctx.replay, requestId);
+    }
   } catch (e) {
     return sendError(c, e);
   }

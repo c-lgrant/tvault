@@ -33,6 +33,22 @@ export const DEFAULT_REFRESH_WINDOW_SECONDS = 1200;
 /** On-demand refresh at fetch time kicks in this close to expiry. */
 export const ON_DEMAND_REFRESH_SKEW_MS = 60_000;
 
+/**
+ * Hands a promise to the runtime to keep alive after the response (Workers'
+ * `waitUntil`); on Node a detached promise is enough.
+ */
+export type BackgroundRunner = (task: Promise<unknown>) => void;
+
+/**
+ * Services with a background refresh running in this isolate/process. A guard
+ * against duplicate work only: no promise is shared between requests, because
+ * on Workers a promise started by one request can stall if that request is
+ * cancelled (see runtime/worker.ts).
+ */
+const refreshing = new Map<string, number>(); // service -> start time (ms)
+/** A background refresh that has not settled after this long is treated as lost. */
+const BACKGROUND_REFRESH_STALE_MS = 60_000;
+
 /** OAuth error codes that only a new consent fixes (the grant was revoked or expired). */
 const RECONNECT_ERRORS = new Set(["invalid_grant", "bad_refresh_token"]);
 
@@ -352,9 +368,31 @@ export async function refreshDueTokens(ctx: RuntimeContext, now: number = Date.n
  * refresh it before handing it out. Best effort: on any failure the stored
  * document is returned unchanged, exactly as before this existed.
  */
-export async function freshDocument(ctx: RuntimeContext, service: string, doc: StoredDocument): Promise<StoredDocument> {
+export async function freshDocument(
+  ctx: RuntimeContext,
+  service: string,
+  doc: StoredDocument,
+  background?: BackgroundRunner,
+): Promise<StoredDocument> {
   const meta = docMeta(doc);
-  if (!selfRefreshable(meta) || (meta.expiryTime as number) - Date.now() > ON_DEMAND_REFRESH_SKEW_MS) return doc;
+  const left = (meta.expiryTime as number) - Date.now();
+  if (!selfRefreshable(meta) || left > ON_DEMAND_REFRESH_SKEW_MS) return doc;
+
+  // Inside the skew but not yet expired: the stored token still works, so serve
+  // it now and refresh behind the response. A refresh stampede (every request in
+  // the last minute blocking on its own refresh) becomes one detached refresh per
+  // service per isolate. Already expired: refresh before answering, as before.
+  if (left > 0) {
+    const startedAt = refreshing.get(service);
+    if (startedAt === undefined || Date.now() - startedAt > BACKGROUND_REFRESH_STALE_MS) {
+      refreshing.set(service, Date.now());
+      const task = refreshStoredToken(ctx, service)
+        .catch(() => undefined) // best effort: the sweep and the next request retry
+        .finally(() => refreshing.delete(service));
+      (background ?? ((p) => void p))(task);
+    }
+    return doc;
+  }
   try {
     const r = await refreshStoredToken(ctx, service);
     if (r.status === "refreshed") {

@@ -15,14 +15,19 @@ class TtlSet {
     const now = Date.now();
     const expiry = this.entries.get(value);
     if (expiry !== undefined && expiry > now) return true;
+    // Delete first so a re-recorded (previously expired) value moves to the back:
+    // with a fixed TTL, Map insertion order is then expiry order.
+    this.entries.delete(value);
     this.entries.set(value, now + this.ttlMs);
     if (this.entries.size > MAX_ENTRIES) this.prune(now);
     return false;
   }
 
+  /** Evict from the oldest end and stop at the first live entry: O(evicted), not O(size). */
   private prune(now: number): void {
     for (const [k, exp] of this.entries) {
-      if (exp <= now) this.entries.delete(k);
+      if (exp > now) break;
+      this.entries.delete(k);
     }
   }
 }

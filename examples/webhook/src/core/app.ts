@@ -14,6 +14,16 @@ import { sendError } from "./middleware/respond.ts";
 /** Hono context variables shared across middleware + handlers. */
 export interface AppVariables {
   rawBody: Bytes;
+  /** The raw body parsed as JSON, set once by hmacAuth so handlers don't re-parse. */
+  parsedBody?: unknown;
+  /**
+   * Set by `hmacAuth(ctx, { deferReplay: true })`: runs the request-id replay
+   * check. The handler MUST await it (typically alongside its storage read)
+   * before acting on the request.
+   */
+  guardRequestId?: () => Promise<void>;
+  /** performance.now() when handling of the request started (Server-Timing). */
+  t0?: number;
 }
 
 export type AppEnv = { Variables: AppVariables };

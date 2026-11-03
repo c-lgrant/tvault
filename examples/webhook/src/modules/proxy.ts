@@ -9,10 +9,14 @@ import { readJsonBody } from "../core/middleware/body.ts";
 import { sendError } from "../core/middleware/respond.ts";
 import { base64Decode } from "../core/crypto/encoding.ts";
 import { invalidRequest, ticketInvalid, tokenNotFound, upstreamError, upstreamTimeout } from "../core/protocol/errors.ts";
-import { verifyTicket } from "../core/protocol/tickets.ts";
+import type { MiddlewareHandler } from "hono";
+import type { AppEnv } from "../core/app.ts";
+import { consumeTicketNonce, verifyTicketSignature } from "../core/protocol/tickets.ts";
+import { readAfterReplayChecks } from "../core/protocol/replay.ts";
 import { decryptTokenField } from "../core/protocol/tokendoc.ts";
 import { assertCreationMatches } from "../core/protocol/constraints.ts";
 import { freshDocument } from "../core/protocol/oauthRefresh.ts";
+import { backgroundRunner } from "../core/middleware/background.ts";
 import type { FeatureModule } from "../core/registry.ts";
 import { isGcpServiceAccount, mintGcpAccessToken } from "./interceptors/gcpSa.ts";
 
@@ -32,7 +36,23 @@ export function proxyModule(): FeatureModule {
     name: "proxy",
     capability: "proxy",
     register(app, ctx) {
-      app.post("/v1/proxy", hmacAuth(ctx), async (c) => {
+      const stampStart: MiddlewareHandler<AppEnv> = async (c, next) => {
+        c.set("t0", performance.now());
+        await next();
+      };
+      app.post("/v1/proxy", stampStart, hmacAuth(ctx, { deferReplay: true }), async (c) => {
+        const t0 = c.get("t0") ?? performance.now();
+        let tUp0: number | undefined;
+        // Durations only (ms, one decimal): no names, errors or ids.
+        const timing = (tUp1?: number): string => {
+          const wh = `tv-wh;dur=${((tUp0 ?? performance.now()) - t0).toFixed(1)}`;
+          return tUp1 === undefined || tUp0 === undefined ? wh : `${wh}, tv-up;dur=${(tUp1 - tUp0).toFixed(1)}`;
+        };
+        const fail = (e: unknown): Response => {
+          const res = sendError(c, e);
+          res.headers.set("Server-Timing", timing());
+          return res;
+        };
         try {
           const body = readJsonBody(c);
           const ticket = typeof body.ticket === "string" ? body.ticket : "";
@@ -43,21 +63,31 @@ export function proxyModule(): FeatureModule {
               ? (body.headerTemplates as Record<string, string>)
               : {};
 
-          if (!ticket || !service) return sendError(c, invalidRequest("Missing 'ticket' or 'service'"));
-          if (!upstream.url) return sendError(c, invalidRequest("Missing 'upstream.url'"));
+          if (!ticket || !service) return fail(invalidRequest("Missing 'ticket' or 'service'"));
+          if (!upstream.url) return fail(invalidRequest("Missing 'upstream.url'"));
 
+          // Both signatures (request HMAC in hmacAuth, ticket here) are CPU-only
+          // and have passed before any I/O starts. Then the request-id check, the
+          // nonce check and the storage read run concurrently; nothing below
+          // (decrypt, upstream fetch, response) happens until both replay checks
+          // have passed.
           const secret = await ctx.secrets.hmacSecret();
-          const payload = await verifyTicket(ticket, secret, ctx.replay);
-          if (payload.pur !== "proxy") return sendError(c, ticketInvalid("Ticket purpose must be 'proxy'"));
-          if (payload.svc !== service) {
-            return sendError(c, ticketInvalid(`Ticket is for service '${payload.svc}', not '${service}'`));
-          }
+          const payload = await verifyTicketSignature(ticket, secret);
+          const guardRid = c.get("guardRequestId");
+          if (!guardRid) throw new Error("request-id replay guard was not installed");
+          let storedDoc = await readAfterReplayChecks(
+            [guardRid(), consumeTicketNonce(payload, ctx.replay)],
+            ctx.storage.get("tokens", service),
+          );
 
-          let storedDoc = await ctx.storage.get("tokens", service);
-          if (!storedDoc) return sendError(c, tokenNotFound(`No token stored for service '${service}'`));
+          if (payload.pur !== "proxy") return fail(ticketInvalid("Ticket purpose must be 'proxy'"));
+          if (payload.svc !== service) {
+            return fail(ticketInvalid(`Ticket is for service '${payload.svc}', not '${service}'`));
+          }
+          if (!storedDoc) return fail(tokenNotFound(`No token stored for service '${service}'`));
 
           assertCreationMatches(payload, storedDoc);
-          storedDoc = await freshDocument(ctx, service, storedDoc);
+          storedDoc = await freshDocument(ctx, service, storedDoc, backgroundRunner(c));
 
           const key = await ctx.secrets.encryptionKey();
           let accessToken: string | null;
@@ -66,7 +96,7 @@ export function proxyModule(): FeatureModule {
           } else {
             accessToken = storedDoc.accessToken != null ? String(storedDoc.accessToken) : null;
           }
-          if (!accessToken) return sendError(c, tokenNotFound(`No accessToken found for service '${service}'`));
+          if (!accessToken) return fail(tokenNotFound(`No accessToken found for service '${service}'`));
 
           // GCP SA key → mint a short-lived token and inject that instead.
           if (isGcpServiceAccount(accessToken)) {
@@ -83,31 +113,47 @@ export function proxyModule(): FeatureModule {
           const method = (upstream.method ?? "GET").toUpperCase();
           const reqBody = upstream.body ? base64Decode(upstream.body) : undefined;
 
+          // The timeout covers getting response headers only. Once they arrive
+          // the timer is cleared, so a long-lived body (an SSE stream) is never
+          // aborted; it streams straight through to the caller.
+          const abort = new AbortController();
+          let timedOut = false;
+          const timer = setTimeout(() => {
+            timedOut = true;
+            abort.abort();
+          }, UPSTREAM_TIMEOUT_MS);
           let upstreamResp: Response;
+          tUp0 = performance.now();
           try {
             upstreamResp = await fetch(upstream.url, {
               method,
               headers,
               ...(reqBody ? { body: reqBody as Uint8Array<ArrayBuffer> } : {}),
-              signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
+              signal: abort.signal,
             });
           } catch (err) {
-            if (err instanceof DOMException && err.name === "TimeoutError") {
-              return sendError(c, upstreamTimeout("Upstream request timed out"));
-            }
-            return sendError(c, upstreamError(`Upstream request failed: ${err instanceof Error ? err.message : String(err)}`));
+            if (timedOut) return fail(upstreamTimeout("Upstream request timed out"));
+            return fail(upstreamError(`Upstream request failed: ${err instanceof Error ? err.message : String(err)}`));
+          } finally {
+            clearTimeout(timer);
           }
+          const tUp1 = performance.now();
 
           const respHeaders: Record<string, string> = {};
+          let upstreamTiming = "";
           upstreamResp.headers.forEach((value, k) => {
-            if (!HOP_BY_HOP.has(k.toLowerCase())) respHeaders[k] = value;
+            const name = k.toLowerCase();
+            if (name === "server-timing") upstreamTiming = value;
+            else if (!HOP_BY_HOP.has(name)) respHeaders[k] = value;
           });
           respHeaders["X-Upstream-Status"] = String(upstreamResp.status);
+          // Keep the upstream's own Server-Timing and append ours.
+          const own = timing(tUp1);
+          respHeaders["Server-Timing"] = upstreamTiming ? `${upstreamTiming}, ${own}` : own;
 
-          const payloadBytes = new Uint8Array(await upstreamResp.arrayBuffer());
-          return c.body(payloadBytes, upstreamResp.status as 200, respHeaders);
+          return new Response(upstreamResp.body, { status: upstreamResp.status, headers: respHeaders });
         } catch (e) {
-          return sendError(c, e);
+          return fail(e);
         }
       });
     },

@@ -1,5 +1,6 @@
 // Encoding helpers shared by the protocol + crypto layers. Pure, no I/O.
 // btoa/atob and TextEncoder/TextDecoder exist in both Node 18+ and Workers.
+// Large base64 decodes use Buffer where it exists (Node; Workers with nodejs_compat).
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
@@ -44,7 +45,19 @@ export function base64Encode(b: Uint8Array): string {
   return btoa(binaryString(b));
 }
 
+// Canonical base64 (padded or not, no whitespace). Anything else goes through
+// atob, which keeps its exact accept/reject behaviour.
+const CANONICAL_B64 = /^[A-Za-z0-9+/]*={0,2}$/;
+// Below this the char-code loop is cheaper than crossing into Buffer.
+const BUFFER_DECODE_MIN_CHARS = 1024;
+
 export function base64Decode(s: string): Bytes {
+  const B = (globalThis as { Buffer?: typeof Buffer }).Buffer;
+  if (B && s.length >= BUFFER_DECODE_MIN_CHARS && s.length % 4 === 0 && CANONICAL_B64.test(s)) {
+    const buf = B.from(s, "base64");
+    // A view over the Buffer's own memory: no copy. WebCrypto and fetch accept it.
+    return new Uint8Array(buf.buffer, buf.byteOffset, buf.length) as Bytes;
+  }
   const bin = atob(s);
   const out = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);

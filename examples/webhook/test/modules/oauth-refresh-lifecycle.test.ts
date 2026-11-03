@@ -382,6 +382,41 @@ describe("own-app lifecycle (Google)", () => {
     expect(got.body.token!.expiryTime as number).toBeGreaterThan(Date.now());
   });
 
+  it("a token still valid but inside the skew is served as-is; one background refresh, not one per request", async () => {
+    const w = setup({ google: GOOGLE });
+    await w.connect("google", "gmail");
+    await w.expireIn("gmail", 30_000); // 30 s left: inside the 60 s skew, not expired
+    const stored = (await w.ctx.storage.get("tokens", "gmail"))!;
+
+    const tasks: Promise<unknown>[] = [];
+    const run = (p: Promise<unknown>) => void tasks.push(p);
+    const before = refreshCalls(w.fakes.google!).length;
+    const a = await freshDocument(w.ctx, "gmail", stored, run);
+    const b = await freshDocument(w.ctx, "gmail", stored, run);
+    expect(a).toBe(stored); // answered immediately with the current document
+    expect(b).toBe(stored);
+    expect(tasks).toHaveLength(1); // second request found one already in flight
+
+    await Promise.all(tasks);
+    expect(refreshCalls(w.fakes.google!).length - before).toBe(1);
+    expect((await w.token("gmail")).accessToken).toBe("AT-2");
+
+    // The in-flight marker is cleared: a later near-expiry request can refresh again.
+    await w.expireIn("gmail", 30_000);
+    await freshDocument(w.ctx, "gmail", (await w.ctx.storage.get("tokens", "gmail"))!, run);
+    expect(tasks).toHaveLength(2);
+    await Promise.all(tasks);
+  });
+
+  it("an agent fetching a token inside the skew gets the current one without waiting for a refresh", async () => {
+    const w = setup({ google: GOOGLE });
+    await w.connect("google", "gmail");
+    await w.expireIn("gmail", 30_000);
+    const got = await w.agentFetch("gmail");
+    expect(got.status).toBe(200);
+    expect(got.body.token!.accessToken).toBe("AT-1");
+  });
+
   it("a fetch-time refresh never hands over a credential replaced after the ticket check", async () => {
     const w = setup({ google: GOOGLE });
     await w.connect("google", "gmail", { cid: "old" });

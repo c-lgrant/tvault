@@ -73,10 +73,50 @@ function shapeItems(collection: string, entries: Array<[string, StoredDocument]>
   });
 }
 
+/**
+ * List a collection. A paginated audit list (a `limit` and no `filters`) is
+ * ordered, bounded and counted by the store, so only a page of rows leaves it;
+ * everything else loads the collection and shapes it in memory.
+ */
+async function listCollection(
+  storage: StorageAdapter,
+  collection: string,
+  options: ListOptions | undefined,
+): Promise<{ items: ListItem[]; pagination?: Pagination }> {
+  const limit = options?.limit;
+  const hasFilters =
+    options?.filters && typeof options.filters === "object" && Object.keys(options.filters).length > 0;
+  if (
+    collection === "audit" &&
+    storage.list &&
+    options &&
+    typeof limit === "number" &&
+    Number.isFinite(limit) &&
+    limit > 0 &&
+    !hasFilters &&
+    (options.since === undefined || typeof options.since === "string") &&
+    (options.after === undefined || typeof options.after === "string")
+  ) {
+    const sinceQ = options.since ? { since: options.since } : {};
+    const [rows, total] = await Promise.all([
+      // One extra row tells us whether another page exists.
+      storage.list(collection, {
+        limit: Math.floor(limit) + 1,
+        ...sinceQ,
+        ...(options.after ? { before: options.after } : {}),
+      }),
+      storage.count(collection, sinceQ),
+    ]);
+    return listResponse(collection, rows, options, total);
+  }
+  return listResponse(collection, await storage.entries(collection), options);
+}
+
 function listResponse(
   collection: string,
   entries: Array<[string, StoredDocument]>,
   options: ListOptions | undefined,
+  totalOverride?: number,
 ): { items: ListItem[]; pagination?: Pagination } {
   let items = shapeItems(collection, entries);
 
@@ -105,7 +145,7 @@ function listResponse(
       items = items.filter((item) => key(item) >= since);
     }
 
-    const totalCount = items.length;
+    const totalCount = totalOverride ?? items.length;
 
     if (options.after) {
       const after = options.after;
@@ -143,7 +183,7 @@ async function execute(
     const results: Record<string, unknown> = {};
     for (const col of collections) {
       if (!isKnownCollection(col)) continue;
-      results[col] = listResponse(col, await storage.entries(col), options);
+      results[col] = await listCollection(storage, col, options);
     }
     return { results };
   }
@@ -158,7 +198,7 @@ async function execute(
       return { data: await storage.get(collection, key) };
     }
     case "list":
-      return listResponse(collection, await storage.entries(collection), options);
+      return listCollection(storage, collection, options);
     case "set": {
       if (typeof key !== "string" || !key) throw invalidRequest("'key' required for set");
       if (!data || typeof data !== "object") throw invalidRequest("'data' required for set");

@@ -10,6 +10,9 @@ export class FakeD1 {
   private held: Array<() => void> = [];
   private holdNext = 0;
   private failNext = 0;
+  /** Model a missing table: queries throw "no such table" until CREATE TABLE runs. */
+  tableExists = false;
+  requireSchema = true;
 
   /** The next `n` queries never settle until `release()` is called. */
   hold(n = 1): void {
@@ -53,21 +56,67 @@ export class FakeD1 {
     }
     const [collection, key, doc] = args as string[];
     const id = `${collection}\u0000${key}`;
-    if (q.startsWith("CREATE TABLE")) return { success: true };
-    if (q.startsWith("INSERT INTO kv")) {
-      this.rows.set(id, doc);
+    if (q.startsWith("CREATE TABLE")) {
+      this.tableExists = true;
       return { success: true };
+    }
+    if (this.requireSchema && !this.tableExists) throw new Error("D1_ERROR: no such table: kv: SQLITE_ERROR");
+    // Timestamp field named in a json_extract(doc, '$.<field>') expression.
+    const field = /\$\.(\w+)/.exec(q)?.[1] ?? "timestamp";
+    const tsOf = (d: string): string => {
+      const v = (JSON.parse(d) as Record<string, unknown>)[field];
+      return typeof v === "string" ? v : "";
+    };
+    if (q.startsWith("INSERT INTO kv")) {
+      if (q.includes("DO NOTHING")) {
+        if (this.rows.has(id)) return { success: true, meta: { changes: 0 } };
+        this.rows.set(id, doc);
+        return { success: true, meta: { changes: 1 } };
+      }
+      this.rows.set(id, doc);
+      return { success: true, meta: { changes: 1 } };
+    }
+    if (q.startsWith("DELETE FROM kv") && q.includes("json_type")) {
+      const [col, olderThan] = args as string[];
+      let changes = 0;
+      for (const [rk, d] of [...this.rows.entries()]) {
+        const ts = tsOf(d);
+        if (rk.startsWith(`${col}\u0000`) && ts !== "" && ts < olderThan!) {
+          this.rows.delete(rk);
+          changes++;
+        }
+      }
+      return { success: true, meta: { changes } };
     }
     if (q.startsWith("DELETE FROM kv")) {
       this.rows.delete(id);
-      return { success: true };
+      return { success: true, meta: { changes: 1 } };
+    }
+    if (q.includes("ORDER BY")) {
+      // list(): args = collection, [since], [before], [limit]
+      const rest = args.slice(1) as string[];
+      let i = 0;
+      const since = q.includes(">= ?") ? rest[i++] : undefined;
+      const before = q.includes("< ? ORDER") ? rest[i++] : undefined;
+      const limit = q.includes("LIMIT ?") ? Number(rest[i++]) : undefined;
+      this.log.push("LIST");
+      const rows = [...this.rows.entries()]
+        .filter(([rk]) => rk.startsWith(`${collection}\u0000`))
+        .map(([rk, d]) => ({ k: rk.split("\u0000")[1]!, doc: d, ts: tsOf(d) }))
+        .filter((r) => (since === undefined || r.ts >= since) && (before === undefined || r.ts < before))
+        .sort((a, b) => (a.ts === b.ts ? (a.k < b.k ? 1 : -1) : a.ts < b.ts ? 1 : -1));
+      const results = (limit === undefined ? rows : rows.slice(0, limit)).map(({ k, doc }) => ({ k, doc }));
+      return { results };
     }
     if (q.startsWith("SELECT doc FROM kv")) {
       const d = this.rows.get(id);
       return d === undefined ? null : { doc: d };
     }
     const inCollection = [...this.rows.entries()].filter(([k]) => k.startsWith(`${collection}\u0000`));
-    if (q.startsWith("SELECT COUNT(*)")) return { n: inCollection.length };
+    if (q.startsWith("SELECT COUNT(*)")) {
+      const since = q.includes(">= ?") ? (args[1] as string) : undefined;
+      return { n: inCollection.filter(([, d]) => since === undefined || tsOf(d) >= since).length };
+    }
     if (q.startsWith("SELECT k, doc FROM kv")) {
       const results = inCollection.map(([k, d]) => ({ k: k.split("\u0000")[1], doc: d }));
       return mode === "all" ? { results } : (results[0] ?? null);
