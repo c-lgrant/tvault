@@ -56,22 +56,22 @@ func TestTokenNotesReadsDescription(t *testing.T) {
 	}
 }
 
-func TestGetTokenValue(t *testing.T) {
+// TestGetTokenValue_SignInNoValue: the ticket route's 409 SIGNIN_NO_VALUE
+// keeps its own error code now that the admin path skips /api/tokens/{svc}.
+func TestGetTokenValue_SignInNoValue(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/tokens/github" {
-			t.Errorf("path = %s", r.URL.Path)
+		if r.URL.Path != "/api/vault/credential-ticket" {
+			t.Errorf("unexpected TV path: %s", r.URL.Path)
 		}
-		// Backend returns the full token doc; the secret lives in accessToken.
-		w.Write([]byte(`{"serviceName":"github","accessToken":"ghp_secret123","tokenType":"pat"}`))
+		w.WriteHeader(409)
+		w.Write([]byte(`{"detail":{"code":"SIGNIN_NO_VALUE","message":"Revealing a value needs a stored value"}}`))
 	}))
 	defer srv.Close()
 	client := &Client{BaseURL: srv.URL, HTTP: srv.Client()}
-	val, err := client.GetTokenValue("github")
-	if err != nil {
-		t.Fatalf("GetTokenValue errored: %v", err)
-	}
-	if val != "ghp_secret123" {
-		t.Errorf("value = %q", val)
+	_, err := client.GetTokenValue("hub")
+	var ce *clierr.CLIError
+	if !errors.As(err, &ce) || ce.Code != "SIGNIN_NO_VALUE" {
+		t.Fatalf("err = %v, want a SIGNIN_NO_VALUE CLIError", err)
 	}
 }
 
@@ -291,10 +291,10 @@ func TestGetTokenValue_WebhookTimeoutGivesUpWithTimeoutInMessage(t *testing.T) {
 	}
 }
 
-// TestGetTokenValue_WebhookFallback exercises the zero-knowledge fallback:
-// /api/tokens/{svc} returns metadata only (no secret fields), so the CLI
+// TestGetTokenValue_WebhookFallback exercises the admin read: the CLI
 // fetches a ticket from /api/vault/credential-ticket then GETs the
-// plaintext from <webhook>/v1/credential.
+// plaintext from <webhook>/v1/credential. It never calls /api/tokens/{svc}
+// (the default branch below fails the test if it does).
 func TestGetTokenValue_WebhookFallback(t *testing.T) {
 	// Stand up the fake webhook first so we can hand its URL to the TV stub.
 	webhookHits := 0
@@ -316,9 +316,6 @@ func TestGetTokenValue_WebhookFallback(t *testing.T) {
 
 	tv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/api/tokens/spotify":
-			// Webhook-mode: backend strips secrets, returns metadata only.
-			w.Write([]byte(`{"serviceName":"spotify","tokenType":"JWT"}`))
 		case "/api/vault/credential-ticket":
 			raw, _ := io.ReadAll(r.Body)
 			var body map[string]any
