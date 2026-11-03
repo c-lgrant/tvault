@@ -1,17 +1,17 @@
-// Retention for the append-only `audit` collection. Nothing else deletes audit
-// events, so without this the collection (and every list over it) only grows.
-// Runs from the Workers cron trigger and from a Node timer.
+// Optional retention for the append-only `audit` collection. Off by default:
+// audit events are the user's record and are never deleted unless
+// AUDIT_RETENTION_DAYS is set to a positive number. Runs from the Workers cron
+// trigger and from a Node timer.
 
 import type { RuntimeContext } from "../../runtime/context.ts";
 
-export const AUDIT_RETENTION_DAYS = 90;
-
-/** Delete audit events older than the retention window; returns how many went. */
+/** Delete audit events older than `days`; 0 (the default) keeps everything. Returns how many went. */
 export async function pruneAudit(
-  ctx: Pick<RuntimeContext, "storage"> & { rawStorage?: RuntimeContext["storage"] },
+  ctx: Pick<RuntimeContext, "storage"> & { rawStorage?: RuntimeContext["storage"]; config?: Pick<RuntimeContext["config"], "auditRetentionDays"> },
   now: number = Date.now(),
-  days: number = AUDIT_RETENTION_DAYS,
+  days: number = ctx.config?.auditRetentionDays ?? 0,
 ): Promise<number> {
+  if (!(days > 0)) return 0;
   const storage = ctx.rawStorage ?? ctx.storage;
   if (!storage.prune) return 0;
   // Same shape the control plane writes (second precision, trailing Z).

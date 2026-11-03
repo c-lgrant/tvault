@@ -92,6 +92,11 @@ export interface WebhookConfig {
    * within this many seconds (OAUTH_REFRESH_WINDOW_SECONDS; default 1200).
    */
   refreshWindowSeconds?: number;
+  /**
+   * Delete audit events older than this many days (AUDIT_RETENTION_DAYS).
+   * Absent or 0 keeps every event.
+   */
+  auditRetentionDays?: number;
 }
 
 /** Locally-provisioned OAuth client credentials for autonomous refresh. */
@@ -178,6 +183,13 @@ export interface StorageAdapter {
    * Optional: callers fall back to read-then-set.
    */
   setIfAbsent?(collection: string, key: string, data: StoredDocument): Promise<boolean>;
+  /**
+   * Conditional write: replace the document only if the stored one is still
+   * `expected` (the object this process read). False, with nothing written, if
+   * it was deleted or replaced since: a refresh must not resurrect or overwrite
+   * it. Optional: callers fall back to an unconditional `set`.
+   */
+  setIfUnchanged?(collection: string, key: string, expected: StoredDocument, data: StoredDocument): Promise<boolean>;
   /** All [key, document] pairs in a collection (unshaped). */
   entries(collection: string): Promise<Array<[string, StoredDocument]>>;
   /**

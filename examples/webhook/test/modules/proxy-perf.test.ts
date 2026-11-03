@@ -34,7 +34,7 @@ function setup() {
 
 async function proxyCall(
   app: ReturnType<typeof createApp>,
-  opts: { ticket?: string; requestId?: string; upstream?: Record<string, unknown> } = {},
+  opts: { ticket?: string; requestId?: string; upstream?: Record<string, unknown>; signal?: AbortSignal } = {},
 ) {
   const ticket = opts.ticket ?? (await signTicket(secret, ticketPayload()));
   const requestId = opts.requestId ?? crypto.randomUUID();
@@ -56,6 +56,7 @@ async function proxyCall(
       "X-TokenVault-Request-Id": requestId,
     },
     body,
+    ...(opts.signal ? { signal: opts.signal } : {}),
   });
 }
 
@@ -265,5 +266,130 @@ describe("replay checks vs the storage read", () => {
     expect((await proxyCall(fresh)).status).toBe(200);
     const firstEnd = events.findIndex((e) => e.endsWith(":end"));
     expect(events.slice(0, firstEnd).sort()).toEqual(["get:start", "nonce:start", "rid:start"]);
+  });
+
+  it("a replayed or mis-purposed request causes no storage write (no TOTP heal)", async () => {
+    const { ctx } = setup();
+    const writes: string[] = [];
+    const inner = ctx.storage;
+    ctx.storage = {
+      get: (c, k) => inner.get(c, k),
+      set: async (c, k, d) => (writes.push(`${c}/${k}`), inner.set(c, k, d)),
+      delete: (c, k) => inner.delete(c, k),
+      entries: (c) => inner.entries(c),
+      count: (c) => inner.count(c),
+    };
+    const app = createApp(ctx, [proxyModule()]);
+    const legacy = () =>
+      inner.set("tokens", "github", {
+        fields: {},
+        meta: { totpUri: "otpauth://totp/a?secret=JBSWY3DPEHPK3PXP", tokenType: "TOTP" },
+      });
+    vi.stubGlobal("fetch", async () => new Response("ok"));
+
+    const id = crypto.randomUUID();
+    await legacy();
+    await proxyCall(app, { requestId: id }); // genuine request: healing is allowed
+    expect(writes).toEqual(["tokens/github"]);
+
+    writes.length = 0;
+    await legacy();
+    const replay = await proxyCall(app, { requestId: id }); // same request id, valid signature
+    expect(replay.status).toBe(401);
+    expect(writes).toEqual([]);
+
+    const wrongPurpose = await signTicket(secret, ticketPayload({ pur: "store" }));
+    expect((await proxyCall(app, { ticket: wrongPurpose })).status).toBe(401);
+    expect(writes).toEqual([]);
+  });
+});
+
+describe("credential never reaches the caller", () => {
+  it("refuses a credential that cannot be a header value, without echoing it", async () => {
+    const { ctx, app } = setup();
+    await ctx.storage.set("tokens", "github", { accessToken: "tok\nSECRET-VALUE-123" });
+    const upstream = vi.fn(async () => new Response("ok"));
+    vi.stubGlobal("fetch", upstream);
+    const res = await proxyCall(app);
+    const text = await res.text();
+    expect(res.status).toBe(400);
+    expect(text).not.toContain("SECRET-VALUE-123");
+    expect(text).toContain("Authorization");
+    expect(upstream).not.toHaveBeenCalled();
+  });
+
+  it("returns a fixed message for a non-protocol error", async () => {
+    const { ctx } = setup();
+    const inner = ctx.storage;
+    ctx.storage = {
+      get: async () => {
+        throw new Error("boom SECRET-VALUE-456");
+      },
+      set: (c, k, d) => inner.set(c, k, d),
+      delete: (c, k) => inner.delete(c, k),
+      entries: (c) => inner.entries(c),
+      count: (c) => inner.count(c),
+    };
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    const res = await proxyCall(createApp(ctx, [proxyModule()]));
+    const text = await res.text();
+    expect(res.status).toBe(500);
+    expect(text).not.toContain("SECRET-VALUE-456");
+    expect(JSON.parse(text)).toMatchObject({ message: "Internal error" });
+    expect(JSON.stringify(errors.mock.calls)).not.toContain("SECRET-VALUE-456");
+    errors.mockRestore();
+  });
+});
+
+describe("proxy stream limits", () => {
+  it("errors the stream and aborts upstream after 60 s with no chunk", async () => {
+    vi.useFakeTimers();
+    const { ctx, app } = setup();
+    await ctx.storage.set("tokens", "github", { accessToken: "tok" });
+    let signal!: AbortSignal;
+    vi.stubGlobal("fetch", async (_u: string, init: RequestInit) => {
+      signal = init.signal!;
+      return new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(utf8("hello"));
+            // then silence
+          },
+        }),
+      );
+    });
+    const res = await proxyCall(app);
+    const reader = res.body!.getReader();
+    expect(new TextDecoder().decode((await reader.read()).value)).toBe("hello");
+    const next = reader.read().catch((e: unknown) => e);
+    await vi.advanceTimersByTimeAsync(60_001);
+    expect(await next).toBeInstanceOf(Error);
+    expect(signal.aborted).toBe(true);
+  });
+
+  it("aborts upstream when the caller goes away", async () => {
+    const { ctx, app } = setup();
+    await ctx.storage.set("tokens", "github", { accessToken: "tok" });
+    let signal!: AbortSignal;
+    vi.stubGlobal("fetch", async (_u: string, init: RequestInit) => {
+      signal = init.signal!;
+      return new Response(new ReadableStream<Uint8Array>({ start() {} }));
+    });
+    const caller = new AbortController();
+    const res = await proxyCall(app, { signal: caller.signal });
+    expect(res.status).toBe(200);
+    expect(signal.aborted).toBe(false);
+    caller.abort();
+    expect(signal.aborted).toBe(true);
+  });
+});
+
+describe("AUDIT_RETENTION_DAYS", () => {
+  it("is off unless set to a positive number", async () => {
+    const { configFromEnv } = await import("../../src/runtime/config.ts");
+    const env = (extra: Record<string, string>) => configFromEnv((k) => ({ TOKENVAULT_FRONTEND_URL: "https://x.test", ...extra })[k]);
+    expect(env({}).auditRetentionDays).toBeUndefined();
+    expect(env({ AUDIT_RETENTION_DAYS: "0" }).auditRetentionDays).toBeUndefined();
+    expect(env({ AUDIT_RETENTION_DAYS: "30" }).auditRetentionDays).toBe(30);
   });
 });

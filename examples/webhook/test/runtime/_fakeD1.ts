@@ -67,6 +67,13 @@ export class FakeD1 {
       const v = (JSON.parse(d) as Record<string, unknown>)[field];
       return typeof v === "string" ? v : "";
     };
+    if (q.startsWith("UPDATE kv SET doc")) {
+      const [next, col, k, was] = args as string[];
+      const rid = `${col}\u0000${k}`;
+      if (this.rows.get(rid) !== was) return { success: true, meta: { changes: 0 } };
+      this.rows.set(rid, next!);
+      return { success: true, meta: { changes: 1 } };
+    }
     if (q.startsWith("INSERT INTO kv")) {
       if (q.includes("DO NOTHING")) {
         if (this.rows.has(id)) return { success: true, meta: { changes: 0 } };

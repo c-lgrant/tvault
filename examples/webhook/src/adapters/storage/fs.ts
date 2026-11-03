@@ -103,6 +103,25 @@ export class FsStorageAdapter implements StorageAdapter {
     return true;
   }
 
+  /**
+   * Conditional write: the check and the in-memory update share one tick, so no
+   * delete or replace can slip between them; the flush then persists it.
+   */
+  async setIfUnchanged(
+    collection: string,
+    key: string,
+    expected: StoredDocument,
+    data: StoredDocument,
+  ): Promise<boolean> {
+    const col = this.collection(collection);
+    const current = col[key];
+    if (current === undefined) return false;
+    if (current !== expected && JSON.stringify(current) !== JSON.stringify(expected)) return false;
+    col[key] = data;
+    await this.flush();
+    return true;
+  }
+
   async delete(collection: string, key: string): Promise<void> {
     delete this.collection(collection)[key];
     await this.flush();

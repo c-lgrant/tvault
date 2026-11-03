@@ -12,6 +12,7 @@ import { consumeTicketNonce, verifyTicketSignature } from "../core/protocol/tick
 import { readAfterReplayChecks } from "../core/protocol/replay.ts";
 import { readTokenObject } from "../core/protocol/tokendoc.ts";
 import { assertCreationMatches } from "../core/protocol/constraints.ts";
+import { healDoc } from "../core/protocol/totpHeal.ts";
 import { freshDocument } from "../core/protocol/oauthRefresh.ts";
 import { backgroundRunner } from "../core/middleware/background.ts";
 import type { FeatureModule } from "../core/registry.ts";
@@ -52,7 +53,9 @@ export function credentialModule(): FeatureModule {
           const payload = await verifyTicketSignature(ticket, secret);
           let storedDoc = await readAfterReplayChecks(
             [consumeTicketNonce(payload, ctx.replay)],
-            ctx.storage.get("tokens", service),
+            // Raw read: the TOTP-heal wrapper can write, and nothing may be
+            // written until the replay, purpose and service checks have passed.
+            (ctx.rawStorage ?? ctx.storage).get("tokens", service),
           );
 
           if (!CREDENTIAL_PURPOSES.has(payload.pur)) {
@@ -67,6 +70,7 @@ export function credentialModule(): FeatureModule {
           }
 
           assertCreationMatches(payload, storedDoc);
+          storedDoc = (await healDoc(ctx, ctx.rawStorage ?? ctx.storage, "tokens", service, storedDoc)).doc;
           // An own-app OAuth token past its expiry is refreshed before it is
           // handed out (best effort; the schedule normally got there first).
           storedDoc = await freshDocument(ctx, service, storedDoc, backgroundRunner(c));

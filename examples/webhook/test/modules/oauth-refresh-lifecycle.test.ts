@@ -26,7 +26,7 @@ import { sha256Hex } from "../../src/core/protocol/oauthConnect.ts";
 import { readTokenObject } from "../../src/core/protocol/tokendoc.ts";
 import { computeRequestSignature } from "../../src/core/protocol/hmac.ts";
 import { utf8 } from "../../src/core/crypto/encoding.ts";
-import { freshDocument, refreshDueTokens } from "../../src/core/protocol/oauthRefresh.ts";
+import { freshDocument, refreshDueTokens, refreshStoredToken } from "../../src/core/protocol/oauthRefresh.ts";
 import type { TicketPayload } from "../../src/core/protocol/types.ts";
 import type { OAuthProviderConfig } from "../../src/runtime/context.ts";
 import { makeContext } from "../conformance/_harness.ts";
@@ -406,6 +406,36 @@ describe("own-app lifecycle (Google)", () => {
     await freshDocument(w.ctx, "gmail", (await w.ctx.storage.get("tokens", "gmail"))!, run);
     expect(tasks).toHaveLength(2);
     await Promise.all(tasks);
+  });
+
+  it("a credential deleted while its refresh is in flight is not resurrected", async () => {
+    const w = setup({ google: GOOGLE });
+    await w.connect("google", "gmail");
+    await w.expireIn("gmail", -60_000);
+    const inner = w.ctx.storage;
+    let gets = 0;
+    // The delete lands right after the pre-write re-read: the window the old
+    // read-then-set code left open.
+    w.ctx.storage = {
+      set: (c, k, d) => inner.set(c, k, d),
+      delete: (c, k) => inner.delete(c, k),
+      entries: (c) => inner.entries(c),
+      count: (c) => inner.count(c),
+      get: async (c, k) => {
+        const doc = await inner.get(c, k);
+        if (c === "tokens" && ++gets === 2) await inner.delete(c, k);
+        return doc;
+      },
+      // Same contract as the real adapters: write only if still unchanged.
+      setIfUnchanged: async (c, k, expected, data) => {
+        const cur = await inner.get(c, k);
+        if (!cur || JSON.stringify(cur) !== JSON.stringify(expected)) return false;
+        await inner.set(c, k, data);
+        return true;
+      },
+    };
+    expect((await refreshStoredToken(w.ctx, "gmail")).status).toBe("no_token");
+    expect(await inner.get("tokens", "gmail")).toBeNull();
   });
 
   it("an agent fetching a token inside the skew gets the current one without waiting for a refresh", async () => {

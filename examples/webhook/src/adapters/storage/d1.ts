@@ -59,7 +59,35 @@ export class D1StorageAdapter implements StorageAdapter {
     const row = await this.q(() =>
       this.db.prepare("SELECT doc FROM kv WHERE collection = ? AND k = ?").bind(collection, key).first<Row>(),
     );
-    return row ? (JSON.parse(row.doc) as StoredDocument) : null;
+    return row ? this.parse(row.doc) : null;
+  }
+
+  // The exact stored text of each document handed out, so a conditional write can
+  // compare against what is in the database byte for byte (a re-serialised copy
+  // might not match).
+  private readonly sourceText = new WeakMap<object, string>();
+
+  private parse(text: string): StoredDocument {
+    const doc = JSON.parse(text) as StoredDocument;
+    this.sourceText.set(doc, text);
+    return doc;
+  }
+
+  /** Replace the document only if its stored text is still the one `expected` was read from. */
+  async setIfUnchanged(
+    collection: string,
+    key: string,
+    expected: StoredDocument,
+    data: StoredDocument,
+  ): Promise<boolean> {
+    const was = this.sourceText.get(expected) ?? JSON.stringify(expected);
+    const res = await this.q(() =>
+      this.db
+        .prepare("UPDATE kv SET doc = ? WHERE collection = ? AND k = ? AND doc = ?")
+        .bind(JSON.stringify(data), collection, key, was)
+        .run(),
+    );
+    return (res.meta?.changes ?? 0) > 0;
   }
 
   async set(collection: string, key: string, data: StoredDocument): Promise<void> {

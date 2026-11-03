@@ -121,7 +121,9 @@ describe("audit retention", () => {
     await d1.set("audit", "new", { timestamp: "2026-05-31T00:00:00Z" });
     await d1.set("audit", "none", { action: "x" });
     await d1.set("tokens", "svc", { timestamp: "2020-01-01T00:00:00Z" }); // other collections untouched
-    expect(await pruneAudit({ storage: d1 }, now)).toBe(1);
+    expect(await pruneAudit({ storage: d1 }, now)).toBe(0); // off by default: nothing deleted
+    expect((await d1.entries("audit")).length).toBe(4);
+    expect(await pruneAudit({ storage: d1 }, now, 90)).toBe(1);
     expect((await d1.entries("audit")).map(([k]) => k).sort()).toEqual(["edge", "new", "none"]);
     expect(await d1.get("tokens", "svc")).not.toBeNull();
   });
@@ -131,7 +133,7 @@ describe("audit retention", () => {
     const fs = await FsStorageAdapter.create(path);
     await fs.set("audit", "old", { timestamp: "2026-01-01T00:00:00Z" });
     await fs.set("audit", "new", { timestamp: "2026-05-31T00:00:00Z" });
-    expect(await pruneAudit({ storage: fs }, now)).toBe(1);
+    expect(await pruneAudit({ storage: fs, config: { auditRetentionDays: 90 } }, now)).toBe(1);
     const reloaded = await FsStorageAdapter.create(path);
     expect((await reloaded.entries("audit")).map(([k]) => k)).toEqual(["new"]);
   });
@@ -176,6 +178,33 @@ describe("atomic create", () => {
     expect(await d1.setIfAbsent("tokens", "x", { v: 2 })).toBe(false);
     expect(await d1.get("tokens", "x")).toEqual({ v: 1 });
   });
+});
+
+describe("conditional write", () => {
+  const adapters: Array<[string, () => Promise<StorageAdapter>]> = [
+    ["D1", async () => D1StorageAdapter.create(new FakeD1() as unknown as D1Database)],
+    ["fs", async () => FsStorageAdapter.create(join(await tmp(), "kv.json"))],
+  ];
+  for (const [name, make] of adapters) {
+    it(`${name}: writes when unchanged, refuses after a delete or a replace`, async () => {
+      const s = await make();
+      await s.set("tokens", "x", { v: 1 });
+      const read = (await s.get("tokens", "x"))!;
+      expect(await s.setIfUnchanged!("tokens", "x", read, { v: 2 })).toBe(true);
+      expect(await s.get("tokens", "x")).toEqual({ v: 2 });
+
+      const read2 = (await s.get("tokens", "x"))!;
+      await s.delete("tokens", "x");
+      expect(await s.setIfUnchanged!("tokens", "x", read2, { v: 3 })).toBe(false);
+      expect(await s.get("tokens", "x")).toBeNull(); // not resurrected
+
+      await s.set("tokens", "x", { v: 4 });
+      const read3 = (await s.get("tokens", "x"))!;
+      await s.set("tokens", "x", { v: 5 }); // replaced by someone else
+      expect(await s.setIfUnchanged!("tokens", "x", read3, { v: 6 })).toBe(false);
+      expect(await s.get("tokens", "x")).toEqual({ v: 5 });
+    });
+  }
 });
 
 describe("MemoryReplayGuard eviction", () => {

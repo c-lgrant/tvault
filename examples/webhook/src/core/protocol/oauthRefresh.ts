@@ -201,6 +201,26 @@ async function concurrentOutcome(ctx: RuntimeContext, service: string, before: S
   return { status: "refreshed", expiryTime: Number(docMeta(now).expiryTime) || 0 };
 }
 
+/**
+ * Write a refresh's result only if the stored document is still the one the
+ * refresh started from. Returns null when written; otherwise a result describing
+ * what is stored now (deleted: no_token), and the refresh result is dropped, so a
+ * delete or replace that lands mid-refresh is never overwritten or resurrected.
+ */
+async function storeUnlessChanged(
+  ctx: RuntimeContext,
+  service: string,
+  before: StoredDocument,
+  next: StoredDocument,
+): Promise<RefreshResult | null> {
+  if (!ctx.storage.setIfUnchanged) {
+    await ctx.storage.set("tokens", service, next);
+    return null;
+  }
+  if (await ctx.storage.setIfUnchanged("tokens", service, before, next)) return null;
+  return (await concurrentOutcome(ctx, service, before)) ?? { status: "no_token" };
+}
+
 /** Rebuild the document with new tokens, keeping every other encrypted field. */
 async function rebuild(
   key: Bytes,
@@ -282,7 +302,8 @@ export async function refreshStoredToken(
     const failed: StoredDocument = "fields" in doc
       ? { ...doc, meta: { ...meta, refreshError: result.error, refreshFailedAt: nowIso(), refreshReconnect: reconnect } }
       : { ...doc, refreshError: result.error, refreshFailedAt: nowIso(), refreshReconnect: reconnect };
-    await ctx.storage.set("tokens", service, failed);
+    const kept = await storeUnlessChanged(ctx, service, doc, failed);
+    if (kept) return kept;
     return { status: "refresh_failed", error: result.error, reconnect };
   }
 
@@ -306,7 +327,8 @@ export async function refreshStoredToken(
   // reconnect, or a concurrent refresh that already stored newer tokens).
   const concurrent = await concurrentOutcome(ctx, service, doc);
   if (concurrent) return concurrent;
-  await ctx.storage.set("tokens", service, await rebuild(key, doc, tokens.accessToken, newRefresh, meta));
+  const kept = await storeUnlessChanged(ctx, service, doc, await rebuild(key, doc, tokens.accessToken, newRefresh, meta));
+  if (kept) return kept;
   return { status: "refreshed", expiryTime };
 }
 

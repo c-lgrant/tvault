@@ -15,6 +15,7 @@ import { consumeTicketNonce, verifyTicketSignature } from "../core/protocol/tick
 import { readAfterReplayChecks } from "../core/protocol/replay.ts";
 import { decryptTokenField } from "../core/protocol/tokendoc.ts";
 import { assertCreationMatches } from "../core/protocol/constraints.ts";
+import { healDoc } from "../core/protocol/totpHeal.ts";
 import { freshDocument } from "../core/protocol/oauthRefresh.ts";
 import { backgroundRunner } from "../core/middleware/background.ts";
 import type { FeatureModule } from "../core/registry.ts";
@@ -23,6 +24,40 @@ import { isGcpServiceAccount, mintGcpAccessToken } from "./interceptors/gcpSa.ts
 // Hop-by-hop headers not forwarded from the upstream response (proxy.py:118).
 const HOP_BY_HOP = new Set(["content-encoding", "content-length", "transfer-encoding", "connection"]);
 const UPSTREAM_TIMEOUT_MS = 30_000;
+
+/** No upstream chunk for this long ends the stream. Total stream time is not capped. */
+export const STREAM_IDLE_TIMEOUT_MS = 60_000;
+
+/**
+ * Pass a body through, erroring it if the upstream sends nothing for `ms`. The
+ * clock runs only while waiting on the upstream (not while the reader is slow).
+ */
+function withIdleTimeout(body: ReadableStream<Uint8Array>, ms: number, onIdle: () => void): ReadableStream<Uint8Array> {
+  const reader = body.getReader();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      timer = setTimeout(() => {
+        onIdle();
+        controller.error(new Error("upstream stream idle timeout"));
+        reader.cancel().catch(() => {});
+      }, ms);
+      try {
+        const { done, value } = await reader.read();
+        clearTimeout(timer);
+        if (done) controller.close();
+        else controller.enqueue(value);
+      } catch (e) {
+        clearTimeout(timer);
+        controller.error(e);
+      }
+    },
+    cancel(reason) {
+      clearTimeout(timer);
+      return reader.cancel(reason);
+    },
+  });
+}
 
 interface UpstreamSpec {
   url?: string;
@@ -77,7 +112,9 @@ export function proxyModule(): FeatureModule {
           if (!guardRid) throw new Error("request-id replay guard was not installed");
           let storedDoc = await readAfterReplayChecks(
             [guardRid(), consumeTicketNonce(payload, ctx.replay)],
-            ctx.storage.get("tokens", service),
+            // Raw read: the TOTP-heal wrapper can write, and nothing may be
+            // written until the replay, purpose and service checks have passed.
+            (ctx.rawStorage ?? ctx.storage).get("tokens", service),
           );
 
           if (payload.pur !== "proxy") return fail(ticketInvalid("Ticket purpose must be 'proxy'"));
@@ -87,6 +124,7 @@ export function proxyModule(): FeatureModule {
           if (!storedDoc) return fail(tokenNotFound(`No token stored for service '${service}'`));
 
           assertCreationMatches(payload, storedDoc);
+          storedDoc = (await healDoc(ctx, ctx.rawStorage ?? ctx.storage, "tokens", service, storedDoc)).doc;
           storedDoc = await freshDocument(ctx, service, storedDoc, backgroundRunner(c));
 
           const key = await ctx.secrets.encryptionKey();
@@ -107,7 +145,15 @@ export function proxyModule(): FeatureModule {
           const headers = new Headers();
           for (const [k, v] of Object.entries(upstream.headers ?? {})) headers.set(k, v);
           for (const [name, template] of Object.entries(headerTemplates)) {
-            headers.set(name, template.replaceAll("${TOKEN}", accessToken));
+            const value = String(template).replaceAll("${TOKEN}", accessToken);
+            // A credential with a control character (or a non-Latin-1 one) cannot
+            // be a header value. Refuse it here with a fixed message: the runtime's
+            // own error would quote the value, and it must never leave the webhook.
+            // eslint-disable-next-line no-control-regex
+            if (/[\r\n\0]|[^\u0000-ÿ]/.test(value)) {
+              throw invalidRequest(`Header '${name.replace(/[^\w-]/g, "?").slice(0, 64)}' cannot be rendered from the stored credential`);
+            }
+            headers.set(name, value);
           }
 
           const method = (upstream.method ?? "GET").toUpperCase();
@@ -117,6 +163,11 @@ export function proxyModule(): FeatureModule {
           // the timer is cleared, so a long-lived body (an SSE stream) is never
           // aborted; it streams straight through to the caller.
           const abort = new AbortController();
+          // The caller leaving (client disconnect, TV's own timeout) ends the
+          // upstream call too, headers phase and body phase alike.
+          const callerSignal = c.req.raw.signal;
+          if (callerSignal.aborted) abort.abort();
+          else callerSignal.addEventListener("abort", () => abort.abort(), { once: true });
           let timedOut = false;
           const timer = setTimeout(() => {
             timedOut = true;
@@ -133,7 +184,8 @@ export function proxyModule(): FeatureModule {
             });
           } catch (err) {
             if (timedOut) return fail(upstreamTimeout("Upstream request timed out"));
-            return fail(upstreamError(`Upstream request failed: ${err instanceof Error ? err.message : String(err)}`));
+            // Fixed text: an error message from the HTTP stack may quote request headers.
+            return fail(upstreamError("Upstream request failed"));
           } finally {
             clearTimeout(timer);
           }
@@ -151,7 +203,8 @@ export function proxyModule(): FeatureModule {
           const own = timing(tUp1);
           respHeaders["Server-Timing"] = upstreamTiming ? `${upstreamTiming}, ${own}` : own;
 
-          return new Response(upstreamResp.body, { status: upstreamResp.status, headers: respHeaders });
+          const outBody = upstreamResp.body ? withIdleTimeout(upstreamResp.body, STREAM_IDLE_TIMEOUT_MS, () => abort.abort()) : null;
+          return new Response(outBody, { status: upstreamResp.status, headers: respHeaders });
         } catch (e) {
           return fail(e);
         }

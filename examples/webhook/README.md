@@ -201,8 +201,9 @@ press **Verify Connection** in the console so the capability list is re-read.
   upstream's own `Server-Timing` value is kept and ours is appended. The
   `upstream_timeout` and `upstream_error` responses carry `tv-wh` only. Clients
   that do not read the header can ignore it.
-- **Audit retention.** `audit` events older than 90 days are deleted by the cron
-  trigger (Workers) or an hourly timer (Node). A paginated `/v1/storage` list of
+- **Audit retention (opt-in).** Audit events are kept forever by default. Set
+  `AUDIT_RETENTION_DAYS` to a positive number to delete older events from the cron
+  trigger (Workers) or an hourly timer (Node); unset or `0` keeps everything. A paginated `/v1/storage` list of
   `audit` (`options.limit`) is ordered and limited by the store itself.
 
 ## Tests
