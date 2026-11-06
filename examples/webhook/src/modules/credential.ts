@@ -86,6 +86,11 @@ export function credentialModule(): FeatureModule {
             }
           }
 
+          // An agent gets the credential, not the long-lived key that makes more
+          // of it, so stopping its access also stops any renewals. This webhook
+          // does the refreshing. A person's own reveal (user_reveal) keeps the field.
+          if (payload.pur === "agent_credential") delete token.refreshToken;
+
           return c.json({ token }, 200, cors);
         } catch (e) {
           return sendError(c, e, cors);
