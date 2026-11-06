@@ -141,6 +141,10 @@ Refresh is the webhook's job; Token Vault never schedules it. A token with an
   minute of expiry is served as it is and refreshed in the background (once per
   service per isolate). If a refresh fails the stored token is served as before.
 
+An agent never receives the refresh token: `/v1/credential` removes it from an
+`agent_credential` response, so stopping an agent's access also stops any
+renewals. A person's own reveal (`user_reveal`) still shows it.
+
 A refresh keeps all of the token's metadata (including `creationId`), stores a
 rotated refresh token when the provider returns one and keeps the old one when it
 does not, and stamps `expiryTime`, `updatedAt` and `lastRefreshed`. A failure
