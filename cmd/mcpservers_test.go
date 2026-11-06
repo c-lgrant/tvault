@@ -219,7 +219,7 @@ func TestMCPServers_AddPresetIsFullReplaceWithLiteralPlaceholder(t *testing.T) {
 	if _, ok := servers[0]["urlRedacted"]; ok {
 		t.Errorf("read-only flag leaked into the PUT: %v", servers[0])
 	}
-	if !strings.Contains(stderr, "/api/mcp/github/github") || !strings.Contains(stderr, "github=tools:github") {
+	if !strings.Contains(stderr, "/api/mcp/github/github") || !strings.Contains(stderr, "github=mcp:github") {
 		t.Errorf("stderr = %q", stderr)
 	}
 }
@@ -607,7 +607,7 @@ func TestConnectServer_NameOverrideDryRunAndGrantNote(t *testing.T) {
 	}
 	if !strings.Contains(stderr, "claude mcp add --transport http --scope user gh-docs ") ||
 		!strings.Contains(stderr, "/api/mcp/github/docs") ||
-		!strings.Contains(stderr, "tvault grant my-agent github=tools:docs") {
+		!strings.Contains(stderr, "tvault grant my-agent github=mcp:docs") {
 		t.Errorf("stderr = %q", stderr)
 	}
 }

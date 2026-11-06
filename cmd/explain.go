@@ -145,15 +145,15 @@ var errorExplanations = map[string]struct {
 		Fix:  "Remove one first: `tvault mcp-servers rm <service> <name>`.",
 	},
 	"INVALID_GRANT_USES": {
-		What: "A grant's uses must be \"value\" and/or \"tools\", and tools needs a credential with at least one MCP server.",
-		Fix:  "Attach a server first (`tvault mcp-servers add <service> --preset <id>`), then `tvault grant <agent> <service>=tools`.",
+		What: "A grant's uses must be \"value\" and/or \"mcp\", and mcp needs a credential with at least one MCP server.",
+		Fix:  "Attach a server first (`tvault mcp-servers add <service> --preset <id>`), then `tvault grant <agent> <service>=mcp`.",
 	},
 	"INVALID_GRANT_SERVERS": {
-		What: "A grant names MCP servers that the credential does not have, or names servers without the tools use.",
-		Fix:  "Check the names with `tvault mcp-servers ls <service>`; the syntax is <service>=tools:<server>,<server>.",
+		What: "A grant names MCP servers that the credential does not have, or names servers without MCP access.",
+		Fix:  "Check the names with `tvault mcp-servers ls <service>`; the syntax is <service>=mcp:<server>,<server>.",
 	},
 	"GRANT_USES_EXCEEDED": {
-		What: "A key or agent can only pass on a grant no wider than its own, and the uses requested are not covered by the grant it holds (a value grant cannot be passed on as tools).",
+		What: "A key or agent can only pass on a grant no wider than its own, and the uses requested are not covered by the grant it holds (a value grant cannot be passed on as MCP access).",
 		Fix:  "Request only uses the acting principal holds, or have a person make the grant.",
 	},
 	"GRANT_SERVERS_EXCEEDED": {
@@ -161,16 +161,16 @@ var errorExplanations = map[string]struct {
 		Fix:  "Name servers within the acting principal's own grant, or have a person make the grant.",
 	},
 	"GRANT_TOOLS_ONLY": {
-		What: "The acting key or agent holds only a tools grant on this credential, which does not allow reading the value or changing its MCP servers.",
+		What: "The acting key or agent holds only MCP access to this credential, which does not allow reading the value or changing its MCP servers.",
 		Fix:  "Have a person make the change, or give the principal a value grant.",
 	},
 	"SIGNIN_NO_VALUE": {
 		What: "A Token Vault sign-in credential has no value, so there is nothing to read, rotate, store or connect through OAuth (exit code 6).",
-		Fix:  "Agents use it through its MCP server: `tvault grant <agent> <name>=tools`. To change where it signs in, edit its MCP server with `tvault mcp-servers add <name> --name <mcp-server> --url <url> --header 'Authorization: Bearer ${AGENT_SESSION}'`.",
+		Fix:  "Agents use it through its MCP server: `tvault grant <agent> <name>=mcp`. To change where it signs in, edit its MCP server with `tvault mcp-servers add <name> --name <mcp-server> --url <url> --header 'Authorization: Bearer ${AGENT_SESSION}'`.",
 	},
 	"SIGNIN_TOOLS_ONLY": {
-		What: "A Token Vault sign-in credential can only be granted for tools, to an agent. It has no value to hand out, and a key cannot hold it.",
-		Fix:  "Grant tools only: `tvault grant <agent> <name>=tools` (or `tvault add <name> --sign-in <url> --for <agent>=tools`).",
+		What: "A Token Vault sign-in credential can only be granted MCP access, to an agent. It has no value to hand out, and a key cannot hold it.",
+		Fix:  "Grant MCP access only: `tvault grant <agent> <name>=mcp` (or `tvault add <name> --sign-in <url> --for <agent>=mcp`).",
 	},
 	"SIGNIN_URL_ON_TOKEN_VAULT": {
 		What: "The URL of a Token Vault sign-in MCP server must be a different service. It cannot point back at Token Vault itself.",
@@ -182,7 +182,7 @@ var errorExplanations = map[string]struct {
 	},
 	"SIGNIN_SESSION_REFUSED": {
 		What: "Token Vault refused to issue the agent a sign-in pass for this MCP server: the agent is suspended, expired or gone, its MCP access is switched off, or the MCP server entry is no longer valid.",
-		Fix:  "Resume the agent (`tvault agents resume <agent>`), check its access (`tvault grant <agent> <name>=tools`), and check the MCP server with `tvault mcp-servers ls <name>`.",
+		Fix:  "Resume the agent (`tvault agents resume <agent>`), check its access (`tvault grant <agent> <name>=mcp`), and check the MCP server with `tvault mcp-servers ls <name>`.",
 	},
 	"SIGNIN_SESSION_UNAVAILABLE": {
 		What: "Token Vault could not issue a sign-in pass just now: the account is locked, or Token Vault could not read its lock state.",
@@ -206,7 +206,7 @@ var errorExplanations = map[string]struct {
 	},
 	"MCP_TOGGLE_REMOVED": {
 		What: "There is no per-agent MCP switch any more, so it cannot be turned off.",
-		Fix:  "Remove the agent's tools grant (`tvault ag gr rm <agent> <name>`) or suspend the agent (`tvault agents suspend <agent>`).",
+		Fix:  "Remove the agent's MCP grant (`tvault ag gr rm <agent> <name>`) or suspend the agent (`tvault agents suspend <agent>`).",
 	},
 	"SCOPE_RETIRED": {
 		What: "That scope is retired and can no longer be given to a new key or agent. Keys that already hold it keep it, to delete or suspend old MCP connections.",

@@ -53,15 +53,16 @@ var grantsAddCmd = &cobra.Command{
 (today's meaning). Append =<uses> to choose what the grant may be used for:
 
   value   the agent may read the credential value
-  tools   the agent may call the credential's MCP servers through Token Vault
-          and is never handed the value (see ` + "`tvault mcp-servers`" + `)
+  mcp     the agent may call the credential's MCP servers through Token Vault
+          and is never handed the value (see ` + "`tvault mcp-servers`" + `);
+          "tools" is accepted as another spelling of mcp
 
-<uses> is a comma list. After a colon, name the MCP servers a tools grant covers;
+<uses> is a comma list. After a colon, name the MCP servers an mcp grant covers;
 without it, every server of the credential (including ones added later).`,
 	Example: `  tvault grant claude-code github            # value grant
-  tvault grant claude-code github=tools      # tools only, all servers
-  tvault grant claude-code github=value,tools:github
-  tvault grant claude-code github=tools:github linear=tools`,
+  tvault grant claude-code github=mcp        # MCP access only, all servers
+  tvault grant claude-code github=value,mcp:github
+  tvault grant claude-code github=mcp:github linear=mcp`,
 	Args:              cobra.MinimumNArgs(2),
 	ValidArgsFunction: completeAgentThenServices,
 	RunE: func(cmd *cobra.Command, args []string) error {

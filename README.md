@@ -108,7 +108,7 @@ the backend-assigned ID — the CLI resolves names through `agents list`.
 |---------|---------|
 | `ag list` (`ls`) | List agents. |
 | `ag show <name-or-id>` (`info`) | Show agent details and grants. |
-| `ag create` (`new`) | Create an agent — interactive name + grants wizard, or `--name`/`--grants`. `--kind scoped --scopes a,b` creates a scoped agent. The API key is shown once. There is no per-agent MCP switch: a `tools` grant is what lets an agent use an MCP server. If Token Vault asks for a fresh sign-in (`REAUTH_REQUIRED`), an interactive admin context runs the browser login and retries once. |
+| `ag create` (`new`) | Create an agent — interactive name + grants wizard, or `--name`/`--grants`. `--kind scoped --scopes a,b` creates a scoped agent. The API key is shown once. There is no per-agent MCP switch: MCP access is what lets an agent use an MCP server. If Token Vault asks for a fresh sign-in (`REAUTH_REQUIRED`), an interactive admin context runs the browser login and retries once. |
 | `ag rotate-key <name-or-id>` | Replace an agent's API key. The new key is printed once, on stdout (status goes to stderr). |
 | `ag rm <name-or-id>...` (`del`, `d`) | Delete one or more agents. |
 | `ag suspend <name-or-id>` (`off`) | Suspend an agent. |
@@ -156,23 +156,24 @@ The top-level `tvault grant <agent> <service>...` is a flat-verb shortcut for
 `gr add`.
 
 A plain `<service>` grants the value. Append `=<uses>` to say what the grant is
-for: `value` (the agent may read the credential) and/or `tools` (the agent may
+for: `value` (the agent may read the credential) and/or `mcp` (the agent may
 call the credential's [MCP servers](#mcp-servers--tvault-mcp-servers-mcp)
-through Token Vault and is never handed the value). After a colon, name the
-MCP servers a `tools` grant covers; without it, every MCP server of the credential.
+through Token Vault and is never handed the value; `tools`, the API's word for it,
+is accepted too). After a colon, name the
+MCP servers an `mcp` grant covers; without it, every MCP server of the credential.
 A [Token Vault sign-in](#token-vault-sign-in--tvault-add---sign-in) credential
-can only be granted for `tools`.
+can only be granted `mcp`.
 
 ```bash
 tvault grant claude-code github            # value (today's meaning)
-tvault grant claude-code github=tools      # tools only, every server
-tvault grant claude-code github=value,tools:github
+tvault grant claude-code github=mcp        # MCP access only, every server
+tvault grant claude-code github=value,mcp:github
 ```
 
 ### MCP servers — `tvault mcp-servers` (`mcp`)
 
-A credential can have up to five MCP servers attached. An agent granted `tools`
-on it calls them through Token Vault; your webhook puts the credential into the
+A credential can have up to five MCP servers attached. An agent given MCP access
+to it calls them through Token Vault; your webhook puts the credential into the
 upstream request, so neither the agent nor Token Vault holds the value. The CLI
 sends only the MCP server's name, URL and header *templates*.
 
@@ -208,13 +209,13 @@ MCP server accepts, in the header `Authorization: Bearer ${AGENT_SESSION}`. The
 agent never holds the pass, and Token Vault never holds a credential.
 
 ```bash
-tvault add notes --sign-in https://mcp.example.com/mcp --for my-agent=tools --yes
+tvault add notes --sign-in https://mcp.example.com/mcp --for my-agent=mcp --yes
 tvault add notes --sign-in https://mcp.example.com/mcp --server docs   # name the MCP server (default "mcp")
 ```
 
 `add --sign-in` creates the credential, attaches the MCP server, then grants
-each `--for` agent. A sign-in credential can only be granted for `tools`: a plain
-`--for my-agent` means tools, and `--for my-agent=value` is refused before
+each `--for` agent. A sign-in credential can only be granted `mcp`: a plain
+`--for my-agent` means mcp, and `--for my-agent=value` is refused before
 anything is created. `--value`, `--type` and `--mcp` do not apply to it.
 `tvault ls` and `tvault show` list its type as "Token Vault sign-in".
 `tvault get`, `set` and the other value commands refuse it with `SIGNIN_NO_VALUE`
@@ -267,8 +268,8 @@ type `tokens` / `context` / `agents grants` for every operation.
 | `tvault credentials` (`creds`) | `tvault tokens list` |
 | `tvault history <svc>` | `tvault tokens history <svc>` |
 | `tvault get <svc>` | `tvault tokens get <svc>` |
-| `tvault add <svc>` | `tvault tokens create --service <svc>` (defaults `--type PlainText`). `--for` is repeatable (`--for claude-code=tools --for cursor=tools`), one agent per value. `--labels work,ai` labels the credential after storing it (if that fails the value stays stored and the retry command is printed). `--for <agent>` also grants it to that agent, creating the agent first if missing (asks `Create agent "<name>"? [y/N]` on a terminal; `--yes` skips, and a non-interactive shell needs it). `--for <agent>=<uses>[:<server>,...]` sets what the grant is for (`--for my-agent=tools`). `--mcp <preset>` then attaches that MCP server preset; if that fails the value stays stored and the retry command is printed. `--sign-in <url>` makes a [Token Vault sign-in](#token-vault-sign-in--tvault-add---sign-in) credential instead (no value; `--server <name>` names its MCP server; grants are tools only). |
-| `tvault connect <agent> [<svc>[=<uses>]...]` | Grant existing credentials to an agent (created if missing; `--yes`), then register Token Vault in Claude Code if `claude` is on PATH and has no `tokenvault` MCP server (`claude mcp add --transport http --scope user tokenvault <api>/api/agents/mcp`; a registration for a different control plane is left alone and the switch commands are printed). `--print` only prints that command; `--no-claude` skips it. `--server <svc>/<server>` registers that one credential MCP server instead, as its own entry (`claude mcp add --transport http --scope user tv-<svc>-<server> <api>/api/mcp/<svc>/<server>`; `--name` renames the entry), and notes if the agent still needs `tvault grant <agent> <svc>=tools:<server>`. Finish in Claude Code: `/mcp`, sign in, pick the agent. |
+| `tvault add <svc>` | `tvault tokens create --service <svc>` (defaults `--type PlainText`). `--for` is repeatable (`--for claude-code=mcp --for cursor=mcp`), one agent per value. `--labels work,ai` labels the credential after storing it (if that fails the value stays stored and the retry command is printed). `--for <agent>` also grants it to that agent, creating the agent first if missing (asks `Create agent "<name>"? [y/N]` on a terminal; `--yes` skips, and a non-interactive shell needs it). `--for <agent>=<uses>[:<server>,...]` sets what the grant is for (`--for my-agent=mcp`). `--mcp <preset>` then attaches that MCP server preset; if that fails the value stays stored and the retry command is printed. `--sign-in <url>` makes a [Token Vault sign-in](#token-vault-sign-in--tvault-add---sign-in) credential instead (no value; `--server <name>` names its MCP server; grants are tools only). |
+| `tvault connect <agent> [<svc>[=<uses>]...]` | Grant existing credentials to an agent (created if missing; `--yes`), then register Token Vault in Claude Code if `claude` is on PATH and has no `tokenvault` MCP server (`claude mcp add --transport http --scope user tokenvault <api>/api/agents/mcp`; a registration for a different control plane is left alone and the switch commands are printed). `--print` only prints that command; `--no-claude` skips it. `--server <svc>/<server>` registers that one credential MCP server instead, as its own entry (`claude mcp add --transport http --scope user tv-<svc>-<server> <api>/api/mcp/<svc>/<server>`; `--name` renames the entry), and notes if the agent still needs `tvault grant <agent> <svc>=mcp:<server>`. Finish in Claude Code: `/mcp`, sign in, pick the agent. |
 | `tvault set <svc>` | `tvault tokens set <svc>` |
 | `tvault show <svc>` | `tvault tokens show <svc>` |
 | `tvault rm <svc>...` | `tvault tokens rm <svc>...` |

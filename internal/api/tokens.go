@@ -165,7 +165,7 @@ func SignInNoValueError(service, request string) *clierr.CLIError {
 		Code:    "SIGNIN_NO_VALUE",
 		Request: request,
 		Message: service + " is a Token Vault sign-in credential: it has no value to read or change",
-		Hint:    "agents use it through its MCP server; grant with `tvault grant <agent> " + service + "=tools`. See `tvault explain SIGNIN_NO_VALUE`",
+		Hint:    "agents use it through its MCP server; grant with `tvault grant <agent> " + service + "=mcp`. See `tvault explain SIGNIN_NO_VALUE`",
 	}
 }
 

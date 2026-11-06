@@ -14,17 +14,19 @@ const grantSpecSyntax = "<service>[=<uses>[:<server>,<server>]]"
 // parseGrantSpec reads one grant argument:
 //
 //	github                     value grant (today's meaning)
-//	github=tools               tools grant, every MCP server of the credential
-//	github=value,tools         both
-//	github=tools:github,docs   tools grant limited to the named servers
+//	github=mcp                 MCP access, every MCP server of the credential
+//	github=value,mcp           both
+//	github=mcp:github,docs     MCP access limited to the named servers
 //
-// <uses> is a comma list of "value" and "tools"; the servers after ":" are
-// valid only with tools. Names are checked again by the server.
+// <uses> is a comma list of "value" and "mcp" ("tools" is the API's word for
+// MCP access and is accepted as an alias; the API always gets "tools"). The
+// servers after ":" are valid only with MCP access. Names are checked again
+// by the server.
 func parseGrantSpec(arg, command string) (api.GrantSpec, error) {
 	bad := func(msg string) (api.GrantSpec, error) {
 		return api.GrantSpec{}, &clierr.CLIError{Kind: clierr.KindUser, Command: command,
 			Message: fmt.Sprintf("invalid grant %q: %s", safeText(arg), msg),
-			Hint:    "expected " + grantSpecSyntax + ", e.g. github=tools or github=value,tools:github"}
+			Hint:    "expected " + grantSpecSyntax + ", e.g. github=mcp or github=value,mcp:github"}
 	}
 	svc, rest, hasUses := strings.Cut(arg, "=")
 	if svc == "" {
@@ -38,8 +40,11 @@ func parseGrantSpec(arg, command string) (api.GrantSpec, error) {
 	seen := map[string]bool{}
 	for _, u := range strings.Split(usesPart, ",") {
 		u = strings.TrimSpace(u)
+		if u == "mcp" {
+			u = "tools" // the API's word for MCP access
+		}
 		if u != "value" && u != "tools" {
-			return bad(fmt.Sprintf("uses must be \"value\" and/or \"tools\", got %q", safeText(u)))
+			return bad(fmt.Sprintf("uses must be \"value\" and/or \"mcp\", got %q", safeText(u)))
 		}
 		if !seen[u] {
 			seen[u] = true
@@ -48,7 +53,7 @@ func parseGrantSpec(arg, command string) (api.GrantSpec, error) {
 	}
 	if hasServers {
 		if !seen["tools"] {
-			return bad("servers can only be named with tools")
+			return bad("servers can only be named with mcp")
 		}
 		for _, s := range strings.Split(serversPart, ",") {
 			s = strings.TrimSpace(s)
