@@ -20,7 +20,7 @@ const signInHeader = "Authorization: Bearer " + agentSessionPlaceholder
 
 // runAddSignIn implements `tvault add <name> --sign-in <url>`: it creates a
 // "Token Vault sign-in" credential (no value), attaches the MCP server at url,
-// then grants tools to each --for agent. Nothing here reads or sends a value.
+// then grants MCP access to each --for agent. Nothing here reads or sends a value.
 func runAddSignIn(cmd *cobra.Command, name, url string, forFlags []string) error {
 	fail := func(msg, hint string) error {
 		return &clierr.CLIError{Kind: clierr.KindUser, Command: "add", Message: msg, Hint: hint}
@@ -44,7 +44,7 @@ func runAddSignIn(cmd *cobra.Command, name, url string, forFlags []string) error
 	}
 
 	// Each --for is one agent; a sign-in credential can only be granted for
-	// tools, so a plain --for means tools and any value use is refused here,
+	// MCP access, so a plain --for means mcp and any value use is refused here,
 	// before anything is created.
 	type target struct {
 		ref, arg string
@@ -55,7 +55,7 @@ func runAddSignIn(cmd *cobra.Command, name, url string, forFlags []string) error
 	for _, f := range forFlags {
 		ref, grantArg := splitForFlag(f, name)
 		if !strings.Contains(grantArg, "=") {
-			grantArg += "=tools"
+			grantArg += "=mcp"
 		}
 		spec, err := parseGrantSpec(grantArg, "add")
 		if err != nil {
@@ -63,8 +63,8 @@ func runAddSignIn(cmd *cobra.Command, name, url string, forFlags []string) error
 		}
 		for _, u := range spec.Uses {
 			if u == "value" {
-				return fail(fmt.Sprintf("%s is a Token Vault sign-in credential, so it can only be granted for tools (not value)", safeText(name)),
-					fmt.Sprintf("use --for %s=tools; see `tvault explain SIGNIN_TOOLS_ONLY`", safeText(ref)))
+				return fail(fmt.Sprintf("%s is a Token Vault sign-in credential, so it can only be granted MCP access (not value)", safeText(name)),
+					fmt.Sprintf("use --for %s=mcp; see `tvault explain SIGNIN_TOOLS_ONLY`", safeText(ref)))
 			}
 		}
 		targets = append(targets, &target{ref: ref, arg: grantArg, specs: []api.GrantSpec{spec}})

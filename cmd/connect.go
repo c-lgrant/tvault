@@ -204,7 +204,7 @@ var connectCmd = &cobra.Command{
 not exist, then registers Token Vault as an MCP server in Claude Code.
 
 A service can carry what the grant is for, as in ` + "`tvault grant`" + `:
-github=tools, github=value,tools:github (see ` + "`tvault grant --help`" + `).
+github=mcp, github=value,mcp:github (see ` + "`tvault grant --help`" + `).
 
 With --server <service>/<server>, the one credential MCP server (see
 ` + "`tvault mcp-servers`" + `) is added to Claude Code as its own entry instead of the
@@ -216,7 +216,7 @@ The credential values never pass through Token Vault; this only creates the
 agent and its grants. In Claude Code, run /mcp, sign in, and pick the agent.`,
 	Example: `  tvault connect my-agent github stripe
   tvault connect my-agent github --yes --no-claude
-  tvault connect my-agent github=tools:github --server github/github`,
+  tvault connect my-agent github=mcp:github --server github/github`,
 	Args:              cobra.MinimumNArgs(1),
 	ValidArgsFunction: completeAgentThenServices,
 	RunE:              runConnect,
@@ -259,7 +259,7 @@ func runConnect(cmd *cobra.Command, args []string) error {
 
 	if serverRef != "" {
 		if !hasToolsGrant(specs, svc, srv) {
-			cmd.PrintErrf("note: %s needs a tools grant on %s to call this server: tvault grant %s %s=tools:%s\n",
+			cmd.PrintErrf("note: %s needs MCP access to %s to call this server: tvault grant %s %s=mcp:%s\n",
 				agent.label(), safeText(svc), safeText(args[0]), safeText(svc), safeText(srv))
 		}
 		if !noClaude {
@@ -296,7 +296,7 @@ func splitServerRef(ref string) (svc, srv string, ok bool) {
 	return svc, srv, true
 }
 
-// hasToolsGrant reports whether specs already give a tools grant on svc that
+// hasToolsGrant reports whether specs already give MCP access ("tools" on the wire) to svc that
 // covers server (no server list = every server).
 func hasToolsGrant(specs []api.GrantSpec, svc, server string) bool {
 	for _, s := range specs {

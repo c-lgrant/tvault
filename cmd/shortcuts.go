@@ -59,25 +59,25 @@ var addCmd = &cobra.Command{
 Token Vault.
 
 --for <agent> then grants it to that agent (created if missing). Append =<uses>
-to choose what the grant is for, as in ` + "`tvault grant`" + `: --for my-agent=tools or
---for my-agent=value,tools:github. Plain --for <agent> grants the value. Repeat --for to grant several agents.
+to choose what the grant is for, as in ` + "`tvault grant`" + `: --for my-agent=mcp or
+--for my-agent=value,mcp:github. Plain --for <agent> grants the value. Repeat --for to grant several agents.
 
 --labels work,ai then labels the credential (see ` + "`tvault label --help`" + `). If that
 fails the value stays stored and the retry command is printed.
 
 --mcp <preset> then attaches that MCP server preset to the credential (see
-` + "`tvault mcp-servers templates`" + `), so agents granted "tools" can call it. If
+` + "`tvault mcp-servers templates`" + `), so agents given MCP access can call it. If
 attaching fails the value stays stored and the retry command is printed.
 
 --sign-in <url> creates a "Token Vault sign-in" credential instead: no value is
 stored. Token Vault signs each agent in to the MCP server at that https URL with
 a short pass only that MCP server accepts (header Authorization: Bearer
-${AGENT_SESSION}). It can only be granted for tools: --for my-agent=tools.
+${AGENT_SESSION}). It can only be granted MCP access: --for my-agent=mcp.
 --server names the MCP server (default "mcp").`,
 	Example: `  printf %s "$SECRET" | tvault add stripe
-  tvault add notes --sign-in https://mcp.example.com/mcp --for my-agent=tools --yes
+  tvault add notes --sign-in https://mcp.example.com/mcp --for my-agent=mcp --yes
   tvault add stripe --for my-agent --yes   # store, then grant to my-agent (created if missing)
-  printf %s "$PAT" | tvault add github --mcp github --for my-agent=tools --yes`,
+  printf %s "$PAT" | tvault add github --mcp github --for my-agent=mcp --yes`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		// Forward the positional service into the underlying create handler
 		// via its --service flag. runTokensCreate already reads --type and
@@ -203,10 +203,10 @@ func init() {
 	addCmd.Flags().String("service", "", "")
 	_ = addCmd.Flags().MarkHidden("service")
 	addValueFlags(addCmd, "credential value")
-	addCmd.Flags().StringArray("for", nil, "after storing, grant the credential to this agent (name or id); created if missing. <agent>=<uses>[:<server>,...] grants tools and/or value, e.g. my-agent=tools. Repeat for several agents")
+	addCmd.Flags().StringArray("for", nil, "after storing, grant the credential to this agent (name or id); created if missing. <agent>=<uses>[:<server>,...] grants MCP access and/or value, e.g. my-agent=mcp. Repeat for several agents")
 	addCmd.Flags().StringSlice("labels", nil, "after storing, label the credential (comma-separated or repeated), e.g. --labels work,ai")
 	addCmd.Flags().String("mcp", "", "after storing, attach this MCP server preset to the credential (see `tvault mcp-servers templates`)")
-	addCmd.Flags().String("sign-in", "", "create a Token Vault sign-in credential (no value) for the MCP server at this https URL; agents get a short pass only that MCP server accepts. Grant tools only")
+	addCmd.Flags().String("sign-in", "", "create a Token Vault sign-in credential (no value) for the MCP server at this https URL; agents get a short pass only that MCP server accepts. Grant MCP access only")
 	addCmd.Flags().String("server", "", "with --sign-in: the MCP server's name (default \"mcp\")")
 	addCmd.Flags().Bool("yes", false, "with --for: create the agent without asking if it does not exist")
 

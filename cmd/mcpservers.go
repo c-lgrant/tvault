@@ -28,8 +28,8 @@ var mcpServersCmd = &cobra.Command{
 	Use:     "mcp-servers",
 	Aliases: []string{"mcp"},
 	Short:   "Manage a credential's MCP servers",
-	Long: `A credential can have up to five MCP servers attached. An agent granted
-"tools" on the credential calls them through Token Vault and is never handed
+	Long: `A credential can have up to five MCP servers attached. An agent given
+MCP access to the credential calls them through Token Vault and is never handed
 the value: your webhook puts the credential into the request.
 
 Header templates mark where the credential goes with the literal text ${TOKEN}.
@@ -318,7 +318,7 @@ interactive admin context the browser login opens and the command retries once.`
 			return enrich(cmd, cc, err)
 		}
 		if !cc.Client.DryRun {
-			cmd.PrintErrf("Attached MCP server %q to %s.\n  endpoint: %s\n  grant an agent: tvault grant <agent> %s=tools:%s\n",
+			cmd.PrintErrf("Attached MCP server %q to %s.\n  endpoint: %s\n  grant an agent: tvault grant <agent> %s=mcp:%s\n",
 				server.Name, args[0], mcpEndpoint(cc.Ctx.APIURL, args[0], server.Name), args[0], server.Name)
 		}
 		return nil
