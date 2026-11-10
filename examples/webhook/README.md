@@ -9,9 +9,9 @@ two runtimes:
 - **Cloudflare Workers** — edge runtime, zero infra
 
 Token Vault holds policy and identity; **this webhook holds the credentials**.
-The control plane never sees your encryption key. Wire-compatible with the
-Python reference in [`../webhook-ngrok/`](../webhook-ngrok/) (proven by the
-conformance suite, which signs fixtures with the real Token Vault backend code).
+The control plane never sees your encryption key. This is the maintained
+reference; the Python example in [`../webhook-ngrok/`](../webhook-ngrok/) is
+legacy and does not implement the current spec.
 
 ## Project structure
 
@@ -195,8 +195,10 @@ press **Verify Connection** in the console so the capability list is re-read.
 ## Protocol notes
 
 - **`/v1/proxy` streams.** The upstream response body is passed through as it
-  arrives (an SSE stream can stay open indefinitely). The 30 s upstream timeout
-  covers waiting for response headers only; slow headers return `upstream_timeout`.
+  arrives. The 30 s upstream timeout covers waiting for response headers only;
+  slow headers return `upstream_timeout`. A stream that stays silent for 60 s
+  (no bytes from the upstream) is aborted, so an SSE stream needs a keep-alive
+  at least that often; one that keeps sending can stay open.
 - **`Server-Timing` (optional response header on `/v1/proxy`).** Lets the control
   plane split webhook time from upstream time: `tv-wh;dur=<ms>` is time from the
   start of request handling to just before the upstream call, `tv-up;dur=<ms>` is
@@ -219,6 +221,18 @@ sh test/smoke/run.sh    # local Node HTTP E2E round-trip
 ```
 
 ## Upgrading
+
+### Upgrading from 0.13 or earlier
+
+The legacy `tv-refresh` capability is now opt-in (see
+[Legacy `tv-refresh` (opt-in)](#legacy-tv-refresh-opt-in)). After upgrading,
+tokens connected through Token Vault's own Google, GitHub or Spotify apps stop
+refreshing unless you set `TV_REFRESH_ENABLED=true` (a Worker `[vars]` entry or a
+Node environment variable). Then press **Verify Connection** in the Token Vault
+settings so the capability list is re-read. Tokens connected through your own
+OAuth app (`OAUTH_PROVIDERS_JSON`) are unaffected.
+
+### Redeploy
 
 Upgrades are an in-place redeploy — no migration, no re-keying, no URL change.
 Run the **Update webhook** GitHub Action in your repo to open a PR, merge it, and

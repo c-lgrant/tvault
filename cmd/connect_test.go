@@ -392,7 +392,8 @@ func TestConnect_WarnsWhenAgentHasMCPOff(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(stderr, "MCP is turned off") {
+	if !strings.Contains(stderr, "MCP is turned off") || !strings.Contains(stderr, "tvault agents mcp-on my-agent") ||
+		!strings.Contains(stderr, "Turn MCP on") || strings.Contains(stderr, "console") {
 		t.Errorf("no MCP warning: %q", stderr)
 	}
 }

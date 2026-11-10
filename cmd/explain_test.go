@@ -25,7 +25,7 @@ func TestExplainWebConsoleRequired(t *testing.T) {
 	if err := rootCmd.Execute(); err != nil {
 		t.Fatalf("explain errored: %v", err)
 	}
-	if !strings.Contains(buf.String(), "web console") {
+	if !strings.Contains(buf.String(), "web app") {
 		t.Errorf("explain WEB_CONSOLE_REQUIRED output = %s", buf.String())
 	}
 }

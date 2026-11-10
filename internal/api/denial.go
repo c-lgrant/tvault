@@ -230,9 +230,9 @@ func policyHint(d *denialFields) string {
 		name = "policy " + d.Policy
 	}
 	if flag != "" {
-		return fmt.Sprintf("to loosen it, edit %s in the web console, or run `tvault policy detach <policy-id> %s`", name, flag)
+		return fmt.Sprintf("to loosen it, edit %s in the web app, or run `tvault policy detach <policy-id> %s`", name, flag)
 	}
-	return fmt.Sprintf("to loosen it, edit or detach %s in the web console (Policies)", name)
+	return fmt.Sprintf("to loosen it, edit or detach %s in the web app (Policies)", name)
 }
 
 // ── access refusals ─────────────────────────────────────────────────────────
@@ -284,7 +284,7 @@ func explainAccess(ce *clierr.CLIError, er errorResponse, query map[string]strin
 
 var dayNames = []string{"Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"}
 
-// formatSpan renders seconds the way the web console does: 12s, 5 min, 3 h, 2 days.
+// formatSpan renders seconds the way the web app does: 12s, 5 min, 3 h, 2 days.
 func formatSpan(seconds int) string {
 	if seconds < 0 {
 		seconds = 0
@@ -355,7 +355,7 @@ func formatDays(v any) string {
 func channelName(c string) string {
 	switch c {
 	case "web":
-		return "the web console"
+		return "the web app"
 	case "cli":
 		return "the tvault CLI"
 	case "agent":

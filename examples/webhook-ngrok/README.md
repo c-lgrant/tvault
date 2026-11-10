@@ -1,3 +1,5 @@
+> **Legacy example. It does not implement webhook spec 2.10.0. Use [`examples/webhook`](../webhook) instead.**
+
 # Token Vault Webhook (ngrok)
 
 Reference [Token Vault](https://tokenvault.uk) webhook implementation that runs locally and exposes itself via [ngrok](https://ngrok.com). Implements all seven webhook endpoints for the webhook-sovereign (zero-knowledge) architecture — Token Vault never sees your credentials.

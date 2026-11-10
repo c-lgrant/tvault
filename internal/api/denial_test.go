@@ -90,7 +90,7 @@ func TestPolicyDenialSentences(t *testing.T) {
 			wrap(`{"code":"POLICY_DENIED","message":"ch","policy":"web-only","rule":"access_channel",
 				"appliedVia":{"type":"token_group","id":"prod"},"ruleSettings":{"mode":"allow","channels":["web"]}}`),
 			1,
-			[]string{"only the web console may read this (policy web-only, on folder prod).", "web console (Policies)"},
+			[]string{"only the web app may read this (policy web-only, on folder prod).", "web app (Policies)"},
 		},
 		{
 			"ip allowlist", 403, nil,

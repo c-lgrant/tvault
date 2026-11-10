@@ -100,17 +100,23 @@ export class FakeD1 {
       return { success: true, meta: { changes: 1 } };
     }
     if (q.includes("ORDER BY")) {
-      // list(): args = collection, [since], [before], [limit]
+      // list(): args = collection, [since], [before | before, before, beforeKey], [limit]
       const rest = args.slice(1) as string[];
       let i = 0;
       const since = q.includes(">= ?") ? rest[i++] : undefined;
-      const before = q.includes("< ? ORDER") ? rest[i++] : undefined;
+      const keyed = q.includes("AND k < ?))");
+      const before = keyed || q.includes("< ? ORDER") ? rest[i++] : undefined;
+      let beforeKey: string | undefined;
+      if (keyed) {
+        i++; // the timestamp is bound twice
+        beforeKey = rest[i++];
+      }
       const limit = q.includes("LIMIT ?") ? Number(rest[i++]) : undefined;
       this.log.push("LIST");
       const rows = [...this.rows.entries()]
         .filter(([rk]) => rk.startsWith(`${collection}\u0000`))
         .map(([rk, d]) => ({ k: rk.split("\u0000")[1]!, doc: d, ts: tsOf(d) }))
-        .filter((r) => (since === undefined || r.ts >= since) && (before === undefined || r.ts < before))
+        .filter((r) => (since === undefined || r.ts >= since) && (before === undefined || r.ts < before || (beforeKey !== undefined && r.ts === before && r.k < beforeKey)))
         .sort((a, b) => (a.ts === b.ts ? (a.k < b.k ? 1 : -1) : a.ts < b.ts ? 1 : -1));
       const results = (limit === undefined ? rows : rows.slice(0, limit)).map(({ k, doc }) => ({ k, doc }));
       return { results };

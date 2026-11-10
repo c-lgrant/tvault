@@ -269,6 +269,16 @@ describe("own-app lifecycle (Google)", () => {
     expect(Math.abs((tok.expiryTime as number) - (Date.now() + 3_599_000))).toBeLessThan(5_000);
   });
 
+  it("the scheduled sweep returns early, without reading storage, when no providers are configured", async () => {
+    const w = setup({ google: GOOGLE });
+    await w.connect("google", "gmail");
+    await w.expireIn("gmail", 5 * 60_000);
+    w.ctx.config.oauthProviders = undefined;
+    const entries = vi.spyOn(w.ctx.storage, "entries");
+    expect(await refreshDueTokens(w.ctx)).toEqual({ checked: 0, refreshed: 0, failed: 0, skipped: 0 });
+    expect(entries).not.toHaveBeenCalled();
+  });
+
   it("the scheduled sweep refreshes a near-expiry token and leaves a fresh one alone", async () => {
     const w = setup({ google: GOOGLE });
     await w.connect("google", "gmail", { cid: "creation-1" });

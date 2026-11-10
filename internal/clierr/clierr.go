@@ -65,7 +65,7 @@ type CLIError struct {
 	Scope      string        // missing scope for SCOPE_DENIED, e.g. "tokens:create"
 	Command    string        // e.g. "agents create"
 	Message    string        // human-readable summary
-	Context    string        // e.g. "nuc-admin (admin · conor@example.com)"
+	Context    string        // e.g. "work-admin (admin · user@example.com)"
 	Request    string        // e.g. "POST /api/agents"
 	Response   string        // e.g. "403 POLICY_DENIED — agent quota exceeded"
 	Hint       string        // a likely fix; rendered only when known

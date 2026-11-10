@@ -96,9 +96,44 @@ describe("audit list pushed into the store", () => {
       pagination: { hasMore: boolean; nextCursor: string; totalCount: number };
     };
     expect(res.items.map((i) => i.key)).toEqual(["evt-5", "evt-4"]);
-    expect(res.pagination).toEqual({ hasMore: true, nextCursor: stamp(4), totalCount: 6 });
+    expect(res.pagination).toEqual({ hasMore: true, nextCursor: `${stamp(4)}|evt-4`, totalCount: 6 });
     expect(db.log.some((q) => q.includes("ORDER BY") && q.includes("LIMIT ?"))).toBe(true);
     expect(db.log.some((q) => q === "SELECT k, doc FROM kv WHERE collection = ?")).toBe(false);
+  });
+
+  it("pages through events that share a timestamp without skipping any", async () => {
+    const stores: Array<[string, StorageAdapter]> = [];
+    const d1 = await D1StorageAdapter.create(new FakeD1() as unknown as D1Database);
+    stores.push(["d1", d1], ["d1 in memory", withoutList(d1)]);
+    stores.push(["fs", await FsStorageAdapter.create(join(await tmp(), "kv.json"))]);
+    for (const [name, store] of stores) {
+      if (name !== "d1 in memory") {
+        for (let i = 1; i <= 5; i++) await store.set("audit", `evt-${i}`, { timestamp: stamp(1), action: "read" });
+        await store.set("audit", "evt-new", { timestamp: stamp(2), action: "read" });
+      }
+      const seen: string[] = [];
+      let after: string | undefined;
+      for (let page = 0; page < 10; page++) {
+        const res = (await storageCall(store, {
+          operation: "list",
+          collection: "audit",
+          options: { limit: 2, ...(after ? { after } : {}) },
+        })) as { items: Array<{ key: string }>; pagination: { hasMore: boolean; nextCursor: string | null } };
+        seen.push(...res.items.map((i) => i.key));
+        if (!res.pagination.hasMore) break;
+        after = res.pagination.nextCursor!;
+      }
+      expect(seen, name).toEqual(["evt-new", "evt-5", "evt-4", "evt-3", "evt-2", "evt-1"]);
+    }
+  });
+
+  it("still accepts a plain timestamp cursor", async () => {
+    const d1 = await D1StorageAdapter.create(new FakeD1() as unknown as D1Database);
+    await seedAudit(d1);
+    const res = (await storageCall(d1, { operation: "list", collection: "audit", options: { limit: 2, after: stamp(4) } })) as {
+      items: Array<{ key: string }>;
+    };
+    expect(res.items.map((i) => i.key)).toEqual(["evt-3", "evt-2"]);
   });
 
   it("works on the fs adapter too", async () => {

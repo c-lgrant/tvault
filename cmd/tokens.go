@@ -289,7 +289,8 @@ func runTokensCreate(cmd *cobra.Command, _ []string) error {
 
 	var req *api.CreateTokenRequest
 	if service != "" {
-		value, verr := readSecretValue(cmd, "tokens create", true)
+		empty, _ := cmd.Flags().GetBool("empty")
+		value, verr := readSecretValue(cmd, "tokens create", empty)
 		if verr != nil {
 			return verr
 		}
@@ -339,7 +340,16 @@ var tokensStoreTicketCmd = &cobra.Command{
 	Args:              cobra.ExactArgs(1),
 	ValidArgsFunction: completeServices,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		value, _ := cmd.Flags().GetString("value")
+		// Same rules as add/set: --value warns about shell history, and
+		// --value-stdin reads stdin. Without either, only the envelope is
+		// printed (stdin is never read implicitly here).
+		var value string
+		if valueStdin, _ := cmd.Flags().GetBool("value-stdin"); valueStdin || cmd.Flags().Changed("value") {
+			var verr error
+			if value, verr = readSecretValue(cmd, "tokens store-ticket", false); verr != nil {
+				return verr
+			}
+		}
 		typ, _ := cmd.Flags().GetString("type")
 		if typ == "" {
 			typ = "PlainText"
@@ -385,7 +395,9 @@ func init() {
 	tokensCreateCmd.Flags().String("type", "", "token type (JWT, PlainText, Certificate, SSHKey, RawCredential, TOTP)")
 	tokensCreateCmd.Flags().String("service", "", "service name")
 	addValueFlags(tokensCreateCmd, "credential value")
-	tokensStoreTicketCmd.Flags().String("value", "", "secret to store on the webhook (omit to print ticket envelope only)")
+	tokensCreateCmd.Flags().Bool("empty", false, "create the credential without a value (fill it later with `tvault set`)")
+	tokensStoreTicketCmd.Flags().String("value", "", "secret to store on the webhook (lands in shell history; prefer --value-stdin). Omit both to print the ticket envelope only")
+	tokensStoreTicketCmd.Flags().Bool("value-stdin", false, "read the secret to store from stdin")
 	tokensStoreTicketCmd.Flags().String("type", "PlainText", "token type when --value is set")
 
 	tokensCmd.AddCommand(

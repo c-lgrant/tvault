@@ -28,13 +28,19 @@ type MCPToolsSummary struct {
 	Error     string `json:"error,omitempty"`
 	Truncated bool   `json:"truncated,omitempty"`
 	Stale     bool   `json:"stale,omitempty"`
+	// PerAgent is set for a Token Vault sign-in credential: the MCP server
+	// decides its tools per agent, so no list is fetched or cached.
+	PerAgent bool `json:"perAgent,omitempty"`
 }
 
 // String renders the summary for a table cell: "12", "12 (stale)", "pending",
-// or the last fetch's error code.
+// "per agent", or the last fetch's error code.
 func (t *MCPToolsSummary) String() string {
 	if t == nil {
 		return ""
+	}
+	if t.PerAgent {
+		return "per agent"
 	}
 	if t.Error != "" {
 		return t.Error
@@ -102,6 +108,24 @@ func (c *Client) PutMCPServers(service string, servers []MCPServer) ([]MCPServer
 		return nil, err
 	}
 	return res.Servers, nil
+}
+
+// MCPAggregateEnabled reports whether the control plane serves the combined
+// MCP endpoint (/api/agents/mcp, every granted server's tools in one list), from
+// the public GET /api/config. A server that predates the field only had the
+// combined endpoint, so a missing field reads as true.
+func (c *Client) MCPAggregateEnabled() (bool, error) {
+	body, err := c.doRequest("GET", "/api/config", nil, nil)
+	if err != nil {
+		return false, err
+	}
+	var res struct {
+		Enabled *bool `json:"mcpAggregateEnabled"`
+	}
+	if err := json.Unmarshal(body, &res); err != nil {
+		return false, err
+	}
+	return res.Enabled == nil || *res.Enabled, nil
 }
 
 // ListMCPTemplates returns the server presets (public endpoint).

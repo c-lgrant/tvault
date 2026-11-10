@@ -18,7 +18,7 @@ func TestLoginAdminPersistsContext(t *testing.T) {
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// exchange endpoint
-		w.Write([]byte(`{"id_token":"idt","refresh_token":"rt","expires_in":3600,"identity":"conor@x.y"}`))
+		w.Write([]byte(`{"id_token":"idt","refresh_token":"rt","expires_in":3600,"identity":"user@example.com"}`))
 	}))
 	defer srv.Close()
 
@@ -33,7 +33,7 @@ func TestLoginAdminPersistsContext(t *testing.T) {
 	}
 
 	err := Login(LoginOptions{
-		ContextName: "nuc-admin",
+		ContextName: "work-admin",
 		APIURL:      srv.URL,
 		FrontendURL: srv.URL, // unused by the fake browser
 		Timeout:     3 * time.Second,
@@ -43,11 +43,11 @@ func TestLoginAdminPersistsContext(t *testing.T) {
 	}
 
 	cfg, _ := config.Load()
-	if cfg.Current != "nuc-admin" {
+	if cfg.Current != "work-admin" {
 		t.Errorf("Current = %q", cfg.Current)
 	}
-	ctx := cfg.Contexts["nuc-admin"]
-	if ctx == nil || ctx.Type != "admin" || ctx.RefreshToken != "rt" || ctx.Identity != "conor@x.y" {
+	ctx := cfg.Contexts["work-admin"]
+	if ctx == nil || ctx.Type != "admin" || ctx.RefreshToken != "rt" || ctx.Identity != "user@example.com" {
 		t.Errorf("stored context wrong: %+v", ctx)
 	}
 	// The refresh token must be the only secret in contexts.yaml — no id_token.

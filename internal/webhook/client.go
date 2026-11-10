@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
-	"time"
 )
 
 // RegisterInfo is the parsed result of the webhook's GET /v1/register-url.
@@ -78,19 +77,4 @@ func CheckHealth(hc *http.Client, webhookURL string) error {
 		return fmt.Errorf("webhook reports status %q", raw.Status)
 	}
 	return nil
-}
-
-// WaitHealthy polls CheckHealth every 2s until it passes or timeout elapses.
-func WaitHealthy(hc *http.Client, webhookURL string, timeout time.Duration) error {
-	deadline := time.Now().Add(timeout)
-	var last error
-	for {
-		if last = CheckHealth(hc, webhookURL); last == nil {
-			return nil
-		}
-		if !time.Now().Before(deadline) {
-			return fmt.Errorf("webhook did not become healthy within %s: %w", timeout, last)
-		}
-		time.Sleep(2 * time.Second)
-	}
 }

@@ -25,7 +25,7 @@ func runAddSignIn(cmd *cobra.Command, name, url string, forFlags []string) error
 	fail := func(msg, hint string) error {
 		return &clierr.CLIError{Kind: clierr.KindUser, Command: "add", Message: msg, Hint: hint}
 	}
-	for _, f := range []string{"value", "value-stdin", "type", "mcp"} {
+	for _, f := range []string{"value", "value-stdin", "empty", "type", "mcp"} {
 		if cmd.Flags().Changed(f) {
 			return fail("--"+f+" cannot be combined with --sign-in: a Token Vault sign-in credential has no value",
 				"see `tvault explain SIGNIN_NO_VALUE`")

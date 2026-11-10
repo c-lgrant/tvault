@@ -19,7 +19,7 @@ func TestExchangeCode(t *testing.T) {
 		if got["code"] != "the-code" || got["state"] != "the-state" {
 			t.Errorf("body = %v", got)
 		}
-		w.Write([]byte(`{"id_token":"idt","refresh_token":"rt","expires_in":3600,"identity":"conor@x.y"}`))
+		w.Write([]byte(`{"id_token":"idt","refresh_token":"rt","expires_in":3600,"identity":"user@example.com"}`))
 	}))
 	defer srv.Close()
 
@@ -28,7 +28,7 @@ func TestExchangeCode(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ExchangeCode errored: %v", err)
 	}
-	if res.IDToken != "idt" || res.RefreshToken != "rt" || res.ExpiresIn != 3600 || res.Identity != "conor@x.y" {
+	if res.IDToken != "idt" || res.RefreshToken != "rt" || res.ExpiresIn != 3600 || res.Identity != "user@example.com" {
 		t.Errorf("result = %+v", res)
 	}
 }

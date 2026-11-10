@@ -128,14 +128,78 @@ func TestAddValue_FlagWarnsAboutHistory(t *testing.T) {
 	}
 }
 
-func TestAddValue_EmptyStdinCreatesPlaceholder(t *testing.T) {
+// V1: empty piped stdin must never create an empty credential on its own.
+func TestAddValue_EmptyStdinIsUserError(t *testing.T) {
 	b := newStoreBackend(t)
 	withStdin(t, "", false, "")
-	if _, _, err := runCLI(t, "add", "svc"); err != nil {
+	_, _, err := runCLI(t, "add", "svc")
+	var ce *clierr.CLIError
+	if err == nil || !errors.As(err, &ce) || ce.Kind != clierr.KindUser || !strings.Contains(ce.Hint, "--empty") {
+		t.Fatalf("err = %v, want a user error hinting --empty", err)
+	}
+	if len(b.got) != 0 || b.tokenPOST != 0 {
+		t.Errorf("nothing should be created: stored=%q placeholderPOSTs=%d", b.got, b.tokenPOST)
+	}
+}
+
+func TestAddValue_EmptyFlagCreatesPlaceholderWithoutReadingStdin(t *testing.T) {
+	b := newStoreBackend(t)
+	withStdin(t, "ignored\n", false, "")
+	if _, _, err := runCLI(t, "add", "svc", "--empty"); err != nil {
 		t.Fatal(err)
 	}
 	if len(b.got) != 0 || b.tokenPOST != 1 {
 		t.Errorf("want a value-less placeholder, got stored=%q placeholderPOSTs=%d", b.got, b.tokenPOST)
+	}
+}
+
+func TestAddValue_EmptyPromptAnswerIsUserError(t *testing.T) {
+	b := newStoreBackend(t)
+	withStdin(t, "", true, "")
+	if _, _, err := runCLI(t, "add", "svc"); err == nil || clierr.ExitCode(err) != userExit {
+		t.Errorf("err = %v, want a user error", err)
+	}
+	if b.tokenPOST != 0 {
+		t.Errorf("placeholder created from an empty prompt answer")
+	}
+}
+
+// A password manager behind a biometric prompt delivers its first byte late; a
+// pipe is waited on without a timeout, so the value is stored, not an empty one.
+func TestAddValue_SlowPipeIsWaitedFor(t *testing.T) {
+	b := newStoreBackend(t)
+	pr, pw := io.Pipe()
+	withStdin(t, "", false, "")
+	rootCmd.SetIn(pr)
+	stdinMode = func() os.FileMode { return os.ModeNamedPipe }
+	orig := stdinFirstByteWait
+	stdinFirstByteWait = 20 * time.Millisecond
+	t.Cleanup(func() { stdinFirstByteWait = orig })
+	go func() { time.Sleep(200 * time.Millisecond); pw.Write([]byte("slow-secret\n")); pw.Close() }()
+	if _, _, err := runCLI(t, "add", "svc"); err != nil {
+		t.Fatal(err)
+	}
+	if len(b.got) != 1 || b.got[0] != "slow-secret" || b.tokenPOST != 0 {
+		t.Errorf("stored %q placeholders=%d, want [slow-secret] and none", b.got, b.tokenPOST)
+	}
+}
+
+func TestStoreTicket_ValueStdinAndFlagWarning(t *testing.T) {
+	b := newStoreBackend(t)
+	withStdin(t, "tick-secret\n", false, "")
+	if _, _, err := runCLI(t, "tokens", "store-ticket", "svc", "--value-stdin"); err != nil {
+		t.Fatal(err)
+	}
+	if len(b.got) != 1 || b.got[0] != "tick-secret" {
+		t.Errorf("stored %q", b.got)
+	}
+	withStdin(t, "", false, "")
+	_, stderr, err := runCLI(t, "tokens", "store-ticket", "svc", "--value", "flagval")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stderr, "shell history") || len(b.got) != 2 || b.got[1] != "flagval" {
+		t.Errorf("stderr=%q stored=%q", stderr, b.got)
 	}
 }
 
@@ -192,28 +256,29 @@ func TestSetValue_Modes(t *testing.T) {
 	}
 }
 
-// An open pipe that never sends anything (docker exec -i, harnesses) must not
-// hang the command: without --value-stdin it counts as "no value".
+// An open socket that never sends anything (docker exec -i, harnesses) must not
+// hang the command: without --value-stdin it counts as "no value". (Pipes are
+// waited on without a timeout; see TestAddValue_SlowPipeIsWaitedFor.)
 func withSilentPipe(t *testing.T) {
 	t.Helper()
 	pr, pw := io.Pipe()
 	t.Cleanup(func() { pw.Close() })
 	withStdin(t, "", false, "")
 	rootCmd.SetIn(pr)
-	stdinMode = func() os.FileMode { return os.ModeNamedPipe }
+	stdinMode = func() os.FileMode { return os.ModeSocket }
 	orig := stdinFirstByteWait
 	stdinFirstByteWait = 50 * time.Millisecond
 	t.Cleanup(func() { stdinFirstByteWait = orig })
 }
 
-func TestAdd_SilentOpenPipeCreatesPlaceholderWithoutHanging(t *testing.T) {
+func TestAdd_SilentOpenSocketIsUserErrorWithoutHanging(t *testing.T) {
 	b := newStoreBackend(t)
 	withSilentPipe(t)
-	if _, _, err := runCLI(t, "add", "svc"); err != nil {
-		t.Fatal(err)
+	if _, _, err := runCLI(t, "add", "svc"); err == nil || clierr.ExitCode(err) != userExit {
+		t.Fatalf("err = %v, want a user error", err)
 	}
-	if len(b.got) != 0 || b.tokenPOST != 1 {
-		t.Errorf("want a placeholder, got stored=%q placeholders=%d", b.got, b.tokenPOST)
+	if len(b.got) != 0 || b.tokenPOST != 0 {
+		t.Errorf("nothing should be created: stored=%q placeholders=%d", b.got, b.tokenPOST)
 	}
 }
 

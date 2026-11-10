@@ -40,14 +40,18 @@ var (
 )
 
 // readImplicitStdin reads stdin when --value-stdin was NOT given. A regular
-// file or /dev/null is read to EOF. A pipe or socket may be an open pipe
-// nobody writes to (docker exec -i, harnesses), so it is read only if its
-// first byte arrives within stdinFirstByteWait; otherwise got is false and
-// the caller treats it as "no value". Anything else is treated as no value.
+// file, /dev/null or a pipe is read to EOF; a pipe is waited on without a
+// timeout, because its writer may be slow (a password manager behind a
+// biometric prompt) and a short wait would turn that into an empty value. A
+// socket may be an open connection nobody writes to (docker exec -i,
+// harnesses), so it is read only if its first byte arrives within
+// stdinFirstByteWait; otherwise got is false and the caller treats it as "no
+// value". Anything else is treated as no value.
 func readImplicitStdin(in io.Reader) (b []byte, got bool, err error) {
 	mode := stdinMode()
 	switch {
-	case mode&os.ModeNamedPipe != 0 || mode&os.ModeSocket != 0:
+	case mode&os.ModeNamedPipe != 0:
+	case mode&os.ModeSocket != 0:
 		br := bufio.NewReader(in)
 		peeked := make(chan error, 1)
 		go func() { _, e := br.Peek(1); peeked <- e }()
@@ -83,8 +87,9 @@ func addValueFlags(c *cobra.Command, valueHelp string) {
 //	terminal stdin        hidden prompt
 //
 // An empty value is returned as "" with a nil error only when allowEmpty is
-// set and the source was implicit (piped without --value-stdin, or an empty
-// prompt answer); an empty value from --value-stdin is always an error.
+// set (the explicit --empty flag), and then stdin is not read at all.
+// Without --empty, empty input from any source is a user error, so a
+// credential is never created empty by accident.
 func readSecretValue(cmd *cobra.Command, command string, allowEmpty bool) (string, error) {
 	if cmd.Flags().Changed("value") {
 		v, _ := cmd.Flags().GetString("value")
@@ -92,8 +97,15 @@ func readSecretValue(cmd *cobra.Command, command string, allowEmpty bool) (strin
 		return v, nil
 	}
 	explicit, _ := cmd.Flags().GetBool("value-stdin")
+	if allowEmpty && !explicit {
+		// --empty: the caller asked for no value; never read (or wait on) stdin.
+		return "", nil
+	}
 	if explicit || !stdinIsTTY() {
-		hint := `printf %s "$SECRET" | tvault ` + map[string]string{"tokens create": "add", "tokens set": "set"}[command] + ` <service> --value-stdin`
+		hint := `printf %s "$SECRET" | tvault ` + map[string]string{"tokens create": "add", "tokens set": "set", "tokens store-ticket": "tokens store-ticket"}[command] + ` <service> --value-stdin`
+		if command == "tokens create" {
+			hint += "; or pass --empty to create it without a value"
+		}
 		var b []byte
 		var err error
 		if explicit {
@@ -101,7 +113,7 @@ func readSecretValue(cmd *cobra.Command, command string, allowEmpty bool) (strin
 		} else {
 			var got bool
 			b, got, err = readImplicitStdin(cmd.InOrStdin())
-			if err == nil && !got && !allowEmpty {
+			if err == nil && !got {
 				return "", &clierr.CLIError{Kind: clierr.KindUser, Command: command,
 					Message: "no value: stdin is not a terminal but sent no data", Hint: hint}
 			}
@@ -110,21 +122,18 @@ func readSecretValue(cmd *cobra.Command, command string, allowEmpty bool) (strin
 			return "", &clierr.CLIError{Kind: clierr.KindUser, Command: command, Message: "reading value from stdin: " + err.Error()}
 		}
 		v := trimOneNewline(string(b))
-		if v == "" && (explicit || !allowEmpty) {
+		if v == "" {
 			return "", &clierr.CLIError{Kind: clierr.KindUser, Command: command, Message: "no value on stdin", Hint: hint}
 		}
 		return v, nil
 	}
-	prompt := "Value (hidden): "
-	if allowEmpty {
-		prompt = "Value (hidden; empty creates the token without one): "
-	}
-	v, err := readHidden(prompt)
+	v, err := readHidden("Value (hidden): ")
 	if err != nil {
 		return "", &clierr.CLIError{Kind: clierr.KindUser, Command: command, Message: "reading value: " + err.Error()}
 	}
-	if v == "" && !allowEmpty {
-		return "", &clierr.CLIError{Kind: clierr.KindUser, Command: command, Message: "empty value"}
+	if v == "" {
+		return "", &clierr.CLIError{Kind: clierr.KindUser, Command: command, Message: "empty value",
+			Hint: "to create the credential without a value on purpose, pass --empty"}
 	}
 	return v, nil
 }

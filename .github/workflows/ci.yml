@@ -32,6 +32,15 @@ jobs:
       - run: go build ./...
       - run: go test ./... -race
 
+  # main must carry the production wrangler.toml values and develop the dev
+  # ones (RELEASING.md). Checked against the PR's base branch, or the pushed
+  # branch; other branches are skipped.
+  wrangler-env:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: node scripts/check-wrangler-env.mjs
+
   webhook:
     runs-on: ubuntu-latest
     defaults:

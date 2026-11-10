@@ -20,6 +20,16 @@ export function docTimestamp(doc: StoredDocument, field: string): string {
   return typeof v === "string" ? v : "";
 }
 
+/**
+ * True when (ts, key) sorts after the cursor (before, beforeKey) in the
+ * newest-first order: an older timestamp, or the same timestamp and a lower
+ * key. Without `beforeKey`, only an older timestamp counts.
+ */
+export function isBefore(ts: string, key: string, before: string, beforeKey?: string): boolean {
+  if (ts < before) return true;
+  return beforeKey !== undefined && ts === before && key < beforeKey;
+}
+
 /** Newest-first window: filter by since/before, sort by timestamp desc (key desc on ties), limit. */
 export function queryByTime(
   entries: Array<[string, StoredDocument]>,
@@ -28,7 +38,10 @@ export function queryByTime(
   const field = timestampFieldOf(q);
   const rows = entries
     .map((e) => ({ e, ts: docTimestamp(e[1], field) }))
-    .filter(({ ts }) => (q.since === undefined || ts >= q.since) && (q.before === undefined || ts < q.before));
+    .filter(
+      ({ e, ts }) =>
+        (q.since === undefined || ts >= q.since) && (q.before === undefined || isBefore(ts, e[0], q.before, q.beforeKey)),
+    );
   rows.sort((a, b) => (a.ts === b.ts ? (a.e[0] < b.e[0] ? 1 : -1) : a.ts < b.ts ? 1 : -1));
   const out = rows.map((r) => r.e);
   return q.limit !== undefined && q.limit >= 0 ? out.slice(0, q.limit) : out;
