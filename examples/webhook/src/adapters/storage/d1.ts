@@ -146,7 +146,11 @@ export class D1StorageAdapter implements StorageAdapter {
       sql += ` AND ${ts} >= ?`;
       args.push(opts.since);
     }
-    if (opts.before !== undefined) {
+    if (opts.before !== undefined && opts.beforeKey !== undefined) {
+      // Same order as ORDER BY below: older timestamp, or same timestamp and lower key.
+      sql += ` AND (${ts} < ? OR (${ts} = ? AND k < ?))`;
+      args.push(opts.before, opts.before, opts.beforeKey);
+    } else if (opts.before !== undefined) {
       sql += ` AND ${ts} < ?`;
       args.push(opts.before);
     }

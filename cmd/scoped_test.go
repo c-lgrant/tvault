@@ -118,7 +118,7 @@ func TestTokensCreate_AgentContextSendsRequest(t *testing.T) {
 	defer srv.Close()
 	setupContext(t, &config.Context{Type: "agent", APIURL: srv.URL, Identity: "bot", AgentKey: "tvagent_abc"})
 
-	_, _, err := runCLI(t, "tokens", "create", "--service", "github")
+	_, _, err := runCLI(t, "tokens", "create", "--service", "github", "--empty")
 	if !hit {
 		t.Fatalf("no request reached the server — still refused client-side? err=%v", err)
 	}

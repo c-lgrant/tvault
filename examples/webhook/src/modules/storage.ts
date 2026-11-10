@@ -15,6 +15,7 @@ import {
   type StoredDocument,
 } from "../runtime/context.ts";
 import type { FeatureModule } from "../core/registry.ts";
+import { isBefore } from "../adapters/storage/timeQuery.ts";
 
 const DOC_INTERNAL_KEYS = new Set(["v", "alg", "fields", "meta"]);
 
@@ -41,6 +42,28 @@ function auditTimestamp(item: ListItem): string {
     return typeof ts === "string" ? ts : "";
   }
   return "";
+}
+
+// Audit cursor: "<timestamp>|<key>". Several events can share one timestamp, so
+// the key breaks the tie; a timestamp alone would skip the rest of that instant
+// on the next page. A cursor without "|" is a plain timestamp (spec < 2.11.0).
+const CURSOR_SEP = "|";
+
+function auditCursor(item: ListItem): string {
+  return `${auditTimestamp(item)}${CURSOR_SEP}${item.key}`;
+}
+
+function parseAuditCursor(after: string): { before: string; beforeKey?: string } {
+  const i = after.indexOf(CURSOR_SEP);
+  return i < 0 ? { before: after } : { before: after.slice(0, i), beforeKey: after.slice(i + 1) };
+}
+
+/** Newest first; on the same timestamp, the higher key first (the stores' order). */
+function compareAudit(a: ListItem, b: ListItem): number {
+  const ta = auditTimestamp(a);
+  const tb = auditTimestamp(b);
+  if (ta !== tb) return ta < tb ? 1 : -1;
+  return a.key === b.key ? 0 : a.key < b.key ? 1 : -1;
 }
 
 /** Project a collection's raw entries into list items, stripping sensitive data. */
@@ -103,7 +126,7 @@ async function listCollection(
       storage.list(collection, {
         limit: Math.floor(limit) + 1,
         ...sinceQ,
-        ...(options.after ? { before: options.after } : {}),
+        ...(options.after ? parseAuditCursor(options.after) : {}),
       }),
       storage.count(collection, sinceQ),
     ]);
@@ -121,7 +144,7 @@ function listResponse(
   let items = shapeItems(collection, entries);
 
   if (collection === "audit") {
-    items.sort((a, b) => auditTimestamp(b).localeCompare(auditTimestamp(a)));
+    items.sort(compareAudit);
   }
 
   let pagination: Pagination | undefined;
@@ -149,17 +172,19 @@ function listResponse(
 
     if (options.after) {
       const after = options.after;
-      items =
-        collection === "audit"
-          ? items.filter((item) => key(item) < after)
-          : items.filter((item) => key(item) > after);
+      if (collection === "audit") {
+        const { before, beforeKey } = parseAuditCursor(after);
+        items = items.filter((item) => isBefore(auditTimestamp(item), item.key, before, beforeKey));
+      } else {
+        items = items.filter((item) => key(item) > after);
+      }
     }
 
     if (typeof options.limit === "number" && options.limit > 0) {
       const hasMore = items.length > options.limit;
       items = items.slice(0, options.limit);
       const last = items[items.length - 1];
-      const nextCursor = hasMore && last ? key(last) : null;
+      const nextCursor = hasMore && last ? (collection === "audit" ? auditCursor(last) : key(last)) : null;
       pagination = { hasMore, nextCursor, totalCount };
     }
   }

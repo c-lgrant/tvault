@@ -42,7 +42,11 @@ var labelLsCmd = &cobra.Command{
 		if err != nil {
 			return enrich(cmd, cc, err)
 		}
-		if asJSON, _ := cmd.Flags().GetBool("json"); asJSON {
+		// --format json (like the other list commands) and the older --json
+		// both print the server's typed body: counts as numbers, policyIds as
+		// an array.
+		formatFlag, _ := cmd.Flags().GetString("format")
+		if asJSON, _ := cmd.Flags().GetBool("json"); asJSON || strings.EqualFold(formatFlag, "json") {
 			var buf bytes.Buffer
 			if err := json.Indent(&buf, raw, "", "  "); err != nil {
 				return err

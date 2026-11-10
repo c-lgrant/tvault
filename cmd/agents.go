@@ -338,6 +338,32 @@ func agentStatusCmd(use, alias, status, verb string) *cobra.Command {
 	}
 }
 
+var agentsMCPOnCmd = &cobra.Command{
+	Use:   "mcp-on <name-or-id>",
+	Short: "Clear a leftover MCP off-switch on an agent",
+	Long: `An agent that had MCP switched off before the switch was retired still carries
+that setting, and Claude Code cannot use it. This clears it (the web app has the
+same action: "Turn MCP on" on the agent's Connect tab). It does nothing to an
+agent that never had MCP turned off.`,
+	Args:              cobra.ExactArgs(1),
+	ValidArgsFunction: completeAgents,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		cc, err := resolve(cmd)
+		if err != nil {
+			return err
+		}
+		rs, err := resolveAgents(cc.Client, args[:1], true)
+		if err != nil {
+			return enrich(cmd, cc, err)
+		}
+		if err := cc.Client.SetAgentMCPEnabled(rs[0].ID); err != nil {
+			return enrich(cmd, cc, err)
+		}
+		cmd.PrintErrf("Turned MCP on for agent %s.\n", rs[0].label())
+		return nil
+	},
+}
+
 func init() {
 	agentsRotateKeyCmd.Flags().Bool("self", false, "rotate the key this agent context is logged in with, and switch the context to the new key")
 	agentsCreateCmd.Flags().String("name", "", "agent name")
@@ -351,6 +377,7 @@ func init() {
 		agentsListCmd, agentsShowCmd, agentsCreateCmd, agentsRotateKeyCmd, agentsRmCmd,
 		agentStatusCmd("suspend", "off", "suspended", "Suspend"),
 		agentStatusCmd("resume", "on", "active", "Resume"),
+		agentsMCPOnCmd,
 	)
 	rootCmd.AddCommand(agentsCmd)
 }

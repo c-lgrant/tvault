@@ -203,6 +203,7 @@ func init() {
 	addCmd.Flags().String("service", "", "")
 	_ = addCmd.Flags().MarkHidden("service")
 	addValueFlags(addCmd, "credential value")
+	addCmd.Flags().Bool("empty", false, "create the credential without a value (fill it later with `tvault set`); stdin is not read")
 	addCmd.Flags().StringArray("for", nil, "after storing, grant the credential to this agent (name or id); created if missing. <agent>=<uses>[:<server>,...] grants MCP access and/or value, e.g. my-agent=mcp. Repeat for several agents")
 	addCmd.Flags().StringSlice("labels", nil, "after storing, label the credential (comma-separated or repeated), e.g. --labels work,ai")
 	addCmd.Flags().String("mcp", "", "after storing, attach this MCP server preset to the credential (see `tvault mcp-servers templates`)")

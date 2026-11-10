@@ -42,7 +42,9 @@ tvault connect my-agent github stripe   # grant existing credentials and set up 
 Secret values never need to be on the command line: with no `--value`, `add`
 and `set` read a hidden prompt on a terminal, or stdin when it is piped (or with
 `--value-stdin`; one trailing newline is trimmed). `--value` still works but
-prints a warning, since it lands in your shell history.
+prints a warning, since it lands in your shell history. A pipe is waited on
+without a timeout (a password manager may take a while to answer); empty input
+is an error. To create a credential with no value on purpose, pass `--empty`.
 
 The most common token verbs are also available at the top level: `get`, `set`,
 `show`, `rm`, `add`, `ls`. They're shortcuts for the equivalent `tokens …`
@@ -86,7 +88,7 @@ scopes, enforced by the server (`SCOPE_DENIED` → exit 8, `HUMAN_ONLY` → exit
 | `tk list` (`ls`) | List tokens. |
 | `tk get <service>` | Print a credential value to stdout — safe for `$(...)`. `--check` exits 0/6 without printing (presence probe). |
 | `tk show <service>` (`info`) | Show token metadata (no secret). |
-| `tk create` (`new`) | Create a token — interactive type-picker wizard, or fully flag-driven with `--type`/`--service`. The value comes from a hidden prompt, stdin (`--value-stdin`, or any piped stdin), or `--value` (warns: shell history). The secret goes straight to your webhook with a store ticket; Token Vault never receives it. |
+| `tk create` (`new`) | Create a token — interactive type-picker wizard, or fully flag-driven with `--type`/`--service`. The value comes from a hidden prompt, stdin (`--value-stdin`, or any piped stdin), or `--value` (warns: shell history); `--empty` creates it with no value. The secret goes straight to your webhook with a store ticket; Token Vault never receives it. |
 | `tk set <service>` (`up`) | Rotate a credential value: hidden prompt, stdin / `--value-stdin`, or `--value`. The new value goes straight to your webhook with a store ticket. An empty value is an error. |
 | `tk edit <service>` | Edit metadata: `--name`, `--notes`, `--tags`. |
 | `tk rm <service>...` (`del`, `d`) | Delete one or more tokens. |
@@ -113,6 +115,7 @@ the backend-assigned ID — the CLI resolves names through `agents list`.
 | `ag rm <name-or-id>...` (`del`, `d`) | Delete one or more agents. |
 | `ag suspend <name-or-id>` (`off`) | Suspend an agent. |
 | `ag resume <name-or-id>` (`on`) | Resume a suspended agent. |
+| `ag mcp-on <name-or-id>` | Clear a leftover MCP off-switch (the web app's "Turn MCP on" button on the Connect tab), so Claude Code can use the agent. |
 
 ### Keys — `tvault keys`
 
@@ -233,29 +236,32 @@ anything is created. `--value`, `--type` and `--mcp` do not apply to it.
 
 ### Webhook — `tvault webhook` (`wh`)
 
-Deploy and connect your own [Webhook Mode](https://docs.tokenvault.uk/vault-modes/webhook)
-vault. The CLI generates the Docker Compose project and binds the webhook to your
-vault **without a browser**, reusing your admin context's session.
+Connect your own [Webhook Mode](https://docs.tokenvault.uk/vault-modes/webhook)
+vault. Deploy the reference webhook in [`examples/webhook`](examples/webhook)
+(Deploy to Workers, or `docker compose up -d --build`); the CLI then binds it to
+your vault **without a browser**, reusing your admin context's session.
 
 | Command | Purpose |
 |---------|---------|
-| `wh init` | Generate a `docker-compose.yml` + `.env` for a webhook deployment. Interactive method picker, or `--method` + `--set KEY=VALUE`. Methods: `ngrok`, `cloudflare`, `tailscale`, `custom`. `--dir` sets the target (default `./tvault-webhook`); `--image` overrides the webhook image. |
-| `wh up` | `docker compose up -d`, then wait for the webhook to report healthy. |
-| `wh bind` | Fetch the one-time code from the running webhook and bind it to your vault — no browser. |
-| `wh status` (`stat`) | Show local container state next to the backend's view of the webhook. |
-| `wh down` | `docker compose down`. |
+| `wh bind --url <webhook-url>` | Fetch the one-time code from the running webhook and bind it to your vault — no browser. |
+| `wh status` (`stat`) | Show the control plane's view of the webhook (mode, URL, last health check, capabilities) plus a direct health probe from this machine. |
 
 Typical first run:
 
 ```bash
-tvault webhook init          # pick a method, answer the prompts
-cd tvault-webhook
-tvault webhook up            # start it
-tvault webhook bind          # connect it to your vault
+cd examples/webhook && docker compose up -d --build
+tvault webhook bind --url https://my-webhook.example.com
 ```
 
-`up`/`down`/`bind`/`status` look for the project in the current directory, or
-`--dir <path>`.
+### Upgrading
+
+- **`tvault webhook init`, `up` and `down` were removed**, along with the
+  published `ghcr.io/c-lgrant/tvault-webhook` image (it was the old Python
+  webhook). Run the reference webhook with `docker compose up -d --build` in
+  `examples/webhook`, or use Deploy to Workers. `webhook bind` now takes the
+  webhook's URL with `--url` instead of reading a generated project.
+- **Webhook 0.13 or earlier, upgrading:** `tv-refresh` is now opt-in. See
+  [Upgrading from 0.13 or earlier](examples/webhook/README.md#upgrading-from-013-or-earlier).
 
 ## Top-level shortcuts
 

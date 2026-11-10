@@ -215,6 +215,11 @@ export interface TimeQuery {
   limit?: number;
   /** Only documents with timestamp strictly older than this. */
   before?: string;
+  /**
+   * Tie-break for `before`: also return documents whose timestamp equals
+   * `before` and whose key sorts below this one. Ignored without `before`.
+   */
+  beforeKey?: string;
   /** Only documents with timestamp >= this. */
   since?: string;
   /** JSON field holding the ISO timestamp (letters/underscore only). Default "timestamp". */

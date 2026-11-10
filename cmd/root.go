@@ -25,7 +25,7 @@ var rootCmd = &cobra.Command{
 	Short: "Token Vault CLI — manage credentials, agents, and grants",
 	Long: `tvault is the command-line interface for Token Vault.
 
-It mirrors the web console: manage tokens, agents, grants, and the vault lock,
+It mirrors the web app: manage tokens, agents, grants, and the vault lock,
 with a browser-based login and kubectl-style contexts for switching between
 admin and agent personas.`,
 	SilenceUsage:  true,

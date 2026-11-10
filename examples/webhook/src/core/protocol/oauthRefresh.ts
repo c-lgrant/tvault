@@ -361,6 +361,9 @@ export interface SweepSummary {
  */
 export async function refreshDueTokens(ctx: RuntimeContext, now: number = Date.now()): Promise<SweepSummary> {
   const summary: SweepSummary = { checked: 0, refreshed: 0, failed: 0, skipped: 0 };
+  // No own-app providers configured (OAUTH_PROVIDERS_JSON unset): nothing here
+  // can be refreshed, so don't load every stored token just to skip it.
+  if (Object.keys(ctx.config.oauthProviders ?? {}).length === 0) return summary;
   if (!(await ctx.secrets.isConfigured())) return summary;
   const windowMs = (ctx.config.refreshWindowSeconds ?? DEFAULT_REFRESH_WINDOW_SECONDS) * 1000;
 

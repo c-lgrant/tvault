@@ -100,7 +100,7 @@ func enrich(cmd *cobra.Command, cc *cmdContext, err error) error {
 		// the frontend is known.
 		if ce.Code == "POLICY_DENIED" && ce.Plain != "" && cc != nil && !strings.Contains(ce.Hint, "://") {
 			if fe, ok := deriveFrontendURL(cc.Ctx.APIURL); ok {
-				ce.Hint = strings.Replace(ce.Hint, "in the web console", "at "+fe+"/policies", 1)
+				ce.Hint = strings.Replace(ce.Hint, "in the web app", "at "+fe+"/policies", 1)
 			}
 		}
 		if ce.Kind == clierr.KindVaultLocked && ce.Hint == "" && cc != nil && cc.Ctx.Type == "admin" {

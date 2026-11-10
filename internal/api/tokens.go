@@ -32,6 +32,11 @@ type Token struct {
 	Notes       string   `json:"description,omitempty"`
 	Tags        []string `json:"tags,omitempty"`
 	Labels      []string `json:"labels,omitempty"`
+	// LabelsKnown is whether the response carried a "labels" field at all. The
+	// control plane omits it when its metadata read failed, which is not the
+	// same as "no labels": writing a label set computed from it would drop
+	// the real ones.
+	LabelsKnown bool `json:"-"`
 	// Kind is "tv_signin" for a "Token Vault sign-in" credential (no stored
 	// value); empty for an ordinary credential.
 	Kind string `json:"kind,omitempty"`
@@ -69,6 +74,13 @@ func (t *Token) UnmarshalJSON(b []byte) error {
 		return err
 	}
 	*t = Token(v.plain)
+	var probe map[string]json.RawMessage
+	if err := json.Unmarshal(b, &probe); err == nil {
+		_, t.LabelsKnown = probe["labels"]
+		if string(probe["labels"]) == "null" {
+			t.LabelsKnown = false
+		}
+	}
 	if t.Notes == "" {
 		t.Notes = v.LegacyNotes
 	}

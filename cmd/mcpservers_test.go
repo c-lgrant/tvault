@@ -38,6 +38,11 @@ type mcpBackend struct {
 	signInBody   string   // ... with this body
 	tokenKind    string   // "kind" served by GET /api/tokens/{service}
 	credReads    int      // POST /api/vault/credential-ticket calls
+
+	config       string           // body served by GET /api/config ("" = a server that predates mcpAggregateEnabled)
+	agentPatches []map[string]any // bodies of PATCH /api/agents/{id}
+	grantStatus  int              // when set, grant POSTs answer this status ...
+	grantBody    string           // ... with this body
 }
 
 func newMCPBackend(t *testing.T, ctxType string) *mcpBackend {
@@ -73,11 +78,25 @@ func newMCPBackend(t *testing.T, ctxType string) *mcpBackend {
 			out, _ := json.Marshal(body["servers"])
 			b.servers = string(out)
 			w.Write([]byte(`{"servers":` + b.servers + `}`))
+		case r.Method == "GET" && p == "/api/config":
+			if b.config == "" {
+				w.Write([]byte(`{"googleClientId":"x"}`))
+			} else {
+				w.Write([]byte(b.config))
+			}
 		case r.Method == "GET" && p == "/api/agents":
 			w.Write([]byte(existingAgent))
+		case r.Method == "PATCH" && strings.HasPrefix(p, "/api/agents/"):
+			b.agentPatches = append(b.agentPatches, body)
+			w.Write([]byte(`{}`))
 		case r.Method == "GET" && strings.HasPrefix(p, "/api/agents/"):
 			w.Write([]byte(`{"id":"abcdefghij0123456789","name":"my-agent","mcpEnabled":true}`))
 		case r.Method == "POST" && strings.HasSuffix(p, "/grants"):
+			if b.grantStatus != 0 {
+				w.WriteHeader(b.grantStatus)
+				w.Write([]byte(b.grantBody))
+				return
+			}
 			b.grants = append(b.grants, body)
 			w.Write([]byte(`{}`))
 		case r.Method == "POST" && p == "/api/tokens/sign-in":
@@ -179,6 +198,14 @@ func TestMCPServers_ListJSONAndTable(t *testing.T) {
 	if !strings.Contains(table, "41 (stale)") || !strings.Contains(table, "pending") {
 		t.Errorf("tools column = %q", table)
 	}
+	// A sign-in credential's server has no cached list: "per agent", not "pending".
+	b.servers = `[{"name":"mcp","url":"https://x.example.com/mcp","tools":{"perAgent":true}}]`
+	table, _, _ = run(t, "mcp-servers", "ls", "github", "--format", "table")
+	if !strings.Contains(table, "per agent") || strings.Contains(table, "pending") {
+		t.Errorf("sign-in tools column = %q", table)
+	}
+	b.servers = `[{"name":"github","url":"https://api.githubcopilot.com/mcp","tools":{"count":41,"fetchedAt":"2026-10-31T20:00:00Z","stale":true}},
+	 {"name":"docs","url":"https://docs.example.com/mcp","tools":{"count":0,"fetchedAt":null}}]`
 	// A write sends the list back without the read-only tool summary.
 	if _, _, err := run(t, "mcp-servers", "add", "github", "--name", "x", "--url", "https://x.example.com/mcp",
 		"--header", "Authorization: Bearer ${TOKEN}"); err != nil {
@@ -637,5 +664,116 @@ func TestConnectDefaultStillRegistersGeneralEntry(t *testing.T) {
 	want := "mcp add --transport http --scope user tokenvault " + b.srv.URL + "/api/agents/mcp"
 	if len(*ran) != 2 || (*ran)[0] != "mcp get tokenvault" || (*ran)[1] != want {
 		t.Errorf("claude invocations = %q", *ran)
+	}
+}
+
+// --- tvault connect: per-server entries when the combined endpoint is off ----
+
+func TestConnect_AggregatorOffRegistersOneEntryPerServer(t *testing.T) {
+	b := newMCPBackend(t, "admin")
+	b.config = `{"mcpAggregateEnabled":false}`
+	b.servers = `[{"name":"github","url":"https://a.example.com/mcp"},{"name":"docs","url":"https://b.example.com/mcp"}]`
+	withStdin(t, "", false, "")
+	ran := fakeClaude(t, true, "", errors.New("exit status 1"))
+	if _, _, err := runCLI(t, "connect", "my-agent", "github=mcp"); err != nil {
+		t.Fatal(err)
+	}
+	var adds []string
+	for _, a := range *ran {
+		if strings.HasPrefix(a, "mcp add") {
+			adds = append(adds, a)
+		}
+	}
+	want := []string{
+		"mcp add --transport http --scope user tv-github-github " + b.srv.URL + "/api/mcp/github/github",
+		"mcp add --transport http --scope user tv-github-docs " + b.srv.URL + "/api/mcp/github/docs",
+	}
+	if strings.Join(adds, "\n") != strings.Join(want, "\n") {
+		t.Errorf("adds = %q, want %q", adds, want)
+	}
+}
+
+func TestConnect_AggregatorOffHonoursServerListAndNoServers(t *testing.T) {
+	b := newMCPBackend(t, "admin")
+	b.config = `{"mcpAggregateEnabled":false}`
+	b.servers = `[{"name":"github","url":"https://a.example.com/mcp"},{"name":"docs","url":"https://b.example.com/mcp"}]`
+	withStdin(t, "", false, "")
+	ran := fakeClaude(t, true, "", errors.New("exit status 1"))
+	if _, _, err := runCLI(t, "connect", "my-agent", "github=mcp:docs"); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(*ran, "\n"); !strings.Contains(got, "tv-github-docs") || strings.Contains(got, "tv-github-github") {
+		t.Errorf("claude invocations = %q", *ran)
+	}
+	// A credential with no servers: say so, and do not fall back to the empty general entry.
+	b.servers = `[]`
+	*ran = nil
+	_, stderr, err := runCLI(t, "connect", "my-agent", "github=mcp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(*ran) != 0 || !strings.Contains(stderr, "has no MCP servers") {
+		t.Errorf("ran=%q stderr=%q", *ran, stderr)
+	}
+}
+
+func TestConnect_AggregatorOnKeepsGeneralEntry(t *testing.T) {
+	for _, cfg := range []string{`{"mcpAggregateEnabled":true}`, ``} { // explicit true, and a server without the field
+		b := newMCPBackend(t, "admin")
+		b.config = cfg
+		withStdin(t, "", false, "")
+		ran := fakeClaude(t, true, "", errors.New("exit status 1"))
+		if _, _, err := runCLI(t, "connect", "my-agent", "github=mcp"); err != nil {
+			t.Fatal(err)
+		}
+		want := "mcp add --transport http --scope user tokenvault " + b.srv.URL + "/api/agents/mcp"
+		if len(*ran) != 2 || (*ran)[1] != want {
+			t.Errorf("config %q: claude invocations = %q", cfg, *ran)
+		}
+	}
+}
+
+func TestConnect_AggregatorOffButNoMCPGrantKeepsGeneralEntry(t *testing.T) {
+	b := newMCPBackend(t, "admin")
+	b.config = `{"mcpAggregateEnabled":false}` // the flag must not even be consulted for value-only grants
+	withStdin(t, "", false, "")
+	ran := fakeClaude(t, true, "", errors.New("exit status 1"))
+	if _, _, err := runCLI(t, "connect", "my-agent", "github"); err != nil {
+		t.Fatal(err)
+	}
+	if len(*ran) != 2 || !strings.Contains((*ran)[1], "tokenvault "+b.srv.URL+"/api/agents/mcp") {
+		t.Errorf("claude invocations = %q", *ran)
+	}
+}
+
+// V9: a failed grant keeps the server's code and hint, so exit codes and
+// `tvault explain` still work through `connect`.
+func TestConnect_GrantFailureKeepsCodeAndHint(t *testing.T) {
+	b := newMCPBackend(t, "admin")
+	b.grantStatus = 403
+	b.grantBody = `{"detail":{"code":"AUTO_GRANT_CANNOT_SET_SERVERS","message":"no","hint":"ask a person"}}`
+	withStdin(t, "", false, "")
+	fakeClaude(t, false, "", nil)
+	_, _, err := runCLI(t, "connect", "my-agent", "github")
+	var ce *clierr.CLIError
+	if !errors.As(err, &ce) || ce.Code != "AUTO_GRANT_CANNOT_SET_SERVERS" {
+		t.Fatalf("err = %v (%+v), want the server code kept", err, ce)
+	}
+}
+
+// --- tvault agents mcp-on -----------------------------------------------------
+
+func TestAgentsMCPOn_SendsPatch(t *testing.T) {
+	b := newMCPBackend(t, "admin")
+	withStdin(t, "", false, "")
+	stdout, stderr, err := runCLI(t, "agents", "mcp-on", "my-agent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(b.agentPatches) != 1 || b.agentPatches[0]["mcpEnabled"] != true || len(b.agentPatches[0]) != 1 {
+		t.Errorf("patches = %v", b.agentPatches)
+	}
+	if stdout != "" || !strings.Contains(stderr, "Turned MCP on for agent my-agent") {
+		t.Errorf("stdout=%q stderr=%q", stdout, stderr)
 	}
 }

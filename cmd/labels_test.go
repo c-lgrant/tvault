@@ -150,6 +150,65 @@ func TestLabelAddNoChangeSendsNothing(t *testing.T) {
 	}
 }
 
+// V2: the control plane omits "labels" from GET /api/tokens when its metadata
+// read fails. add/rm must refuse instead of writing a set computed from nothing;
+// an explicit empty list is a real "no labels" and still works.
+func TestLabelAddRmRefuseWhenLabelsUnreported(t *testing.T) {
+	var puts []string
+	tokens := `[{"serviceName":"github","tokenType":"PlainText"}]`
+	rec := newRecorder(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method + " " + r.URL.Path {
+		case "GET /api/tokens":
+			w.Write([]byte(tokens))
+		case "PUT /api/labels/credential/github":
+			raw, _ := io.ReadAll(r.Body)
+			puts = append(puts, string(raw))
+			w.Write([]byte(`{"entityType":"credential","entityId":"github","labels":["x"],"policies":[]}`))
+		default:
+			w.WriteHeader(500)
+		}
+	})
+	keyCtx(t, rec.srv.URL)
+	for _, verb := range []string{"add", "rm"} {
+		_, _, err := run(t, "label", verb, "credential", "github", "x")
+		if err == nil || clierr.ExitCode(err) != clierr.ExitCode(&clierr.CLIError{Kind: clierr.KindServer}) {
+			t.Errorf("%s: err = %v, want a server-kind refusal", verb, err)
+		}
+		if len(puts) != 0 {
+			t.Fatalf("%s wrote %q despite unknown labels", verb, puts)
+		}
+	}
+	// `set` replaces without reading, so it is unaffected.
+	if _, _, err := run(t, "label", "set", "credential", "github", "x"); err != nil || len(puts) != 1 {
+		t.Errorf("set: err=%v puts=%q", err, puts)
+	}
+	// An explicit empty list is a real answer.
+	tokens = `[{"serviceName":"github","tokenType":"PlainText","labels":[]}]`
+	puts = nil
+	if _, _, err := run(t, "label", "add", "credential", "github", "x"); err != nil || len(puts) != 1 || strings.TrimSpace(puts[0]) != `{"labels":["x"]}` {
+		t.Errorf("add on empty set: err=%v puts=%q", err, puts)
+	}
+}
+
+func TestLabelLsFormatJSONIsTyped(t *testing.T) {
+	const body = `{"labels":[{"label":"prod","credentials":2,"agents":1,"keys":0,"policyIds":["p1"]}]}`
+	rec := newRecorder(t, func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(body)) })
+	keyCtx(t, rec.srv.URL)
+	js, _, err := run(t, "label", "ls", "--format", "json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got struct {
+		Labels []struct {
+			Credentials int      `json:"credentials"`
+			PolicyIDs   []string `json:"policyIds"`
+		} `json:"labels"`
+	}
+	if err := json.Unmarshal([]byte(js), &got); err != nil || len(got.Labels) != 1 || got.Labels[0].Credentials != 2 || got.Labels[0].PolicyIDs[0] != "p1" {
+		t.Errorf("--format json = %q (%v)", js, err)
+	}
+}
+
 // Removing a label that carries a policy needs policies:write; the server's
 // SCOPE_DENIED maps to the permission-denied exit code (8).
 func TestLabelRmNeedsPolicyScope(t *testing.T) {

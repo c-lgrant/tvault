@@ -147,7 +147,7 @@ func ensureAgent(cmd *cobra.Command, cc *cmdContext, ref, command string, yes bo
 		// The agent can't be used from Claude Code while MCP is off for it.
 		// Best effort: a denied lookup or an older server stays silent.
 		if a, gerr := cc.Client.GetAgent(rs[0].ID); gerr == nil && a.MCPEnabled != nil && !*a.MCPEnabled {
-			cmd.PrintErrf("warning: MCP is turned off for agent %s, so Claude Code will not be able to use it. Turn it on in the console.\n", rs[0].label())
+			cmd.PrintErrf("warning: MCP is turned off for agent %s, so Claude Code will not be able to use it. Run `tvault agents mcp-on %s`, or press \"Turn MCP on\" on the agent's Connect tab in the web app.\n", rs[0].label(), safeText(ref))
 		}
 		return rs[0], nil
 	}
@@ -182,16 +182,18 @@ func grantSpecs(cmd *cobra.Command, cc *cmdContext, agent resolved, specs []api.
 	}
 	res := cc.Client.AddGrantSpecs(agent.ID, specs)
 	if err := res.Err(); err != nil {
-		kind := clierr.KindUser
+		// Keep the first server error's kind, code, missing scope and hint, so
+		// `explain` and the exit code still see what the server said.
+		out := &clierr.CLIError{Kind: clierr.KindUser, Command: command, Context: cc.label(),
+			Message: "granting services to " + agent.label() + " failed: " + err.Error()}
 		for _, e := range res.Failed {
 			var ce *clierr.CLIError
 			if errors.As(e, &ce) {
-				kind = ce.Kind
+				out.Kind, out.Code, out.Scope, out.Hint = ce.Kind, ce.Code, ce.Scope, ce.Hint
 				break
 			}
 		}
-		return &clierr.CLIError{Kind: kind, Command: command, Context: cc.label(),
-			Message: "granting services to " + agent.label() + " failed: " + err.Error()}
+		return out
 	}
 	cmd.PrintErrf("Granted %s to %s.\n", strings.Join(res.OK, ", "), agent.label())
 	return nil
@@ -270,7 +272,9 @@ func runConnect(cmd *cobra.Command, args []string) error {
 			registerEntryWithClaude(cmd, cc, printOnly, entryName, url)
 		}
 	} else if !noClaude {
-		registerWithClaude(cmd, cc, printOnly)
+		if !registerServerEntries(cmd, cc, printOnly, specs) {
+			registerWithClaude(cmd, cc, printOnly)
+		}
 	}
 	name := agent.Name
 	if name == "" {
@@ -285,6 +289,77 @@ func runConnect(cmd *cobra.Command, args []string) error {
 // and grants already exist, so the manual command is printed instead.
 func registerWithClaude(cmd *cobra.Command, cc *cmdContext, printOnly bool) {
 	registerEntryWithClaude(cmd, cc, printOnly, "tokenvault", strings.TrimRight(cc.Ctx.APIURL, "/")+"/api/agents/mcp")
+}
+
+// registerServerEntries handles `connect` without --server when a spec grants
+// MCP access ("tools" on the wire). The control plane's combined endpoint
+// (/api/agents/mcp) is off in some deployments (GET /api/config
+// mcpAggregateEnabled false): there it lists only Token Vault's own tools, so
+// registering it would show the agent nothing of the granted servers. In that
+// case one entry per MCP server of each credential is registered instead, the
+// same entry `--server <service>/<server>` adds. It returns false (register
+// the general entry as before) when the combined endpoint is on, no spec
+// grants MCP access, or the setting could not be read; true when it handled
+// the registration, even if a credential had no servers to register.
+func registerServerEntries(cmd *cobra.Command, cc *cmdContext, printOnly bool, specs []api.GrantSpec) bool {
+	var wanted []api.GrantSpec
+	for _, s := range specs {
+		if specHasTools(s) {
+			wanted = append(wanted, s)
+		}
+	}
+	if len(wanted) == 0 {
+		return false
+	}
+	enabled, err := cc.Client.MCPAggregateEnabled()
+	if err != nil || enabled {
+		return false
+	}
+	base := strings.TrimRight(cc.Ctx.APIURL, "/")
+	for _, s := range wanted {
+		servers, err := cc.Client.ListMCPServers(s.Service)
+		if err != nil {
+			cmd.PrintErrf("note: could not list the MCP servers of %s (%v); register them with `tvault connect <agent> %s=mcp --server %s/<server>`\n",
+				safeText(s.Service), err, safeText(s.Service), safeText(s.Service))
+			continue
+		}
+		var names []string
+		for _, sv := range servers {
+			if len(s.Servers) > 0 && !containsString(s.Servers, sv.Name) {
+				continue
+			}
+			names = append(names, sv.Name)
+		}
+		if len(names) == 0 {
+			cmd.PrintErrf("note: %s has no MCP servers to register; attach one with `tvault mcp-servers add %s --preset <id>`\n",
+				safeText(s.Service), safeText(s.Service))
+			continue
+		}
+		for _, n := range names {
+			url := base + "/api/mcp/" + neturl.PathEscape(s.Service) + "/" + neturl.PathEscape(n)
+			registerEntryWithClaude(cmd, cc, printOnly, "tv-"+s.Service+"-"+n, url)
+		}
+	}
+	return true
+}
+
+// specHasTools reports whether a grant spec asks for MCP access.
+func specHasTools(s api.GrantSpec) bool {
+	for _, u := range s.Uses {
+		if u == "tools" {
+			return true
+		}
+	}
+	return false
+}
+
+func containsString(list []string, s string) bool {
+	for _, x := range list {
+		if x == s {
+			return true
+		}
+	}
+	return false
 }
 
 // splitServerRef parses a --server value, <service>/<server>.

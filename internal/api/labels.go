@@ -2,7 +2,10 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/url"
+
+	"github.com/c-lgrant/tvault/internal/clierr"
 )
 
 // LabelSummary is one row of GET /api/labels: how many credentials, agents
@@ -100,6 +103,11 @@ func (c *Client) CurrentLabels(kind, id string) (labels []string, found bool, er
 		}
 		for _, t := range toks {
 			if t.ServiceName == id {
+				if !t.LabelsKnown {
+					return nil, true, &clierr.CLIError{Kind: clierr.KindServer,
+						Message: fmt.Sprintf("the control plane did not report the labels of credential %q (its metadata read failed), so they cannot be changed safely: nothing was written", id),
+						Hint:    "retry in a moment; `tvault label set credential " + id + " <label>...` replaces the whole set without reading it"}
+				}
 				return t.Labels, true, nil
 			}
 		}

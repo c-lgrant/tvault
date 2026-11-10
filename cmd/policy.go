@@ -12,7 +12,7 @@ var policyCmd = &cobra.Command{
 	Short:   "Attach and detach policies",
 	Long: `Attach an existing policy to a label, credential, agent or key. A policy on a
 label applies to every object carrying that label (see ` + "`tvault label --help`" + `).
-Policies themselves are created in the web console.`,
+Policies themselves are created in the web app.`,
 }
 
 var policyAttachCmd = &cobra.Command{

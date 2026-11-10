@@ -2,7 +2,7 @@ name: release-please
 
 # Gitflow: feature branches → develop → main. Every push to main updates the
 # release PR. Merging that PR tags vX.Y.Z, creates the GitHub Release, and the
-# jobs below publish the binaries, the webhook image and the npm package.
+# jobs below publish the binaries and the npm package.
 #
 # Everything runs on GITHUB_TOKEN. Events that GITHUB_TOKEN causes never start
 # other workflows, so the release jobs live here rather than in `on: release`
@@ -94,16 +94,6 @@ jobs:
       tag: ${{ needs.plan.outputs.tag }}
     permissions:
       contents: write
-
-  webhook-image:
-    needs: plan
-    if: ${{ always() && needs.plan.result == 'success' && needs.plan.outputs.tag != '' }}
-    uses: ./.github/workflows/build-webhook.yml
-    with:
-      tag: ${{ needs.plan.outputs.tag }}
-    permissions:
-      contents: read
-      packages: write
 
   # npm trusted publishing: npmjs.com trusts this workflow file in this repo,
   # so no npm token exists anywhere, and each version gets provenance. It runs

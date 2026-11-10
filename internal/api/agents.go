@@ -151,6 +151,15 @@ func (c *Client) SetAgentStatus(id, status string) error {
 	return err
 }
 
+// SetAgentMCPEnabled clears a stored MCP off-switch on an agent via
+// PATCH /api/agents/{id} with {"mcpEnabled": true}. The server has no way to
+// turn MCP off any more (MCP_TOGGLE_REMOVED); this only clears the leftover.
+func (c *Client) SetAgentMCPEnabled(id string) error {
+	_, err := c.doRequest("PATCH", "/api/agents/"+id,
+		map[string]bool{"mcpEnabled": true}, nil)
+	return err
+}
+
 // ListGrants returns an agent's granted service names. The backend has no
 // dedicated grants-list route; GET /api/agents/{id} embeds a "grants" array.
 func (c *Client) ListGrants(agentID string) ([]string, error) {
