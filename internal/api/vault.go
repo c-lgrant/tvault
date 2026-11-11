@@ -44,8 +44,21 @@ type StoreTicket struct {
 // VaultStoreTicket fetches a webhook-store ticket for the named service. Only
 // valid for webhook-mode vaults; platform-mode users get a 400 from the API.
 func (c *Client) VaultStoreTicket(serviceName string) (*StoreTicket, error) {
-	body, err := c.doRequest("POST", "/api/vault/store-ticket",
-		map[string]string{"serviceName": serviceName}, nil)
+	return c.vaultStoreTicket(serviceName, "")
+}
+
+// storeIntentCreate tells Token Vault the caller means a NEW credential: it
+// answers 409 TOKEN_EXISTS for a name that exists and signs no ticket, so
+// `tvault add` can never replace a stored value. A server that predates the
+// field ignores it.
+const storeIntentCreate = "create"
+
+func (c *Client) vaultStoreTicket(serviceName, intent string) (*StoreTicket, error) {
+	req := map[string]string{"serviceName": serviceName}
+	if intent != "" {
+		req["intent"] = intent
+	}
+	body, err := c.doRequest("POST", "/api/vault/store-ticket", req, nil)
 	if err != nil {
 		return nil, err
 	}

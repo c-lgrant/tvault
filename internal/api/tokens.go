@@ -397,7 +397,8 @@ func (c *Client) fetchWebhookCredential(webhookURL, ticket, service string) (str
 // envelope.
 func (c *Client) CreateToken(req CreateTokenRequest) error {
 	if req.Credential != "" {
-		return c.storeViaTicket(req.ServiceName, req.Type, req.Credential, req.Extra)
+		// "create": a name that already exists is refused, never replaced.
+		return c.storeViaTicket(req.ServiceName, req.Type, req.Credential, req.Extra, storeIntentCreate)
 	}
 	tokenData := map[string]any{}
 	if req.Type != "" {
@@ -438,20 +439,26 @@ func (c *Client) SetTokenValue(service, credential string) error {
 // token document directly to the user's webhook at /v1/store. The secret
 // never traverses TV's backend.
 func (c *Client) StoreTokenViaWebhook(service, tokenType, credential string) error {
-	return c.storeViaTicket(service, tokenType, credential, nil)
+	return c.storeViaTicket(service, tokenType, credential, nil, "")
 }
 
-func (c *Client) storeViaTicket(service, tokenType, credential string, extra map[string]any) error {
+// storeViaTicket sends the value to the webhook with a TV-signed ticket.
+// intent is storeIntentCreate for a new credential, or "" to create or replace.
+func (c *Client) storeViaTicket(service, tokenType, credential string, extra map[string]any, intent string) error {
 	if c.DryRun {
 		out := c.DryRunOut
 		if out == nil {
 			out = os.Stderr
 		}
-		fmt.Fprintf(out, "[dry-run] POST /api/vault/store-ticket {serviceName: %q}\n", service)
+		if intent != "" {
+			fmt.Fprintf(out, "[dry-run] POST /api/vault/store-ticket {serviceName: %q, intent: %q}\n", service, intent)
+		} else {
+			fmt.Fprintf(out, "[dry-run] POST /api/vault/store-ticket {serviceName: %q}\n", service)
+		}
 		fmt.Fprintf(out, "[dry-run] POST <webhook>/v1/store (%s, value redacted)\n", credentialFieldForType(tokenType))
 		return nil
 	}
-	ticket, err := c.VaultStoreTicket(service)
+	ticket, err := c.vaultStoreTicket(service, intent)
 	if err != nil {
 		return err
 	}

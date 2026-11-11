@@ -32,8 +32,8 @@ curl -fsSL https://raw.githubusercontent.com/c-lgrant/tvault/main/install.sh | b
 tvault login              # browser-based admin login
 tvault ls                 # list tokens
 tvault get github         # print a credential (stdout only — safe for $(...))
-tvault add stripe                       # create a token; the value is a hidden prompt
-tvault set stripe                       # rotate it (the value goes straight to your webhook)
+tvault add stripe                       # create a token; the value is a hidden prompt. A name that exists is refused
+tvault set stripe                       # rotate it: the only command that replaces a value (it goes straight to your webhook)
 printf %s "$SECRET" | tvault add stripe # or pipe the value in
 tvault add stripe --for my-agent        # store, then grant it to my-agent (created if missing)
 tvault connect my-agent github stripe   # grant existing credentials and set up Claude Code
