@@ -25,13 +25,28 @@ export class StoredNonceGuard implements ReplayGuard {
     return this.inner.checkRequestId(id);
   }
 
+  private lastPrune = Date.now();
+
   async checkNonce(nonce: string, ttlSeconds: number = NONCE_TTL_S): Promise<boolean> {
-    const exp = new Date(Date.now() + ttlSeconds * 1000).toISOString();
+    const now = Date.now();
+    const exp = new Date(now + ttlSeconds * 1000).toISOString();
     // An expired row that has not been pruned yet still counts as seen: the
     // ticket it belonged to has expired too.
-    return !(await this.storage.setIfAbsent(NONCE_COLLECTION, nonce, { exp }));
+    const seen = !(await this.storage.setIfAbsent(NONCE_COLLECTION, nonce, { exp }));
+    // The cron trigger prunes too, but a Worker deployed before the trigger
+    // existed has none in its wrangler.toml. So the guard also prunes by
+    // itself, at most once per interval per isolate. A failed prune never
+    // fails the request: the nonce is already recorded.
+    if (now - this.lastPrune >= PRUNE_INTERVAL_MS) {
+      this.lastPrune = now;
+      await pruneNonces(this.storage, now).catch(() => console.error("[replay] nonce prune failed"));
+    }
+    return seen;
   }
 }
+
+/** How often one isolate deletes expired nonce rows by itself. */
+export const PRUNE_INTERVAL_MS = 10 * 60 * 1000;
 
 /** Delete nonce rows past their expiry. Returns how many went. */
 export async function pruneNonces(storage: StorageAdapter, now: number = Date.now()): Promise<number> {

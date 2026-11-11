@@ -234,7 +234,9 @@ press **Verify Connection** in the console so the capability list is re-read.
   start: a list that cannot be read must not mean "allow all".
 - **One-shot tickets on Workers are atomic.** Each ticket nonce is one
   insert-if-absent row in D1, so a ticket cannot be used twice in two colos. The
-  cron trigger deletes expired rows. This costs one D1 row write per credential
+  cron trigger deletes expired rows, and the Worker also deletes them by itself
+  about every 10 minutes while it gets requests, so a `wrangler.toml` from
+  before the `[triggers]` block existed still stays clean. This costs one D1 row write per credential
   read, store and proxy call; on the D1 free plan (100,000 rows written per day)
   set `TV_REPLAY_NONCES="cache"` to go back to the per-colo cache if you get
   near that limit. Request ids stay in the cache.
