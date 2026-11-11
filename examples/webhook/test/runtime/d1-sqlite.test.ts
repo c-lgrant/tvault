@@ -4,9 +4,9 @@
 // `node:sqlite` ships with Node 22+, so no dependency is added.
 
 import { createRequire } from "node:module";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { D1StorageAdapter } from "../../src/adapters/storage/d1.ts";
-import { pruneNonces, StoredNonceGuard } from "../../src/adapters/replay/stored.ts";
+import { PRUNE_INTERVAL_MS, pruneNonces, StoredNonceGuard } from "../../src/adapters/replay/stored.ts";
 import { NONCE_COLLECTION, type ReplayGuard } from "../../src/runtime/context.ts";
 
 const { DatabaseSync } = createRequire(import.meta.url)("node:sqlite") as typeof import("node:sqlite");
@@ -130,6 +130,41 @@ describe("StoredNonceGuard on D1", () => {
     expect(await pruneNonces(d1, Date.now() + 300_000)).toBe(1);
     expect(await guard.checkNonce("long")).toBe(true);
     expect(await guard.checkNonce("short")).toBe(false);
+  });
+
+  it("prunes by itself when no cron trigger runs", async () => {
+    vi.useFakeTimers({ now: new Date("2026-11-11T12:00:00Z") });
+    try {
+      const d1 = await D1StorageAdapter.create(sqliteD1());
+      const guard = new StoredNonceGuard(d1, inner);
+      await guard.checkNonce("old-1");
+      await guard.checkNonce("old-2");
+      expect(await d1.count(NONCE_COLLECTION)).toBe(2);
+      vi.setSystemTime(Date.now() + PRUNE_INTERVAL_MS + 1000);
+      expect(await guard.checkNonce("new")).toBe(false);
+      // The two expired rows went; the one just recorded stays.
+      expect(await d1.count(NONCE_COLLECTION)).toBe(1);
+      expect(await guard.checkNonce("new")).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("a failed prune does not fail the check", async () => {
+    vi.useFakeTimers({ now: new Date("2026-11-11T12:00:00Z") });
+    try {
+      const d1 = await D1StorageAdapter.create(sqliteD1());
+      const flaky = Object.assign(Object.create(d1) as D1StorageAdapter, {
+        prune: async () => {
+          throw new Error("D1 busy");
+        },
+      });
+      const guard = new StoredNonceGuard(flaky, inner);
+      vi.setSystemTime(Date.now() + PRUNE_INTERVAL_MS + 1000);
+      expect(await guard.checkNonce("n")).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("fails the check when storage fails, never 'not seen'", async () => {
