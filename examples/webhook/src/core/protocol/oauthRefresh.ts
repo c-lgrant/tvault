@@ -20,7 +20,7 @@
 // refreshFailedAt, refreshReconnect) that a later success clears.
 
 import { decryptTokenField, buildEncryptedTokenDocument, EXTRA_SENSITIVE_FIELDS } from "./tokendoc.ts";
-import { BUILTIN_TOKEN_AUTH, BUILTIN_TOKEN_URLS, type TokenAuthMethod } from "./oauthConnect.ts";
+import { BUILTIN_TOKEN_AUTH, BUILTIN_TOKEN_URLS, providerEntry, type TokenAuthMethod } from "./oauthConnect.ts";
 import { SENSITIVE_FIELDS } from "./types.ts";
 import type { Bytes } from "../crypto/encoding.ts";
 import type { OAuthProviderConfig, RuntimeContext, StoredDocument } from "../../runtime/context.ts";
@@ -82,7 +82,7 @@ export type TokenEndpointResult =
   | { ok: false; error: string; transient: boolean };
 
 export function tokenAuthMethod(provider: string, local: OAuthProviderConfig | undefined): TokenAuthMethod {
-  return local?.tokenAuthMethod ?? BUILTIN_TOKEN_AUTH[provider] ?? "client_secret_post";
+  return local?.tokenAuthMethod ?? providerEntry(BUILTIN_TOKEN_AUTH, provider) ?? "client_secret_post";
 }
 
 /**
@@ -115,6 +115,7 @@ export async function postTokenRequest(
       method: "POST",
       headers,
       body: form,
+      redirect: "error", // the secret/code/refresh token must not follow a redirect
       signal: AbortSignal.timeout(TOKEN_ENDPOINT_TIMEOUT_MS),
     });
   } catch {
@@ -267,9 +268,9 @@ export async function refreshStoredToken(
   // only describe TV's built-in providers).
   const stored = (meta.oauth && typeof meta.oauth === "object" ? meta.oauth : {}) as RefreshHint;
   const provider = (stored.provider ?? hint.provider ?? "").toLowerCase();
-  const local = ctx.config.oauthProviders?.[provider];
+  const local = providerEntry(ctx.config.oauthProviders, provider);
   const clientSecret = local?.clientSecret;
-  const tokenUrl = local?.tokenUrl ?? BUILTIN_TOKEN_URLS[provider];
+  const tokenUrl = local?.tokenUrl ?? providerEntry(BUILTIN_TOKEN_URLS, provider);
   const clientId = local?.clientId ?? stored.clientId ?? hint.clientId;
 
   if (clientSecret && tokenUrl) {
@@ -312,24 +313,46 @@ export async function refreshStoredToken(
   // the one we have stays valid.
   const newRefresh = tokens.refreshToken ?? refreshToken;
   const expiryTime = Date.now() + (tokens.expiresIn ?? 3600) * 1000;
-  for (const k of FAILURE_KEYS) delete meta[k];
   const now = nowIso();
-  Object.assign(meta, {
-    serviceName: meta.serviceName ?? service,
-    tokenType: meta.tokenType ?? (provider || "oauth"),
-    expiryTime,
-    updatedAt: now,
-    lastRefreshed: now,
-  });
-  if (tokens.scope) meta.scope = tokens.scope;
 
   // Never overwrite a token that changed while we were at the provider (a
-  // reconnect, or a concurrent refresh that already stored newer tokens).
-  const concurrent = await concurrentOutcome(ctx, service, doc);
-  if (concurrent) return concurrent;
-  const kept = await storeUnlessChanged(ctx, service, doc, await rebuild(key, doc, tokens.accessToken, newRefresh, meta));
-  if (kept) return kept;
-  return { status: "refreshed", expiryTime };
+  // reconnect, or a concurrent refresh that already stored newer tokens). A
+  // concurrent *failure* (its marker landed first, refresh token untouched) is
+  // not such a change: our rotated tokens must win, so retry on top of it.
+  let base = doc;
+  for (let attempt = 0; ; attempt++) {
+    const current = attempt === 0 ? base : await ctx.storage.get("tokens", service);
+    if (!current) return { status: "no_token" };
+    if (attempt > 0) {
+      const cur = docMeta(current);
+      if (refreshFingerprint(current) !== refreshFingerprint(doc) || cur.updatedAt !== docMeta(doc).updatedAt) {
+        return { status: "refreshed", expiryTime: Number(cur.expiryTime) || 0 };
+      }
+      base = current;
+    }
+    const nextMeta = docMeta(base);
+    for (const k of FAILURE_KEYS) delete nextMeta[k];
+    Object.assign(nextMeta, {
+      serviceName: nextMeta.serviceName ?? service,
+      tokenType: nextMeta.tokenType ?? (provider || "oauth"),
+      expiryTime,
+      updatedAt: now,
+      lastRefreshed: now,
+    });
+    if (tokens.scope) nextMeta.scope = tokens.scope;
+    const next = await rebuild(key, base, tokens.accessToken, newRefresh, nextMeta);
+
+    if (attempt === 0) {
+      const concurrent = await concurrentOutcome(ctx, service, doc);
+      if (concurrent) return concurrent;
+    }
+    if (!ctx.storage.setIfUnchanged) {
+      await ctx.storage.set("tokens", service, next);
+      return { status: "refreshed", expiryTime };
+    }
+    if (await ctx.storage.setIfUnchanged("tokens", service, base, next)) return { status: "refreshed", expiryTime };
+    if (attempt >= 3) return (await concurrentOutcome(ctx, service, doc)) ?? { status: "no_token" };
+  }
 }
 
 /** Whether the webhook may refresh this token on its own (no TV request involved). */

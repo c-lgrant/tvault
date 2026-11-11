@@ -176,11 +176,29 @@ func TestAddValue_SlowPipeIsWaitedFor(t *testing.T) {
 	stdinFirstByteWait = 20 * time.Millisecond
 	t.Cleanup(func() { stdinFirstByteWait = orig })
 	go func() { time.Sleep(200 * time.Millisecond); pw.Write([]byte("slow-secret\n")); pw.Close() }()
-	if _, _, err := runCLI(t, "add", "svc"); err != nil {
+	_, stderr, err := runCLI(t, "add", "svc")
+	if err != nil {
 		t.Fatal(err)
 	}
 	if len(b.got) != 1 || b.got[0] != "slow-secret" || b.tokenPOST != 0 {
 		t.Errorf("stored %q placeholders=%d, want [slow-secret] and none", b.got, b.tokenPOST)
+	}
+	if n := strings.Count(stderr, "waiting for the value on stdin; pass --empty"); n != 1 {
+		t.Errorf("wait notice printed %d times in %q", n, stderr)
+	}
+}
+
+// --value "" is an empty input like any other: refused unless --empty.
+func TestAddValue_EmptyValueFlagIsUserError(t *testing.T) {
+	b := newStoreBackend(t)
+	withStdin(t, "", false, "")
+	_, _, err := runCLI(t, "add", "svc", "--value", "")
+	var ce *clierr.CLIError
+	if err == nil || !errors.As(err, &ce) || ce.Kind != clierr.KindUser || !strings.Contains(ce.Hint, "--empty") {
+		t.Fatalf("err = %v, want a user error hinting --empty", err)
+	}
+	if len(b.got) != 0 || b.tokenPOST != 0 {
+		t.Errorf("nothing should be created")
 	}
 }
 

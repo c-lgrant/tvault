@@ -3,10 +3,9 @@ package cmd
 import (
 	"fmt"
 	"os"
-	"strconv"
 	"strings"
-	"unicode"
 
+	"github.com/c-lgrant/tvault/internal/textsafe"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 )
@@ -25,12 +24,7 @@ func joinComma(ss []string) string { return strings.Join(ss, ",") }
 // control, escape or invisible formatting characters (ANSI sequences,
 // newlines, bidi overrides) is shown quoted with those characters escaped, so
 // a name can't repaint or spoof what the user is confirming.
-func safeText(s string) string {
-	if strings.IndexFunc(s, func(r rune) bool { return r != ' ' && !unicode.IsPrint(r) }) >= 0 {
-		return strconv.Quote(s)
-	}
-	return s
-}
+func safeText(s string) string { return textsafe.Safe(s) }
 
 // confirmDestructive gates a destructive action behind --force or an
 // interactive y/N prompt. In a non-interactive shell without --force it

@@ -106,6 +106,12 @@ async function listCollection(
   collection: string,
   options: ListOptions | undefined,
 ): Promise<{ items: ListItem[]; pagination?: Pagination }> {
+  if (options) {
+    for (const name of ["after", "since"] as const) {
+      const v: unknown = options[name];
+      if (v !== undefined && typeof v !== "string") throw invalidRequest(`'options.${name}' must be a string`);
+    }
+  }
   const limit = options?.limit;
   const hasFilters =
     options?.filters && typeof options.filters === "object" && Object.keys(options.filters).length > 0;

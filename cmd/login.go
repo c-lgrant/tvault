@@ -63,7 +63,15 @@ var loginCmd = &cobra.Command{
 			return nil
 		}
 
-		if apiURLSet && !cmd.Flags().Changed("frontend-url") {
+		// An explicit --frontend-url is remembered in the context and reused by
+		// a later bare login and by re-sign-in; older contexts have none.
+		remember := cmd.Flags().Changed("frontend-url")
+		if !remember {
+			if stored := storedFrontendURL(asName, apiURL); stored != "" {
+				frontendURL, remember = stored, true
+			}
+		}
+		if apiURLSet && !remember {
 			derived, ok := deriveFrontendURL(apiURL)
 			if !ok {
 				return &clierr.CLIError{Kind: clierr.KindUser, Command: "login",
@@ -78,6 +86,8 @@ var loginCmd = &cobra.Command{
 			APIURL:      apiURL,
 			FrontendURL: frontendURL,
 			ForceManual: noBrowser,
+
+			RememberFrontendURL: remember,
 		})
 		if err != nil {
 			return err
@@ -105,6 +115,25 @@ func storedAPIURL(name string) string {
 		return c.APIURL
 	}
 	return ""
+}
+
+// storedFrontendURL returns the frontend URL saved for the named context, but
+// only while the login is for the API URL that context was made for ("" when
+// none is saved, the name is unknown or the config can't be read).
+func storedFrontendURL(name, apiURL string) string {
+	if name == "" {
+		name = "default"
+	}
+	cfg, err := config.Load()
+	if err != nil {
+		return ""
+	}
+	c, ok := cfg.Contexts[name]
+	if !ok || c == nil || c.FrontendURL == "" ||
+		strings.TrimRight(c.APIURL, "/") != strings.TrimRight(apiURL, "/") {
+		return ""
+	}
+	return c.FrontendURL
 }
 
 // deriveFrontendURL maps an API base URL to the frontend that issued its login

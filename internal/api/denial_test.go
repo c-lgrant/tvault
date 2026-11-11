@@ -193,6 +193,10 @@ func TestAccessRefusalsExplained(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.code, func(t *testing.T) {
 			body := wrap(`{"code":"` + tc.code + `","message":"m","missingScope":"x:y"}`)
+			if tc.code == "RATE_LIMITED" {
+				// The real REST shape: top-level, no detail wrapper.
+				body = `{"error":"m","code":"RATE_LIMITED","retryAfter":5}`
+			}
 			err := denyOnce(t, tc.status, map[string]string{"Retry-After": "5"}, body)
 			s := err.Error()
 			if !strings.HasPrefix(s, "denied: ") || !strings.Contains(s, tc.sentence) {

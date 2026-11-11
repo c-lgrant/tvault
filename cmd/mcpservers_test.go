@@ -98,7 +98,13 @@ func newMCPBackend(t *testing.T, ctxType string) *mcpBackend {
 				return
 			}
 			b.grants = append(b.grants, body)
-			w.Write([]byte(`{}`))
+			// Like the real server: echo the uses it stored.
+			echo := map[string]any{"success": true}
+			if u, ok := body["uses"]; ok {
+				echo["uses"] = u
+			}
+			raw, _ := json.Marshal(echo)
+			w.Write(raw)
 		case r.Method == "POST" && p == "/api/tokens/sign-in":
 			if b.signInStatus != 0 {
 				w.WriteHeader(b.signInStatus)
@@ -293,6 +299,32 @@ func TestMCPServers_AddSameNameReplaces(t *testing.T) {
 	servers := putServers(t, b, 0)
 	if len(servers) != 1 || servers[0]["url"] != "https://other.example.com/mcp" {
 		t.Errorf("servers = %v", servers)
+	}
+}
+
+// A literal secret in a credential-looking header is refused before anything
+// is sent, and the error never repeats the value.
+func TestMCPServers_AddRefusesLiteralSecretInCredentialHeader(t *testing.T) {
+	for _, hdr := range []string{
+		"Authorization: Bearer sk-LITERAL-1",
+		"Cookie: session=sk-LITERAL-1",
+		"X-Api-Key: sk-LITERAL-1",
+		"Proxy-Authorization: Basic sk-LITERAL-1",
+	} {
+		b := newMCPBackend(t, "admin")
+		_, _, err := run(t, "mcp-servers", "add", "github", "--name", "docs", "--url", "https://x.example.com",
+			"--header", hdr, "--header", "A: ${TOKEN}")
+		name := strings.SplitN(hdr, ":", 2)[0]
+		if err == nil || clierr.ExitCode(err) != userExit || !strings.Contains(err.Error(), name) || !strings.Contains(err.Error(), "not sent") {
+			t.Errorf("%s: err = %v", hdr, err)
+			continue
+		}
+		if strings.Contains(err.Error(), "sk-LITERAL-1") {
+			t.Errorf("%s: error echoes the value: %v", hdr, err)
+		}
+		if b.puts != 0 {
+			t.Errorf("%s: nothing should be sent", hdr)
+		}
 	}
 }
 
@@ -761,7 +793,35 @@ func TestConnect_GrantFailureKeepsCodeAndHint(t *testing.T) {
 	}
 }
 
+// A refused grant prints its hint once.
+func TestConnect_GrantRefusalHintPrintsOnce(t *testing.T) {
+	b := newMCPBackend(t, "admin")
+	b.grantStatus = 404
+	b.grantBody = `{"detail":{"code":"NO_GRANT","message":"no grant"}}`
+	withStdin(t, "", false, "")
+	fakeClaude(t, false, "", nil)
+	_, _, err := runCLI(t, "connect", "my-agent", "github")
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	if n := strings.Count(err.Error(), "hint"); n != 1 {
+		t.Errorf("hint printed %d times in %q", n, err.Error())
+	}
+}
+
 // --- tvault agents mcp-on -----------------------------------------------------
+
+func TestAgentsMCPOn_DryRunDoesNotClaimDone(t *testing.T) {
+	b := newMCPBackend(t, "admin")
+	withStdin(t, "", false, "")
+	_, stderr, err := runCLI(t, "agents", "mcp-on", "my-agent", "--dry-run")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(b.agentPatches) != 0 || strings.Contains(stderr, "Turned MCP on") {
+		t.Errorf("patches=%v stderr=%q", b.agentPatches, stderr)
+	}
+}
 
 func TestAgentsMCPOn_SendsPatch(t *testing.T) {
 	b := newMCPBackend(t, "admin")

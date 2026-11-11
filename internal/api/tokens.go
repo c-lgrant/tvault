@@ -315,9 +315,12 @@ func (c *Client) fetchWebhookCredential(webhookURL, ticket, service string) (str
 			Message: "backend returned empty webhook URL or ticket",
 		}
 	}
+	reqLine := "GET " + webhookURL + "/v1/credential"
+	if err := requireSecureWebhookURL(webhookURL, reqLine); err != nil {
+		return "", err
+	}
 	u := webhookURL + "/v1/credential?ticket=" + url.QueryEscape(ticket) +
 		"&service=" + url.QueryEscape(service)
-	reqLine := "GET " + webhookURL + "/v1/credential"
 
 	timeout := c.webhookTimeout()
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
@@ -331,9 +334,12 @@ func (c *Client) fetchWebhookCredential(webhookURL, ticket, service string) (str
 	if httpClient == nil {
 		httpClient = &http.Client{Timeout: 30 * time.Second}
 	}
+	httpClient = withRedirectCheck(httpClient)
 	start := time.Now()
 	resp, err := httpClient.Do(req)
 	if err != nil {
+		// The *url.Error text carries the request URL, ticket included.
+		err = stripURLQuery(err)
 		if c.Debug {
 			fmt.Fprintf(os.Stderr, "[debug] %s → connection error after %s: %v\n", reqLine, time.Since(start), err)
 		}
@@ -471,6 +477,9 @@ func (c *Client) postWebhookStore(webhookURL string, payload any) error {
 		}
 	}
 	reqLine := "POST " + webhookURL + "/v1/store"
+	if err := requireSecureWebhookURL(webhookURL, reqLine); err != nil {
+		return err
+	}
 	raw, err := json.Marshal(payload)
 	if err != nil {
 		return &clierr.CLIError{Kind: clierr.KindUser, Request: reqLine, Message: err.Error()}
@@ -485,9 +494,11 @@ func (c *Client) postWebhookStore(webhookURL string, payload any) error {
 	if httpClient == nil {
 		httpClient = &http.Client{Timeout: 30 * time.Second}
 	}
+	httpClient = withRedirectCheck(httpClient)
 	start := time.Now()
 	resp, err := httpClient.Do(req)
 	if err != nil {
+		err = stripURLQuery(err)
 		if c.Debug {
 			fmt.Fprintf(os.Stderr, "[debug] %s → connection error after %s: %v\n", reqLine, time.Since(start), err)
 		}

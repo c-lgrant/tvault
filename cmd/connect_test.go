@@ -65,7 +65,13 @@ func newAgentBackend(t *testing.T, agentsJSON string) *agentBackend {
 		case r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/grants"):
 			id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/agents/"), "/grants")
 			b.grants = append(b.grants, id+"/"+body["serviceName"].(string))
-			w.Write([]byte(`{}`))
+			// Like the real server: echo the uses it stored.
+			echo := map[string]any{"success": true}
+			if u, ok := body["uses"]; ok {
+				echo["uses"] = u
+			}
+			out, _ := json.Marshal(echo)
+			w.Write(out)
 		case r.Method == "PUT" && strings.HasPrefix(r.URL.Path, "/api/labels/"):
 			b.labelPuts = append(b.labelPuts, r.URL.Path+" "+strings.Join(anyStrings(body["labels"]), ","))
 			if b.labelFail {
@@ -395,6 +401,42 @@ func TestConnect_WarnsWhenAgentHasMCPOff(t *testing.T) {
 	if !strings.Contains(stderr, "MCP is turned off") || !strings.Contains(stderr, "tvault agents mcp-on my-agent") ||
 		!strings.Contains(stderr, "Turn MCP on") || strings.Contains(stderr, "console") {
 		t.Errorf("no MCP warning: %q", stderr)
+	}
+}
+
+func TestConnect_WarnsWhenCreatedAgentHasMCPOff(t *testing.T) {
+	b := newAgentBackend(t, `[]`)
+	b.mcpEnabled = "false"
+	withStdin(t, "", false, "")
+	fakeClaude(t, false, "", nil)
+	_, stderr, err := runCLI(t, "connect", "fresh", "github", "--yes")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stderr, "Created agent") || !strings.Contains(stderr, "MCP is turned off") ||
+		!strings.Contains(stderr, "tvault agents mcp-on fresh") {
+		t.Errorf("no MCP warning after creating: %q", stderr)
+	}
+}
+
+func TestReauthViaBrowser_ReusesStoredFrontendURL(t *testing.T) {
+	setupContext(t, &config.Context{Type: "admin", APIURL: "https://api.example.test", Identity: "me@example.com",
+		RefreshToken: "rt", FrontendURL: "https://console.example.test"})
+	var got auth.LoginOptions
+	origLogin := loginFn
+	loginFn = func(opts auth.LoginOptions) error {
+		got = opts
+		cfg, _ := config.Load()
+		cfg.Contexts[opts.ContextName] = &config.Context{Type: "admin", APIURL: opts.APIURL, Identity: "me@example.com",
+			RefreshToken: "new-rt", FrontendURL: opts.FrontendURL}
+		return cfg.Save()
+	}
+	t.Cleanup(func() { loginFn = origLogin })
+	cc := &cmdContext{ContextName: "t", Ctx: &config.Context{Type: "admin", APIURL: "https://api.example.test",
+		Identity: "me@example.com", FrontendURL: "https://console.example.test"}, Client: &api.Client{}}
+	_ = reauthViaBrowser(rootCmd, cc)
+	if got.FrontendURL != "https://console.example.test" || !got.RememberFrontendURL {
+		t.Errorf("login options = %+v, want the stored frontend reused and remembered", got)
 	}
 }
 

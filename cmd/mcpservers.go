@@ -165,6 +165,22 @@ func parseHeaderFlags(raw []string, command string) (map[string]string, error) {
 	return out, nil
 }
 
+// looksLikeCredentialHeader reports whether a header name suggests it carries
+// a secret: authorization, proxy-authorization, cookie, or a name containing
+// key, token, secret or auth.
+func looksLikeCredentialHeader(name string) bool {
+	n := strings.ToLower(name)
+	if n == "cookie" {
+		return true
+	}
+	for _, w := range []string{"key", "token", "secret", "auth"} {
+		if strings.Contains(n, w) {
+			return true
+		}
+	}
+	return false
+}
+
 // buildMCPServer assembles the server to attach from a preset and/or flags.
 // Flags override the preset per field; a --header replaces a preset header of
 // the same name (case-insensitively).
@@ -202,6 +218,21 @@ func buildMCPServer(tpl *api.MCPTemplate, name, url string, headerFlags []string
 		return userErr("--name is required without --preset", "or pick a preset: `tvault mcp-servers templates`")
 	case s.URL == "":
 		return userErr("--url is required without --preset", "or pick a preset: `tvault mcp-servers templates`")
+	}
+	// A credential-looking header with a literal value would put a secret in
+	// the server config; refuse it before anything is sent, and never echo it.
+	names := make([]string, 0, len(s.Headers))
+	for k := range s.Headers {
+		names = append(names, k)
+	}
+	sort.Strings(names)
+	for _, k := range names {
+		v := s.Headers[k]
+		if looksLikeCredentialHeader(k) && !strings.Contains(v, tokenPlaceholder) && !strings.Contains(v, agentSessionPlaceholder) {
+			return userErr(fmt.Sprintf("header %q looks like a credential but its value has neither %s nor %s, so it was not sent",
+				safeText(k), tokenPlaceholder, agentSessionPlaceholder),
+				"use a placeholder, e.g. --header 'Authorization: Bearer ${TOKEN}' (single quotes: the shell must not expand it); store the secret itself with `tvault add`")
+		}
 	}
 	found := false
 	for _, v := range s.Headers {

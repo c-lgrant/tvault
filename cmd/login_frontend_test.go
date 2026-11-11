@@ -29,6 +29,34 @@ func TestStoredAPIURL(t *testing.T) {
 	}
 }
 
+func TestStoredFrontendURL(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	cfg := &config.Config{Current: "default", Contexts: map[string]*config.Context{
+		// an old file: no frontend_url field
+		"default": {Type: "admin", APIURL: "https://api.tokenvault.uk"},
+		"custom":  {Type: "admin", APIURL: "https://api.example.test", FrontendURL: "https://console.example.test"},
+	}}
+	if err := cfg.Save(); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct{ name, api, want string }{
+		{"custom", "https://api.example.test", "https://console.example.test"},
+		{"custom", "https://api.example.test/", "https://console.example.test"},
+		{"custom", "https://api.other.test", ""}, // a different API: the saved site doesn't apply
+		{"", "https://api.tokenvault.uk", ""},    // old context without the field
+		{"missing", "https://api.example.test", ""},
+	} {
+		if got := storedFrontendURL(c.name, c.api); got != c.want {
+			t.Errorf("storedFrontendURL(%q, %q) = %q, want %q", c.name, c.api, got, c.want)
+		}
+	}
+	// and it survives a save/load round trip
+	back, err := config.Load()
+	if err != nil || back.Contexts["custom"].FrontendURL != "https://console.example.test" {
+		t.Errorf("round trip: %+v, %v", back.Contexts["custom"], err)
+	}
+}
+
 func TestDeriveFrontendURL(t *testing.T) {
 	cases := []struct {
 		in, want string

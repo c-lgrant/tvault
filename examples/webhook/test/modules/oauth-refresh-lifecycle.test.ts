@@ -150,11 +150,20 @@ const SPOTIFY: Behaviour = {
 
 afterEach(() => vi.unstubAllGlobals());
 
-function setup(providers: Record<string, Behaviour>) {
+function setup(providers: Record<string, Behaviour>, opts: { atomic?: boolean } = {}) {
   const hmac = crypto.getRandomValues(new Uint8Array(32)) as Uint8Array<ArrayBuffer>;
   const key = crypto.getRandomValues(new Uint8Array(32)) as Uint8Array<ArrayBuffer>;
   const ctx = makeContext({ hmacSecret: hmac, encryptionKey: key });
   ctx.config.externalUrl = EXTERNAL;
+  if (opts.atomic) {
+    // Compare-and-set over the in-memory store (set before createApp: the healing wrapper captures it).
+    const mem = ctx.storage;
+    mem.setIfUnchanged = async (c, k, expected, next) => {
+      if (JSON.stringify(await mem.get(c, k)) !== JSON.stringify(expected)) return false;
+      await mem.set(c, k, next);
+      return true;
+    };
+  }
   const fakes: Record<string, FakeProvider> = {};
   const local: Record<string, OAuthProviderConfig> = {};
   for (const [name, b] of Object.entries(providers)) {
@@ -497,6 +506,27 @@ describe("own-app lifecycle (Google)", () => {
     const tok = await w.token("gmail");
     expect(tok.refreshToken).toBe("RT-2");
     expect(tok.refreshError).toBeUndefined();
+  });
+
+  it("a failure marker that lands first does not throw away the rotated tokens", async () => {
+    const w = setup({ google: { ...GOOGLE, rotate: true } }, { atomic: true });
+    await w.connect("google", "gmail");
+    w.fakes.google!.beforeRefreshAnswer = async () => {
+      w.fakes.google!.beforeRefreshAnswer = null;
+      // A concurrent loser records its failure against the same refresh token.
+      const cur = (await w.ctx.storage.get("tokens", "gmail"))!;
+      await w.ctx.storage.set("tokens", "gmail", {
+        ...cur,
+        meta: { ...(cur.meta as Record<string, unknown>), refreshError: "invalid_grant", refreshFailedAt: "2030-01-01T00:00:00Z", refreshReconnect: true },
+      });
+    };
+    const out = await w.notify("gmail");
+    expect(out.status).toBe("refreshed");
+    const tok = await w.token("gmail");
+    expect(tok.refreshToken).toBe("RT-2");
+    expect(tok.accessToken).toBe("AT-2");
+    expect(tok.refreshError).toBeUndefined();
+    expect(tok.refreshReconnect).toBeUndefined();
   });
 
   it("a refresh never overwrites a token reconnected while it was at the provider", async () => {

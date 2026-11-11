@@ -41,7 +41,7 @@ export function createApp(baseCtx: RuntimeContext, modules: FeatureModule[]): Ho
   };
 
   // Capture raw bytes for every request before any handler parses them.
-  app.use("*", rawBody());
+  app.use("*", rawBody(ctx.config));
 
   // Self-protection before any handler work; see rateLimit for scope caveats.
   if (ctx.config.rateLimit && ctx.config.rateLimit.maxPerMinute > 0) {

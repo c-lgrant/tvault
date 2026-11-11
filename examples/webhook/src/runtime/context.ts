@@ -97,6 +97,10 @@ export interface WebhookConfig {
    * Absent or 0 keeps every event.
    */
   auditRetentionDays?: number;
+  /** Request-body cap in bytes before authentication (TV_MAX_BODY_BYTES; default 1 MiB). */
+  maxBodyBytes?: number;
+  /** Cap for /v1/proxy (TV_MAX_PROXY_BODY_BYTES; default 16 MiB). */
+  maxProxyBodyBytes?: number;
 }
 
 /** Locally-provisioned OAuth client credentials for autonomous refresh. */

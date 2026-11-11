@@ -24,11 +24,16 @@ const TOKEN_URL = "https://oauth2.googleapis.com/token";
 
 afterEach(() => vi.unstubAllGlobals());
 
-function setup(opts: { providers?: boolean } = {}) {
+/** The per-flow cookie name: tv_oauth_state_<first 8 hex of sha256(nonce)>. */
+const cookieName = async (nonce: string) => `tv_oauth_state_${(await sha256Hex(nonce)).slice(0, 8)}`;
+
+function setup(opts: { providers?: boolean; setIfAbsent?: () => Promise<boolean> } = {}) {
   const hmac = crypto.getRandomValues(new Uint8Array(32)) as Uint8Array<ArrayBuffer>;
   const key = crypto.getRandomValues(new Uint8Array(32)) as Uint8Array<ArrayBuffer>;
   const ctx = makeContext({ hmacSecret: hmac, encryptionKey: key });
   ctx.config.externalUrl = EXTERNAL;
+  // Must be set before createApp: the healing wrapper captures it then.
+  if (opts.setIfAbsent) ctx.storage.setIfAbsent = opts.setIfAbsent;
   if (opts.providers !== false) ctx.config.oauthProviders = { google: { clientSecret: "local-secret" } };
   const app = createApp(ctx, allModules());
   const state = (o: Partial<TicketPayload> = {}) =>
@@ -51,7 +56,7 @@ function setup(opts: { providers?: boolean } = {}) {
     const headers: Record<string, string> = {};
     if (cookie !== false && params.state) {
       const nonce = JSON.parse(atob(params.state!.split(".")[0]!.replace(/-/g, "+").replace(/_/g, "/"))).nonce as string;
-      headers.cookie = `tv_oauth_state=${typeof cookie === "string" ? cookie : await sha256Hex(nonce)}`;
+      headers.cookie = `${await cookieName(nonce)}=${typeof cookie === "string" ? cookie : await sha256Hex(nonce)}`;
     }
     return app.request(`${EXTERNAL}/v1/oauth/callback?${new URLSearchParams(params)}`, { headers });
   };
@@ -281,7 +286,7 @@ describe("GET /v1/oauth/start (browser binding)", () => {
     expect(loc.searchParams.get("code_challenge_method")).toBe("S256");
     expect(loc.searchParams.get("access_type")).toBe("offline");
     const cookie = res.headers.get("set-cookie")!;
-    expect(cookie).toContain(`tv_oauth_state=${await sha256Hex(nonce)}`);
+    expect(cookie).toContain(`${await cookieName(nonce)}=${await sha256Hex(nonce)}`);
     for (const attr of ["HttpOnly", "Secure", "SameSite=Lax", "Max-Age=600"]) expect(cookie).toContain(attr);
   });
 
@@ -322,8 +327,62 @@ describe("callback browser binding (OAuth login CSRF)", () => {
   it("clears the cookie on the way out", async () => {
     const s = setup();
     stubProvider();
-    const res = await s.callback({ code: "c", state: await s.state() });
-    expect(res.headers.get("set-cookie")).toMatch(/tv_oauth_state=;.*Max-Age=0/);
+    const nonce = "c".repeat(32);
+    const res = await s.callback({ code: "c", state: await s.state({ nonce }) });
+    expect(res.headers.get("set-cookie")).toContain(`${await cookieName(nonce)}=; Max-Age=0;`);
+  });
+
+  it("names the cookie per flow, so a second connect does not break the first", async () => {
+    const s = setup();
+    stubProvider();
+    const n1 = "1".repeat(32);
+    const n2 = "2".repeat(32);
+    const c1 = (await s.start(await s.state({ nonce: n1, svc: "svc-one" }))).headers.get("set-cookie")!;
+    const c2 = (await s.start(await s.state({ nonce: n2, svc: "svc-two" }))).headers.get("set-cookie")!;
+    expect(c1.split("=")[0]).not.toBe(c2.split("=")[0]);
+    // The browser holds both; finishing the first still works and clears only its own.
+    const both = `${c2.split(";")[0]}; ${c1.split(";")[0]}`;
+    const st1 = await s.state({ nonce: n1, svc: "svc-one" });
+    const res = await s.app.request(`${EXTERNAL}/v1/oauth/callback?${new URLSearchParams({ code: "c", state: st1 })}`, {
+      headers: { cookie: both },
+    });
+    expect(resultOf(res).searchParams.get("status")).toBe("ok");
+    expect(res.headers.get("set-cookie")).toContain(`${await cookieName(n1)}=; Max-Age=0`);
+    expect(res.headers.get("set-cookie")).not.toContain(await cookieName(n2));
+  });
+});
+
+describe("hardening", () => {
+  it("never lets the token request follow a redirect", async () => {
+    const s = setup();
+    const fetchMock = stubProvider();
+    await s.callback({ code: "c", state: await s.state() });
+    expect(fetchMock.mock.calls[0]![1]!.redirect).toBe("error");
+  });
+
+  it("does not resolve prototype members as providers", async () => {
+    const s = setup();
+    const fetchMock = stubProvider();
+    for (const prv of ["constructor", "__proto__", "toString"]) {
+      const loc = resultOf(await s.callback({ code: "c", state: await s.state({ prv }) }));
+      expect(loc.searchParams.get("code")).toBe("provider_not_configured");
+    }
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("create mode uses the atomic setIfAbsent and maps a lost race to already_exists", async () => {
+    let called = 0;
+    const s = setup({
+      setIfAbsent: async () => {
+        called++;
+        return false;
+      },
+    });
+    stubProvider();
+    const loc = resultOf(await s.callback({ code: "c", state: await s.state({ mode: "create", cid: "creation-A" }) }));
+    expect(called).toBe(1);
+    expect(loc.searchParams.get("code")).toBe("already_exists");
+    expect(await s.ctx.storage.get("tokens", "my-gmail")).toBeNull();
   });
 });
 

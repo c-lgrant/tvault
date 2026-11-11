@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bufio"
+	"fmt"
 	"io"
 	"os"
 	"strings"
@@ -47,10 +48,23 @@ var (
 // harnesses), so it is read only if its first byte arrives within
 // stdinFirstByteWait; otherwise got is false and the caller treats it as "no
 // value". Anything else is treated as no value.
-func readImplicitStdin(in io.Reader) (b []byte, got bool, err error) {
+func readImplicitStdin(in io.Reader, warn io.Writer) (b []byte, got bool, err error) {
 	mode := stdinMode()
 	switch {
 	case mode&os.ModeNamedPipe != 0:
+		// Still no timeout, but say once that the command is waiting, so a
+		// terminal user who forgot --empty is not left staring at a hang. Peek
+		// does not consume, so no input is lost.
+		br := bufio.NewReader(in)
+		peeked := make(chan struct{})
+		go func() { br.Peek(1); close(peeked) }()
+		select {
+		case <-peeked:
+		case <-time.After(stdinFirstByteWait):
+			fmt.Fprintln(warn, "waiting for the value on stdin; pass --empty to create it with no value")
+			<-peeked
+		}
+		in = br
 	case mode&os.ModeSocket != 0:
 		br := bufio.NewReader(in)
 		peeked := make(chan error, 1)
@@ -93,6 +107,10 @@ func addValueFlags(c *cobra.Command, valueHelp string) {
 func readSecretValue(cmd *cobra.Command, command string, allowEmpty bool) (string, error) {
 	if cmd.Flags().Changed("value") {
 		v, _ := cmd.Flags().GetString("value")
+		if v == "" && !allowEmpty {
+			return "", &clierr.CLIError{Kind: clierr.KindUser, Command: command, Message: "empty value",
+				Hint: "to create the credential without a value on purpose, pass --empty"}
+		}
 		cmd.PrintErrln("warning: --value puts the secret in your shell history and process list; prefer the prompt or --value-stdin")
 		return v, nil
 	}
@@ -112,7 +130,7 @@ func readSecretValue(cmd *cobra.Command, command string, allowEmpty bool) (strin
 			b, err = io.ReadAll(io.LimitReader(cmd.InOrStdin(), maxSecretBytes))
 		} else {
 			var got bool
-			b, got, err = readImplicitStdin(cmd.InOrStdin())
+			b, got, err = readImplicitStdin(cmd.InOrStdin(), cmd.ErrOrStderr())
 			if err == nil && !got {
 				return "", &clierr.CLIError{Kind: clierr.KindUser, Command: command,
 					Message: "no value: stdin is not a terminal but sent no data", Hint: hint}

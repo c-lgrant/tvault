@@ -11,13 +11,23 @@ import (
 
 // fakeWebhook serves the two endpoints the CLI probes on a running webhook.
 func fakeWebhook(t *testing.T) *httptest.Server {
+	return fakeWebhookReporting(t, "")
+}
+
+// fakeWebhookReporting is fakeWebhook with a fixed reported webhookUrl; empty
+// means the server's own address.
+func fakeWebhookReporting(t *testing.T, reported string) *httptest.Server {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/v1/health":
 			w.Write([]byte(`{"status":"healthy"}`))
 		case "/v1/register-url":
-			w.Write([]byte(`{"registrationUrl":"https://tv.example/register?hmac_hash=h1","code":"c1","expiresIn":60,"webhookUrl":"https://wh.example.com"}`))
+			self := reported
+			if self == "" {
+				self = "http://" + r.Host
+			}
+			w.Write([]byte(`{"registrationUrl":"https://tv.example/register?hmac_hash=h1","code":"c1","expiresIn":60,"webhookUrl":"` + self + `"}`))
 		default:
 			w.WriteHeader(404)
 		}
@@ -51,6 +61,37 @@ func TestWebhookBind(t *testing.T) {
 	}
 	if stdout != "" || !strings.Contains(stderr, "Webhook bound") {
 		t.Errorf("stdout=%q stderr=%q", stdout, stderr)
+	}
+}
+
+func TestWebhookBindRequiresHTTPS(t *testing.T) {
+	setupContext(t, &config.Context{Type: "key", APIURL: "http://127.0.0.1:1", APIKey: "tvkey_k", Identity: "me"})
+	_, _, err := run(t, "webhook", "bind", "--url", "http://wh.example.com")
+	if err == nil || !strings.Contains(err.Error(), "https") {
+		t.Errorf("err = %v, want an https requirement", err)
+	}
+}
+
+func TestWebhookBindOriginMismatch(t *testing.T) {
+	wh := fakeWebhookReporting(t, "https://elsewhere.example.com")
+	bound := false
+	cp := newRecorder(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/vault/webhook-bind" {
+			bound = true
+		}
+		w.WriteHeader(404)
+	})
+	setupContext(t, &config.Context{Type: "key", APIURL: cp.srv.URL, APIKey: "tvkey_k", Identity: "me"})
+	origHTTP := webhookHTTP
+	defer func() { webhookHTTP = origHTTP }()
+	webhookHTTP = wh.Client()
+
+	_, _, err := run(t, "webhook", "bind", "--url", wh.URL)
+	if err == nil || !strings.Contains(err.Error(), "not the --url you gave") {
+		t.Errorf("err = %v, want an origin mismatch", err)
+	}
+	if bound {
+		t.Error("bind must not be sent on an origin mismatch")
 	}
 }
 
