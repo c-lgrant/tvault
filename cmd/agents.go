@@ -185,6 +185,9 @@ var agentsCreateCmd = &cobra.Command{
 		if err != nil {
 			return enrich(cmd, cc, err)
 		}
+		if cc.Client.DryRun { // nothing was sent, so no agent and no key exist
+			return nil
+		}
 		// A server that predates scoped agents silently drops kind/scopes and
 		// mints a classic agent, which can read credentials — not what was
 		// asked for. Refuse, print no key, and clean up the stray agent.

@@ -244,6 +244,10 @@ var errorExplanations = map[string]struct {
 		What: "This key or agent can read the credential only through an automatic grant that lapses with the token, so it may not attach MCP servers (they would outlive the grant and point the next owner's credential at its URL).",
 		Fix:  "Ask a person to attach the servers, or have the key's owner grant the credential explicitly first.",
 	},
+	"TOKEN_EXISTS": {
+		What: "`tvault add` named a credential that already exists. Nothing was replaced: add only ever creates.",
+		Fix:  "To replace the value, rotate it: `tvault set <service>`. To start again, remove it first (`tvault rm <service>`) or pick another name.",
+	},
 	"NAME_TAKEN": {
 		What: "A credential with that name already exists, so a Token Vault sign-in credential (or a converted one) cannot take it.",
 		Fix:  "Pick another name, or remove the existing credential first (`tvault rm <service>`).",
