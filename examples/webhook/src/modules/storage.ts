@@ -226,7 +226,13 @@ async function execute(
   switch (operation) {
     case "get": {
       if (typeof key !== "string" || !key) throw invalidRequest("'key' required for get");
-      return { data: await storage.get(collection, key) };
+      const doc = await storage.get(collection, key);
+      // A credential document never leaves through this endpoint, encrypted or
+      // not: `get` on `tokens` answers with the same metadata `list` does.
+      if (collection === "tokens") {
+        return { data: doc ? shapeItems(collection, [[key, doc]])[0]!.meta : null };
+      }
+      return { data: doc };
     }
     case "list":
       return listCollection(storage, collection, options);

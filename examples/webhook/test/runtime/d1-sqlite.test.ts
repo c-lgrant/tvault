@@ -6,6 +6,8 @@
 import { createRequire } from "node:module";
 import { beforeEach, describe, expect, it } from "vitest";
 import { D1StorageAdapter } from "../../src/adapters/storage/d1.ts";
+import { pruneNonces, StoredNonceGuard } from "../../src/adapters/replay/stored.ts";
+import { NONCE_COLLECTION, type ReplayGuard } from "../../src/runtime/context.ts";
 
 const { DatabaseSync } = createRequire(import.meta.url)("node:sqlite") as typeof import("node:sqlite");
 
@@ -102,5 +104,41 @@ describe("D1StorageAdapter against real SQLite", () => {
     expect(await keys({ before: same, beforeKey: "c", limit: 2 })).toEqual(["b", "a"]);
     expect(await keys({ before: same, beforeKey: "a" })).toEqual(["old"]);
     expect(await keys({ since: same, before: "2026-04-01T00:00:00Z", beforeKey: "new" })).toEqual(["c", "b", "a"]);
+  });
+});
+
+describe("StoredNonceGuard on D1", () => {
+  const inner: ReplayGuard = { checkRequestId: async () => false, checkNonce: async () => false };
+
+  it("lets a nonce pass once, even when two checks race", async () => {
+    const d1 = await D1StorageAdapter.create(sqliteD1());
+    const guard = new StoredNonceGuard(d1, inner);
+    const seen = await Promise.all([guard.checkNonce("n1"), guard.checkNonce("n1"), guard.checkNonce("n1")]);
+    expect(seen.filter((s) => !s)).toHaveLength(1);
+    expect(await guard.checkNonce("n1")).toBe(true);
+    expect(await guard.checkNonce("n2")).toBe(false);
+    // Nonces live outside the collections /v1/storage serves.
+    expect(await d1.count("tokens")).toBe(0);
+    expect(await d1.count(NONCE_COLLECTION)).toBe(2);
+  });
+
+  it("prunes only expired nonces", async () => {
+    const d1 = await D1StorageAdapter.create(sqliteD1());
+    const guard = new StoredNonceGuard(d1, inner);
+    await guard.checkNonce("short", 120);
+    await guard.checkNonce("long", 660);
+    expect(await pruneNonces(d1, Date.now() + 300_000)).toBe(1);
+    expect(await guard.checkNonce("long")).toBe(true);
+    expect(await guard.checkNonce("short")).toBe(false);
+  });
+
+  it("fails the check when storage fails, never 'not seen'", async () => {
+    const d1 = await D1StorageAdapter.create(sqliteD1());
+    const broken = Object.assign(Object.create(d1) as D1StorageAdapter, {
+      setIfAbsent: async () => {
+        throw new Error("D1 down");
+      },
+    });
+    await expect(new StoredNonceGuard(broken, inner).checkNonce("n")).rejects.toThrow("D1 down");
   });
 });

@@ -70,7 +70,11 @@ export const upstreamTimeout = (message: string) =>
 export const upstreamError = (message: string) =>
   new WebhookError(502, "upstream_error", message);
 
-export const gcpMintFailed = (message: string) =>
+/** The webhook's own rules refuse this upstream (origin allowlist, private address). */
+export const upstreamNotAllowed = (message: string) =>
+  new WebhookError(403, "upstream_not_allowed", message);
+
+export const gcpMintFailed =(message: string) =>
   new WebhookError(500, "gcp_mint_failed", message);
 
 export const totpFailed = (message: string) =>

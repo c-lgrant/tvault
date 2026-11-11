@@ -30,7 +30,7 @@ src/
   adapters/
     storage/        # fs (Node) | d1 (Workers)
     secrets/        # fileSecret (Node) | seedDerived (Workers, HKDF)
-    replay/         # memory (Node) | cache (Workers, per-colo Cache API)
+    replay/         # memory (Node) | stored (Workers nonces, D1) + cache (Workers request ids)
   runtime/
     config.ts       # shared env → WebhookConfig
     node.ts         # @hono/node-server entry
@@ -75,8 +75,8 @@ npm run dev:node        # http://127.0.0.1:8080
 
 On Workers the AES key + HMAC secret are HKDF-derived in memory from one root
 seed (`TV_WEBHOOK_SEED`, a Workers Secret), stable across redeploys and never
-persisted. Credentials live in **D1**; replay protection uses the per-colo
-**Cache API** (no binding). The one-click button auto-provisions the D1 database
+persisted. Credentials and used ticket nonces live in **D1**; request-id replay
+protection uses the per-colo **Cache API** (no binding). The one-click button auto-provisions the D1 database
 (its `database_id` is omitted from `wrangler.toml`, so Wrangler creates it on the
 first deploy and reuses it on every push) and the seed Secret. CLI:
 
@@ -211,6 +211,31 @@ press **Verify Connection** in the console so the capability list is re-read.
   `AUDIT_RETENTION_DAYS` to a positive number to delete older events from the cron
   trigger (Workers) or an hourly timer (Node); unset or `0` keeps everything. A paginated `/v1/storage` list of
   `audit` (`options.limit`) is ordered and limited by the store itself.
+- **`/v1/storage` never returns a credential document.** `get` on `tokens`
+  answers with the same metadata `list` does: no `fields`, no ciphertext, no
+  plaintext value of an old document.
+- **`/v1/proxy` does not call private addresses.** An upstream on a loopback,
+  private or link-local address, `localhost`, a single-label name or a name under
+  `.local`, `.internal`, `.lan` or `.home.arpa` gets `403 upstream_not_allowed`.
+  The Node runtime also resolves the name and checks every address. Set
+  `TV_PROXY_ALLOW_PRIVATE=true` if your upstream is on your own network.
+- **Origin allowlist for `/v1/proxy` (opt-in).** The control plane names the
+  upstream URL, and the webhook puts the credential into the request. To bind
+  each credential to the origins you trust, set `TV_PROXY_ALLOWED_ORIGINS` to a
+  JSON object of credential name → origins, for example
+  `{"github":["https://api.githubcopilot.com"],"*":["https://mcp.example.com"]}`.
+  `"*"` applies to every credential. When the variable is set, a credential with
+  no matching entry is refused (`403 upstream_not_allowed`). When it is not set,
+  any public origin is called. A value that is not valid stops the webhook at
+  start: a list that cannot be read must not mean "allow all".
+- **One-shot tickets on Workers are atomic.** Each ticket nonce is one
+  insert-if-absent row in D1, so a ticket cannot be used twice in two colos. The
+  cron trigger deletes expired rows. This costs one D1 row write per credential
+  read, store and proxy call; on the D1 free plan (100,000 rows written per day)
+  set `TV_REPLAY_NONCES="cache"` to go back to the per-colo cache if you get
+  near that limit. Request ids stay in the cache.
+- **PKCE verifier.** The OAuth connect flow derives its `code_verifier` from the
+  webhook's own encryption key, not from the HMAC secret the control plane holds.
 
 ## Tests
 

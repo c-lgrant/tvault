@@ -11,7 +11,7 @@
 //         sets a short-lived HttpOnly cookie holding sha256(nonce), and 302s to
 //         the provider's authorize URL, which the webhook builds itself (built-in
 //         authorize table or the operator's config; PKCE S256 challenge derived
-//         from the HMAC secret + nonce). This binds the flow to the browser that
+//         from a webhook-only key + nonce). This binds the flow to the browser that
 //         started it, so a victim cannot be tricked into finishing an attacker's
 //         flow (OAuth login CSRF / account injection).
 // callback: verifies the state (signature, 10 min expiry, names THIS callback
@@ -165,7 +165,7 @@ export function oauthCallbackModule(): FeatureModule {
           if (!clientId) throw new ConnectFailure("provider_not_configured");
           if (local.clientId && st.payload.clid !== local.clientId) throw new ConnectFailure("client_mismatch");
 
-          const verifier = await derivePkceVerifier(st.secret, st.payload.nonce);
+          const verifier = await derivePkceVerifier(await ctx.secrets.encryptionKey(), st.payload.nonce);
           const url = new URL(authorizeUrl);
           // Provider extras first (built-in, then the operator's), so they can
           // never replace a parameter the flow's security depends on.
@@ -248,7 +248,7 @@ export function oauthCallbackModule(): FeatureModule {
           if (!clientId) throw new ConnectFailure("provider_not_configured");
           if (local.clientId && payload.clid !== local.clientId) throw new ConnectFailure("client_mismatch");
 
-          const verifier = await derivePkceVerifier(st.secret, payload.nonce);
+          const verifier = await derivePkceVerifier(await ctx.secrets.encryptionKey(), payload.nonce);
           const exchanged = await postTokenRequest(
             tokenUrl,
             { grant_type: "authorization_code", code, redirect_uri: st.redirectUri, code_verifier: verifier },
