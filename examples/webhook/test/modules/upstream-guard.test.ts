@@ -97,6 +97,13 @@ describe("private host detection", () => {
     "[::ffff:7f00:1]",
     "[::ffff:10.0.0.1]",
     "[64:ff9b::a00:1]",
+    "[64:ff9b:1::a00:1]",
+    "[2001::1]",
+    "[2001:db8::1]",
+    "[100::1]",
+    "[::7f00:1]",
+    "[2002:7f00:1::1]",
+    "[ff02::1]",
   ])("%s is private", (host) => {
     expect(isPrivateHost(host)).toBe(true);
   });
@@ -182,6 +189,59 @@ describe("/v1/proxy upstream rules", () => {
     expect(blocked.fetchMock).not.toHaveBeenCalled();
     const open = await proxy("https://ok.example/x", tune(["93.184.216.34"]));
     expect(open.res.status).toBe(200);
+  });
+
+  it("does not call a name it could not resolve", async () => {
+    const { res, fetchMock } = await proxy("https://gone.example/x", (ctx) => {
+      ctx.resolveHost = async () => {
+        throw new Error("ENOTFOUND");
+      };
+    });
+    expect(res.status).toBe(502);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("never lets a header name another host", async () => {
+    const ctx = makeContext({ hmacSecret: secret });
+    ctx.config.proxyAllowedOrigins = { github: ["https://api.github.com"] };
+    await ctx.storage.set("tokens", "github", { accessToken: "CRED" });
+    const fetchMock = vi.fn(async (_url: unknown, _init?: RequestInit) => new Response("ok"));
+    vi.stubGlobal("fetch", fetchMock);
+    const send = async (extra: Record<string, unknown>) =>
+      signedPost(createApp(ctx, [proxyModule()]), "/v1/proxy", {
+        ticket: await signTicket(secret, {
+          sub: "u",
+          svc: "github",
+          pur: "proxy",
+          iat: 1700000000,
+          exp: 9999999999,
+          nonce: crypto.randomUUID().replace(/-/g, ""),
+        }),
+        service: "github",
+        upstream: { url: "https://api.github.com/user", method: "GET" },
+        headerTemplates: { Authorization: "Bearer ${TOKEN}" },
+        ...extra,
+      });
+
+    // Forwarded request headers: dropped.
+    const forwarded = await send({
+      upstream: {
+        url: "https://api.github.com/user",
+        method: "GET",
+        headers: { Host: "evil.example", "X-Forwarded-Host": "evil.example", Forwarded: "host=evil.example", Accept: "a/b" },
+      },
+    });
+    expect(forwarded.status).toBe(200);
+    const sent = new Headers((fetchMock.mock.calls[0]![1] as RequestInit).headers);
+    expect(sent.get("host")).toBeNull();
+    expect(sent.get("x-forwarded-host")).toBeNull();
+    expect(sent.get("forwarded")).toBeNull();
+    expect(sent.get("accept")).toBe("a/b");
+
+    // A template that sets one: refused, no call.
+    const templated = await send({ headerTemplates: { Authorization: "Bearer ${TOKEN}", HOST: "evil.example" } });
+    expect(templated.status).toBe(400);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it("calls a private upstream when the operator allowed it", async () => {
