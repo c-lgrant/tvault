@@ -2,10 +2,13 @@ package cmd
 
 import (
 	"fmt"
+	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
+	"github.com/c-lgrant/tvault/internal/api"
 	"github.com/c-lgrant/tvault/internal/clierr"
 	"github.com/c-lgrant/tvault/internal/webhook"
 	"github.com/spf13/cobra"
@@ -51,12 +54,38 @@ func normalizeWebhookURL(s string) string {
 	return s
 }
 
+// webhookOrigin is the scheme, host and port of raw, lower-cased, with the
+// scheme's default port filled in; "" when raw is not an absolute URL.
+func webhookOrigin(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme == "" || u.Hostname() == "" {
+		return ""
+	}
+	scheme := strings.ToLower(u.Scheme)
+	port := u.Port()
+	if port == "" {
+		switch scheme {
+		case "https":
+			port = "443"
+		case "http":
+			port = "80"
+		}
+	}
+	return scheme + "://" + net.JoinHostPort(strings.ToLower(u.Hostname()), port)
+}
+
 func runWebhookBind(cmd *cobra.Command, _ []string) error {
 	rawURL, _ := cmd.Flags().GetString("url")
 	whURL := normalizeWebhookURL(rawURL)
 	if whURL == "" {
 		return &clierr.CLIError{Kind: clierr.KindUser, Command: cmd.CommandPath(),
 			Message: "--url is required: the public URL of your running webhook"}
+	}
+	if u, err := url.Parse(whURL); err != nil || u.Hostname() == "" ||
+		!(u.Scheme == "https" || (u.Scheme == "http" && api.IsLoopbackHost(u.Hostname()))) {
+		return &clierr.CLIError{Kind: clierr.KindUser, Command: cmd.CommandPath(),
+			Message: "--url must be an https URL (http is only accepted for localhost)",
+			Hint:    "your webhook's ticket and credentials travel to this address, so it must be https"}
 	}
 	cc, err := resolve(cmd)
 	if err != nil {
@@ -69,6 +98,12 @@ func runWebhookBind(cmd *cobra.Command, _ []string) error {
 	info, err := webhook.FetchRegisterURL(webhookHTTP, whURL)
 	if err != nil {
 		return &clierr.CLIError{Kind: clierr.KindUser, Command: cmd.CommandPath(), Message: err.Error()}
+	}
+	if webhookOrigin(info.WebhookURL) != webhookOrigin(whURL) {
+		return &clierr.CLIError{Kind: clierr.KindUser, Command: cmd.CommandPath(),
+			Message: fmt.Sprintf("the webhook reports its address as %s, which is not the --url you gave (%s); nothing was bound",
+				safeText(info.WebhookURL), safeText(whURL)),
+			Hint: "check the webhook's public URL setting, or pass the URL it reports"}
 	}
 	res, err := cc.Client.WebhookBind(info.Code, info.WebhookURL, info.HMACSecretHash)
 	if err != nil {

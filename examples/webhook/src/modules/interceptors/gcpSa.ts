@@ -124,6 +124,7 @@ export async function mintGcpAccessToken(
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({ grant_type: JWT_BEARER_GRANT, assertion }),
+    redirect: "error", // the signed assertion must not follow a redirect
     signal: AbortSignal.timeout(TOKEN_ENDPOINT_TIMEOUT_MS),
   }).catch((e: unknown) => {
     throw gcpMintFailed(

@@ -359,7 +359,10 @@ agent that never had MCP turned off.`,
 		if err := cc.Client.SetAgentMCPEnabled(rs[0].ID); err != nil {
 			return enrich(cmd, cc, err)
 		}
-		cmd.PrintErrf("Turned MCP on for agent %s.\n", rs[0].label())
+		// In dry-run the client has already printed the PATCH it would send.
+		if !cc.Client.DryRun {
+			cmd.PrintErrf("Turned MCP on for agent %s.\n", rs[0].label())
+		}
 		return nil
 	},
 }

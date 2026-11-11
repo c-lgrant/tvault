@@ -229,13 +229,15 @@ func runLabelChange(cmd *cobra.Command, args []string, next func(current, given 
 	for _, p := range res.Policies {
 		name := p.ID
 		if p.Name != nil && *p.Name != "" {
-			name = *p.Name + " (" + p.ID + ")"
+			name = safeText(*p.Name) + " (" + safeText(p.ID) + ")"
+		} else {
+			name = safeText(name)
 		}
 		state := ""
 		if !p.Enabled {
 			state = " [disabled]"
 		}
-		cmd.PrintErrf("policy %s applies via label %q%s\n", name, p.Label, state)
+		cmd.PrintErrf("policy %s applies via label %q%s\n", name, safeText(p.Label), state)
 	}
 	printLabels(res.Labels)
 	return nil

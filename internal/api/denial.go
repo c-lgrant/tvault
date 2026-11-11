@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/c-lgrant/tvault/internal/clierr"
+	"github.com/c-lgrant/tvault/internal/textsafe"
 )
 
 // appliedVia names the attachment that brought a policy in.
@@ -60,7 +61,7 @@ func addEventHint(ce *clierr.CLIError, eventID string) {
 	if eventID == "" {
 		return
 	}
-	h := "ask the owner to look up event " + eventID + " in Activity"
+	h := "ask the owner to look up event " + textsafe.Safe(eventID) + " in Activity"
 	if ce.Hint != "" {
 		h = ce.Hint + "; " + h
 	}
@@ -69,7 +70,26 @@ func addEventHint(ce *clierr.CLIError, eventID string) {
 
 // ── policy sentence ─────────────────────────────────────────────────────────
 
+// sanitized is a copy of d with every server-supplied string made safe to
+// print (the strings reach the terminal and the suggested commands).
+func (d *denialFields) sanitized() *denialFields {
+	cp := *d
+	cp.Policy = textsafe.Safe(d.Policy)
+	cp.Rule = textsafe.Safe(d.Rule)
+	cp.EventID = textsafe.Safe(d.EventID)
+	if v := d.AppliedVia; v != nil {
+		nv := appliedVia{Type: textsafe.Safe(v.Type), ID: textsafe.Safe(v.ID)}
+		for _, c := range v.CarriedBy {
+			nv.CarriedBy = append(nv.CarriedBy, textsafe.Safe(c))
+		}
+		cp.AppliedVia = &nv
+	}
+	return &cp
+}
+
 func policySentence(d *denialFields, reason string) string {
+	d = d.sanitized()
+	reason = textsafe.Safe(reason)
 	via := policyBit(d)
 	rule := d.RuleSettings
 	var s string
@@ -212,6 +232,7 @@ func carried(v *appliedVia) string {
 // where the CLI can; else it points at the console. The policy is named, not
 // numbered, in the body, so the id comes from the console's policy list.
 func policyHint(d *denialFields) string {
+	d = d.sanitized()
 	flag := ""
 	if v := d.AppliedVia; v != nil {
 		switch v.Type {
@@ -387,7 +408,7 @@ func num(v any) int {
 
 func str(v any, def string) string {
 	if s, ok := v.(string); ok && s != "" {
-		return s
+		return textsafe.Safe(s)
 	}
 	return def
 }
@@ -396,7 +417,7 @@ func strs(v any) []string {
 	a, _ := v.([]any)
 	out := make([]string, 0, len(a))
 	for _, x := range a {
-		out = append(out, fmt.Sprint(x))
+		out = append(out, textsafe.Safe(fmt.Sprint(x)))
 	}
 	return out
 }

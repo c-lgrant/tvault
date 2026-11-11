@@ -11,6 +11,7 @@ import { readJsonBody } from "../core/middleware/body.ts";
 import { sendError } from "../core/middleware/respond.ts";
 import { invalidRequest } from "../core/protocol/errors.ts";
 import { buildEncryptedTokenDocument, decryptTokenField } from "../core/protocol/tokendoc.ts";
+import { docMeta } from "../core/protocol/oauthRefresh.ts";
 import type { RuntimeContext } from "../runtime/context.ts";
 import type { FeatureModule } from "../core/registry.ts";
 
@@ -22,6 +23,11 @@ async function handleGet(ctx: RuntimeContext, service: string, requestId: string
   const storedDoc = await ctx.storage.get("tokens", service);
   if (!storedDoc) {
     return { requestId, status: "no_token", message: `No token stored for service '${service}'` };
+  }
+  // An own-app token (minted by /v1/oauth/callback) belongs to a client TV does
+  // not own: this webhook refreshes it itself and never hands its refresh token out.
+  if (docMeta(storedDoc).oauth) {
+    return { requestId, status: "webhook_managed", message: `Token for service '${service}' is refreshed by this webhook` };
   }
   const key = await ctx.secrets.encryptionKey();
   let refreshToken: string | null;

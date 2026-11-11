@@ -69,7 +69,10 @@ func withReauth(cmd *cobra.Command, cc *cmdContext, fn func() error) error {
 func reauthViaBrowser(cmd *cobra.Command, cc *cmdContext) error {
 	apiURL := cc.Ctx.APIURL
 	frontend := defaultFrontendURL
-	if strings.TrimRight(apiURL, "/") != defaultAPIURL {
+	remember := cc.Ctx.FrontendURL != ""
+	if remember {
+		frontend = cc.Ctx.FrontendURL
+	} else if strings.TrimRight(apiURL, "/") != defaultAPIURL {
 		var ok bool
 		if frontend, ok = deriveFrontendURL(apiURL); !ok {
 			return &clierr.CLIError{Kind: clierr.KindAuth, Command: cmd.CommandPath(),
@@ -83,6 +86,7 @@ func reauthViaBrowser(cmd *cobra.Command, cc *cmdContext) error {
 	}
 	if err := loginFn(auth.LoginOptions{
 		ContextName: cc.ContextName, APIURL: apiURL, FrontendURL: frontend,
+		RememberFrontendURL: remember,
 	}); err != nil {
 		return err
 	}
@@ -144,11 +148,7 @@ func ensureAgent(cmd *cobra.Command, cc *cmdContext, ref, command string, yes bo
 	// pickRef passes an unmatched ref through with no name; an ID-shaped ref
 	// is trusted as an ID (listing may be denied), anything else is a miss.
 	if rs[0].Name != "" || agentIDPattern.MatchString(ref) {
-		// The agent can't be used from Claude Code while MCP is off for it.
-		// Best effort: a denied lookup or an older server stays silent.
-		if a, gerr := cc.Client.GetAgent(rs[0].ID); gerr == nil && a.MCPEnabled != nil && !*a.MCPEnabled {
-			cmd.PrintErrf("warning: MCP is turned off for agent %s, so Claude Code will not be able to use it. Run `tvault agents mcp-on %s`, or press \"Turn MCP on\" on the agent's Connect tab in the web app.\n", rs[0].label(), safeText(ref))
-		}
+		warnIfMCPOff(cmd, cc, rs[0], ref)
 		return rs[0], nil
 	}
 	if !yes {
@@ -173,7 +173,20 @@ func ensureAgent(cmd *cobra.Command, cc *cmdContext, ref, command string, yes bo
 		res.ID = "<new-agent-id>"
 	}
 	cmd.PrintErrf("Created agent %q.\n", ref)
-	return resolved{ID: res.ID, Name: ref}, nil
+	created := resolved{ID: res.ID, Name: ref}
+	if !cc.Client.DryRun {
+		warnIfMCPOff(cmd, cc, created, ref)
+	}
+	return created, nil
+}
+
+// warnIfMCPOff prints a hint when the agent has MCP switched off, since Claude
+// Code can't use it then. Best effort: a denied lookup or an older server stays
+// silent.
+func warnIfMCPOff(cmd *cobra.Command, cc *cmdContext, agent resolved, ref string) {
+	if a, err := cc.Client.GetAgent(agent.ID); err == nil && a.MCPEnabled != nil && !*a.MCPEnabled {
+		cmd.PrintErrf("warning: MCP is turned off for agent %s, so Claude Code will not be able to use it. Run `tvault agents mcp-on %s`, or press \"Turn MCP on\" on the agent's Connect tab in the web app.\n", agent.label(), safeText(ref))
+	}
 }
 
 func grantSpecs(cmd *cobra.Command, cc *cmdContext, agent resolved, specs []api.GrantSpec, command string) error {

@@ -24,6 +24,7 @@ import { isGcpServiceAccount, mintGcpAccessToken } from "./interceptors/gcpSa.ts
 // Hop-by-hop headers not forwarded from the upstream response (proxy.py:118).
 const HOP_BY_HOP = new Set(["content-encoding", "content-length", "transfer-encoding", "connection"]);
 const UPSTREAM_TIMEOUT_MS = 30_000;
+const MAX_REDIRECTS = 5;
 
 /** No upstream chunk for this long ends the stream. Total stream time is not capped. */
 export const STREAM_IDLE_TIMEOUT_MS = 60_000;
@@ -176,12 +177,43 @@ export function proxyModule(): FeatureModule {
           let upstreamResp: Response;
           tUp0 = performance.now();
           try {
-            upstreamResp = await fetch(upstream.url, {
-              method,
-              headers,
-              ...(reqBody ? { body: reqBody as Uint8Array<ArrayBuffer> } : {}),
-              signal: abort.signal,
-            });
+            // Redirects are never followed by the runtime: the injected headers
+            // carry the credential and must not leave the registered origin.
+            let target = new URL(upstream.url);
+            const origin = target.origin;
+            let hopMethod = method;
+            let hopBody: Uint8Array | undefined = reqBody;
+            let hopHeaders = headers;
+            for (let hop = 0; ; hop++) {
+              upstreamResp = await fetch(target, {
+                method: hopMethod,
+                headers: hopHeaders,
+                ...(hopBody ? { body: hopBody as Uint8Array<ArrayBuffer> } : {}),
+                redirect: "manual",
+                signal: abort.signal,
+              });
+              const status = upstreamResp.status;
+              const location = upstreamResp.headers.get("location");
+              if (![301, 302, 303, 307, 308].includes(status) || !location || hop >= MAX_REDIRECTS) break;
+              let next: URL;
+              try {
+                next = new URL(location, target);
+              } catch {
+                break;
+              }
+              if (next.origin !== origin) break;
+              if (status === 307 || status === 308) {
+                // Same method and body; both are replayable (a buffered array).
+              } else if (status === 303 ? hopMethod !== "HEAD" : hopMethod === "POST") {
+                hopMethod = "GET";
+                hopBody = undefined;
+                hopHeaders = new Headers(hopHeaders);
+                hopHeaders.delete("content-type");
+                hopHeaders.delete("content-length");
+              }
+              upstreamResp.body?.cancel().catch(() => {});
+              target = next;
+            }
           } catch (err) {
             if (timedOut) return fail(upstreamTimeout("Upstream request timed out"));
             // Fixed text: an error message from the HTTP stack may quote request headers.
@@ -195,7 +227,14 @@ export function proxyModule(): FeatureModule {
           let upstreamTiming = "";
           upstreamResp.headers.forEach((value, k) => {
             const name = k.toLowerCase();
-            if (name === "server-timing") upstreamTiming = value;
+            if (name === "server-timing") {
+              // Drop entries named tv-*: the upstream must not forge ours.
+              upstreamTiming = value
+                .split(",")
+                .map((s) => s.trim())
+                .filter((s) => s && !s.toLowerCase().startsWith("tv-"))
+                .join(", ");
+            }
             else if (!HOP_BY_HOP.has(name)) respHeaders[k] = value;
           });
           respHeaders["X-Upstream-Status"] = String(upstreamResp.status);

@@ -41,6 +41,18 @@ export async function pkceChallenge(verifier: string): Promise<string> {
   return base64UrlEncodeNoPad(new Uint8Array(await crypto.subtle.digest("SHA-256", utf8(verifier))));
 }
 
+/** Provider names are lower-case slugs. */
+export const PROVIDER_SLUG = /^[a-z0-9][a-z0-9_-]{0,63}$/;
+
+/**
+ * Look up a request-supplied provider name in a provider map. Only an own entry
+ * under a valid slug resolves, so `constructor` / `__proto__` never reach a
+ * prototype member.
+ */
+export function providerEntry<T>(map: Readonly<Record<string, T>> | undefined, name: string): T | undefined {
+  return map && PROVIDER_SLUG.test(name) && Object.hasOwn(map, name) ? map[name] : undefined;
+}
+
 /** Start path: the browser lands here first so the flow can be bound to it with a cookie. */
 export const OAUTH_START_PATH = "/v1/oauth/start";
 

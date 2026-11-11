@@ -41,6 +41,7 @@ import {
   OAUTH_START_PATH,
   OAUTH_STATE_TTL_SECONDS,
   pkceChallenge,
+  providerEntry,
   sha256Hex,
 } from "../core/protocol/oauthConnect.ts";
 import { assertStoreConstraints } from "../core/protocol/constraints.ts";
@@ -125,15 +126,20 @@ function readCookie(header: string | undefined, name: string): string | null {
 
 const cookieAttrs = "Path=/v1/oauth; HttpOnly; Secure; SameSite=Lax";
 
+/** Per-flow cookie name, so a second connect in the same browser does not replace the first's. */
+async function flowCookieName(nonce: string): Promise<string> {
+  return `${OAUTH_COOKIE}_${(await sha256Hex(nonce)).slice(0, 8)}`;
+}
+
 export function oauthCallbackModule(): FeatureModule {
   return {
     name: "oauth-callback",
     capability: OAUTH_CALLBACK_CAPABILITY,
     register(app, ctx) {
-      const resultRedirect = (c: Context<AppEnv>, params: Record<string, string>, clearCookie: boolean) => {
+      const resultRedirect = (c: Context<AppEnv>, params: Record<string, string>, clearCookie: string | null) => {
         const result = new URL("/tokens/oauth-result", ctx.config.tokenvaultFrontendUrl);
         for (const [k, v] of Object.entries(params)) result.searchParams.set(k, v);
-        if (clearCookie) c.header("Set-Cookie", `${OAUTH_COOKIE}=; Max-Age=0; ${cookieAttrs}`);
+        if (clearCookie) c.header("Set-Cookie", `${clearCookie}=; Max-Age=0; ${cookieAttrs}`);
         return c.redirect(result.toString(), 302);
       };
       const noStore = (c: Context<AppEnv>) => {
@@ -150,9 +156,9 @@ export function oauthCallbackModule(): FeatureModule {
             named.service = service;
             named.provider = provider;
           });
-          const local = ctx.config.oauthProviders?.[st.provider];
+          const local = providerEntry(ctx.config.oauthProviders, st.provider);
           if (!local?.clientSecret) throw new ConnectFailure("provider_not_configured");
-          const builtin = BUILTIN_AUTHORIZE[st.provider];
+          const builtin = providerEntry(BUILTIN_AUTHORIZE, st.provider);
           const authorizeUrl = local.authorizeUrl ?? builtin?.url;
           if (!authorizeUrl) throw new ConnectFailure("provider_not_configured");
           const clientId = local.clientId ?? st.payload.clid;
@@ -178,20 +184,21 @@ export function oauthCallbackModule(): FeatureModule {
 
           c.header(
             "Set-Cookie",
-            `${OAUTH_COOKIE}=${await sha256Hex(st.payload.nonce)}; Max-Age=${OAUTH_STATE_TTL_SECONDS}; ${cookieAttrs}`,
+            `${await flowCookieName(st.payload.nonce)}=${await sha256Hex(st.payload.nonce)}; Max-Age=${OAUTH_STATE_TTL_SECONDS}; ${cookieAttrs}`,
           );
           return c.redirect(url.toString(), 302);
         } catch (e) {
-          if (e instanceof ConnectFailure) return resultRedirect(c, { ...named, status: "error", code: e.code }, false);
+          if (e instanceof ConnectFailure) return resultRedirect(c, { ...named, status: "error", code: e.code }, null);
           console.error("[oauth-start] unexpected failure");
-          return resultRedirect(c, { ...named, status: "error", code: "internal_error" }, false);
+          return resultRedirect(c, { ...named, status: "error", code: "internal_error" }, null);
         }
       });
 
       app.get(OAUTH_CALLBACK_PATH, denylist(ctx.config), async (c) => {
         noStore(c);
         const named: Record<string, string> = {};
-        const done = (params: Record<string, string>) => resultRedirect(c, { ...named, ...params }, true);
+        let cookieName: string | null = null;
+        const done = (params: Record<string, string>) => resultRedirect(c, { ...named, ...params }, cookieName);
         try {
           if (!(await ctx.secrets.isConfigured())) throw new ConnectFailure("setup_required");
 
@@ -208,7 +215,8 @@ export function oauthCallbackModule(): FeatureModule {
           const { payload, provider, service } = st;
 
           // The browser that finishes the flow must be the one that started it.
-          const cookie = readCookie(c.req.header("cookie"), OAUTH_COOKIE);
+          cookieName = await flowCookieName(payload.nonce);
+          const cookie = readCookie(c.req.header("cookie"), cookieName);
           if (!cookie || cookie !== (await sha256Hex(payload.nonce))) throw new ConnectFailure("browser_mismatch");
 
           // One-shot: consume the nonce now.
@@ -231,9 +239,9 @@ export function oauthCallbackModule(): FeatureModule {
 
           // Client secret and token URL come from local config / the built-in
           // table; the ticket's copies are only cross-checked.
-          const local = ctx.config.oauthProviders?.[provider];
+          const local = providerEntry(ctx.config.oauthProviders, provider);
           if (!local?.clientSecret) throw new ConnectFailure("provider_not_configured");
-          const tokenUrl = local.tokenUrl ?? BUILTIN_TOKEN_URLS[provider];
+          const tokenUrl = local.tokenUrl ?? providerEntry(BUILTIN_TOKEN_URLS, provider);
           if (!tokenUrl) throw new ConnectFailure("provider_not_configured");
           if (payload.tku !== tokenUrl) throw new ConnectFailure("token_url_mismatch");
           const clientId = local.clientId ?? payload.clid;
@@ -272,7 +280,13 @@ export function oauthCallbackModule(): FeatureModule {
           if (oauth.expiresIn) meta.expiryTime = Date.now() + oauth.expiresIn * 1000;
 
           const key = await ctx.secrets.encryptionKey();
-          await ctx.storage.set("tokens", service, await buildEncryptedTokenDocument(key, oauth.accessToken, refreshToken, meta));
+          const doc = await buildEncryptedTokenDocument(key, oauth.accessToken, refreshToken, meta);
+          if (payload.mode === "create" && ctx.storage.setIfAbsent) {
+            // Create-only: the read above can race a concurrent store.
+            if (!(await ctx.storage.setIfAbsent("tokens", service, doc))) throw new ConnectFailure("already_exists");
+          } else {
+            await ctx.storage.set("tokens", service, doc);
+          }
 
           return done({ status: "ok" });
         } catch (e) {

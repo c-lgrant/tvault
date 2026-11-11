@@ -20,6 +20,9 @@ type Context struct {
 	RefreshToken string `yaml:"refresh_token,omitempty"` // admin only
 	AgentKey     string `yaml:"agent_key,omitempty"`     // agent only
 	APIKey       string `yaml:"api_key,omitempty"`       // key only (tvkey_*)
+	// FrontendURL is the site that hosts /cli/auth, saved when a login named it
+	// with --frontend-url. Empty in older files: it is then derived from APIURL.
+	FrontendURL string `yaml:"frontend_url,omitempty"` // admin only
 
 	// Process-only — never persisted. Populated by the refresh loop.
 	idToken          string `yaml:"-"`

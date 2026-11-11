@@ -15,9 +15,12 @@
 //                            trigger in wrangler.toml.
 //   AUDIT_RETENTION_DAYS     delete audit events older than this many days (default 0 =
 //                            keep everything)
-//   TV_REFRESH_ENABLED     "true" registers the legacy tv-refresh module (default off)
+//   TV_MAX_BODY_BYTES      request-body cap before authentication (default 1048576)
+//   TV_MAX_PROXY_BODY_BYTES  the same for /v1/proxy (default 16777216)
+//   TV_REFRESH_ENABLED    "true" registers the legacy tv-refresh module (default off)
 
 import { TIMESTAMP_TOLERANCE, WEBHOOK_VERSION } from "../core/protocol/types.ts";
+import { PROVIDER_SLUG } from "../core/protocol/oauthConnect.ts";
 import type { OAuthProviderConfig, WebhookConfig } from "./context.ts";
 
 type Getenv = (key: string) => string | undefined;
@@ -35,8 +38,16 @@ function parseOAuthProviders(raw: string | undefined): Record<string, OAuthProvi
     const parsed = JSON.parse(raw) as Record<string, OAuthProviderConfig>;
     if (parsed && typeof parsed === "object") {
       // Providers are looked up by lower-case name ("Google" would never match).
-      const out: Record<string, OAuthProviderConfig> = {};
-      for (const [name, cfg] of Object.entries(parsed)) out[name.toLowerCase()] = cfg;
+      // No prototype: a request-supplied name must never resolve to a prototype member.
+      const out: Record<string, OAuthProviderConfig> = Object.create(null) as Record<string, OAuthProviderConfig>;
+      for (const [name, cfg] of Object.entries(parsed)) {
+        const slug = name.toLowerCase();
+        if (!PROVIDER_SLUG.test(slug)) {
+          console.error("OAUTH_PROVIDERS_JSON has a provider name that is not a valid slug — ignoring it");
+          continue;
+        }
+        out[slug] = cfg;
+      }
       return out;
     }
   } catch {
@@ -76,11 +87,15 @@ export function configFromEnv(get: Getenv): WebhookConfig {
 
   const refreshWindow = Number(get("OAUTH_REFRESH_WINDOW_SECONDS"));
   const retentionDays = Number(get("AUDIT_RETENTION_DAYS"));
+  const maxBody = Number(get("TV_MAX_BODY_BYTES"));
+  const maxProxyBody = Number(get("TV_MAX_PROXY_BODY_BYTES"));
 
   return {
     version: WEBHOOK_VERSION,
     ...(Number.isFinite(refreshWindow) && refreshWindow > 0 ? { refreshWindowSeconds: Math.floor(refreshWindow) } : {}),
     ...(Number.isFinite(retentionDays) && retentionDays > 0 ? { auditRetentionDays: retentionDays } : {}),
+    ...(Number.isFinite(maxBody) && maxBody > 0 ? { maxBodyBytes: Math.floor(maxBody) } : {}),
+    ...(Number.isFinite(maxProxyBody) && maxProxyBody > 0 ? { maxProxyBodyBytes: Math.floor(maxProxyBody) } : {}),
     timestampTolerance: Number.isFinite(tolerance) && tolerance > 0 ? tolerance : TIMESTAMP_TOLERANCE,
     tokenvaultFrontendUrl,
     denyIps,

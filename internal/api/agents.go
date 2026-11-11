@@ -62,6 +62,9 @@ type Grant struct {
 	ServiceName    string `json:"serviceName"`
 	RefreshPolicy  string `json:"refreshPolicy,omitempty"`
 	GrantExpiresAt string `json:"grantExpiresAt,omitempty"`
+	// Uses is what the grant may be used for ("value", "tools"); empty on
+	// servers that predate grant uses.
+	Uses []string `json:"uses,omitempty"`
 }
 
 // CreateAgentResult carries the freshly minted key — shown to the user once.
@@ -255,7 +258,10 @@ func (c *Client) AddGrantSpecs(agentID string, specs []GrantSpec) GrantResult {
 		if len(s.Servers) > 0 {
 			body["servers"] = s.Servers
 		}
-		_, err := c.doRequest("POST", "/api/agents/"+agentID+"/grants", body, nil)
+		resp, err := c.doRequest("POST", "/api/agents/"+agentID+"/grants", body, nil)
+		if err == nil && len(s.Uses) > 0 && !c.DryRun && !grantEchoesUses(resp, s.Service) {
+			err = c.undoGrantWithoutUses(agentID, s.Service)
+		}
 		if err != nil {
 			res.Failed[s.Service] = err
 			for _, rest := range specs[i+1:] {
@@ -266,6 +272,42 @@ func (c *Client) AddGrantSpecs(agentID string, specs []GrantSpec) GrantResult {
 		res.OK = append(res.OK, s.Service)
 	}
 	return res
+}
+
+// grantEchoesUses reports whether a create-grant response carries the grant's
+// uses: top-level, under "grant", or in a "grants" list entry for service. A
+// control plane that predates grant uses drops the field it does not know, so
+// the response has none and the grant it made is a full value grant.
+func grantEchoesUses(resp []byte, service string) bool {
+	var r struct {
+		Uses   []string `json:"uses"`
+		Grant  *Grant   `json:"grant"`
+		Grants []Grant  `json:"grants"`
+	}
+	if json.Unmarshal(resp, &r) != nil {
+		return false
+	}
+	if len(r.Uses) > 0 || (r.Grant != nil && len(r.Grant.Uses) > 0) {
+		return true
+	}
+	for _, g := range r.Grants {
+		if g.ServiceName == service && len(g.Uses) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// undoGrantWithoutUses removes the grant just created by a server that ignored
+// its uses, and returns the error to report.
+func (c *Client) undoGrantWithoutUses(agentID, service string) error {
+	msg := "this control plane predates grant uses, so it ignored the requested uses and made a full value grant; upgrade the control plane"
+	if rerr := c.RemoveGrants(agentID, []string{service}).Err(); rerr != nil {
+		// The command goes in the message: GrantResult.Err keeps only messages.
+		return &clierr.CLIError{Kind: clierr.KindUser,
+			Message: fmt.Sprintf("%s; the grant could not be removed, revoke it by hand: tvault ag gr rm %s %s", msg, agentID, service)}
+	}
+	return &clierr.CLIError{Kind: clierr.KindUser, Message: msg + "; the grant was removed"}
 }
 
 // RemoveGrants revokes an agent's access to one or more services. The backend
