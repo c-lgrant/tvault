@@ -823,6 +823,20 @@ func TestAgentsMCPOn_DryRunDoesNotClaimDone(t *testing.T) {
 	}
 }
 
+// A dry run sends nothing, so it must not say an agent was created or print a
+// line that promises a key.
+func TestAgentsCreate_DryRunDoesNotClaimDone(t *testing.T) {
+	newMCPBackend(t, "admin")
+	withStdin(t, "", false, "")
+	stdout, stderr, err := runCLI(t, "agents", "create", "--name", "ci-bot", "--non-interactive", "--dry-run")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(stderr, "Created agent") || strings.Contains(stderr, "shown once") || strings.TrimSpace(stdout) != "" {
+		t.Errorf("stdout=%q stderr=%q", stdout, stderr)
+	}
+}
+
 func TestAgentsMCPOn_SendsPatch(t *testing.T) {
 	b := newMCPBackend(t, "admin")
 	withStdin(t, "", false, "")
