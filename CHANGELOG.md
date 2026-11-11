@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.14.1](https://github.com/c-lgrant/tvault/compare/v0.14.0...v0.14.1) (2026-11-11)
+
+
+### Bug Fixes
+
+* add never replaces a stored value, and a dry run no longer says an agent was created ([#62](https://github.com/c-lgrant/tvault/issues/62)) ([a3beaa9](https://github.com/c-lgrant/tvault/commit/a3beaa90ddfc0e3472b1ea792349b396eb394b84))
+* **deps:** build with Go 1.27.4 ([#63](https://github.com/c-lgrant/tvault/issues/63)) ([4aa52eb](https://github.com/c-lgrant/tvault/commit/4aa52eb72a3f9946d7cb5655d24c0acf76a4ca82))
+
 ## [0.14.0](https://github.com/c-lgrant/tvault/compare/v0.13.0...v0.14.0) (2026-11-11)
 
 
