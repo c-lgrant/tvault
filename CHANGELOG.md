@@ -1,5 +1,54 @@
 # Changelog
 
+## [0.14.0](https://github.com/c-lgrant/tvault/compare/v0.13.0...v0.14.0) (2026-11-11)
+
+
+### ⚠ BREAKING CHANGES
+
+* `tvault webhook init`, `up` and `down` are removed, and the tvault-webhook container image is no longer published. Run the reference webhook with `docker compose up -d --build` in examples/webhook, or deploy it to Workers. `tvault webhook bind` now takes --url.
+
+### Features
+
+* **cli:** accept mcp as the access name in grant specs ([f1587cd](https://github.com/c-lgrant/tvault/commit/f1587cd8d3acc25522d15509abfe4d2252b6c7c5))
+* **cli:** accept mcp as the access name in grant specs ([004a00d](https://github.com/c-lgrant/tvault/commit/004a00d1e06d17d472dbbc077c7dde0ac494ee06))
+* **cli:** one-command add for an agent, stdin secrets, and connect ([#40](https://github.com/c-lgrant/tvault/issues/40)) ([227e795](https://github.com/c-lgrant/tvault/commit/227e795846fd55a15149ac64c5a472a4e8ec12c3))
+* **cli:** Token Vault sign-in credentials, retired-feature explain codes, no mcpEnabled on agent create ([f611150](https://github.com/c-lgrant/tvault/commit/f61115042d055b1d61198ff99687c1214c8952a4))
+* explain policy and access denials in plain words ([045067c](https://github.com/c-lgrant/tvault/commit/045067c6b4e4eeddd01249b92d13d0977d1e1975))
+* explain policy and access denials in plain words ([ca169ab](https://github.com/c-lgrant/tvault/commit/ca169ab5ec89df0af26d9128015a56c2f003da22))
+* label, policy attach/detach, credentials and history aliases; repeatable add --for and add --labels ([32e2d00](https://github.com/c-lgrant/tvault/commit/32e2d0096c84c779577862b15270f46be671b300))
+* labels, policy attach/detach, credentials/history aliases, repeatable add --for ([c3e8890](https://github.com/c-lgrant/tvault/commit/c3e8890596cb274f2e2149772100fcc570bfdfd2))
+* mcp-servers command, tools grants and per-server connect ([#43](https://github.com/c-lgrant/tvault/issues/43)) ([1f2478d](https://github.com/c-lgrant/tvault/commit/1f2478d815efa3b2fe35d76de0d6dedbb6a26c48))
+* **mcp-servers:** ls shows the cached tool count ([#45](https://github.com/c-lgrant/tvault/issues/45)) ([7342796](https://github.com/c-lgrant/tvault/commit/7342796cfcce254a3b2f5958837a8127aedca056))
+* own-app OAuth refresh, tv-refresh opt-in, Token Vault sign-in in the CLI ([5655860](https://github.com/c-lgrant/tvault/commit/56558604ffdf9f8c0a47ce91f700cf10a6676380))
+* webhook limits on the control plane, and CLI exit codes 13 and 14 ([#56](https://github.com/c-lgrant/tvault/issues/56)) ([939739d](https://github.com/c-lgrant/tvault/commit/939739d14967953625b07cdd6223125d88b0791c))
+* **webhook:** oauth-callback capability to connect with your own OAuth app ([#42](https://github.com/c-lgrant/tvault/issues/42)) ([e61b58d](https://github.com/c-lgrant/tvault/commit/e61b58d0ce64fa990972a235e0aa3c0bfc13a742))
+* **webhook:** refresh own-app OAuth tokens on a schedule and at fetch time ([ae8b4e2](https://github.com/c-lgrant/tvault/commit/ae8b4e237958a5f17a6c535664f4fc768fa149da))
+
+
+### Bug Fixes
+
+* clean up the CLI and reference webhook before release ([36b1285](https://github.com/c-lgrant/tvault/commit/36b1285a8b0c82d559db7e5b3501d75e86ae86db))
+* **cli:** match explain text for sign-in codes to the server ([625c9ca](https://github.com/c-lgrant/tvault/commit/625c9ca030a7d760a79b19cfba5e9a5e3290370b))
+* **login:** --ctx names the context and reuses its server ([#44](https://github.com/c-lgrant/tvault/issues/44)) ([496c823](https://github.com/c-lgrant/tvault/commit/496c82350afbd75d3e25a9e0d850b54cedd99319))
+* review fixes for the CLI and the reference webhook ([#55](https://github.com/c-lgrant/tvault/issues/55)) ([94b9e5d](https://github.com/c-lgrant/tvault/commit/94b9e5d5e5c29b630d59e41ab834de0908122326))
+* **webhook:** bind the request-id header to the signed attemptId ([591e7ea](https://github.com/c-lgrant/tvault/commit/591e7ea54c3940edc7a32664246b45822f70f1af))
+* **webhook:** close three gaps in the /v1/proxy upstream checks ([#57](https://github.com/c-lgrant/tvault/issues/57)) ([12ff909](https://github.com/c-lgrant/tvault/commit/12ff909cefd9fb4832a01d1c6e29ab84f020f34e))
+* **webhook:** do not give an agent the refresh token on /v1/credential ([8eff1d8](https://github.com/c-lgrant/tvault/commit/8eff1d82b7b0bbe84d212cd940d05caa1c2bd96c))
+* **webhook:** do not give an agent the refresh token on /v1/credential ([e531325](https://github.com/c-lgrant/tvault/commit/e531325772ee1f56062b64d671c6e49d4c2bfe16))
+* **webhook:** fetch-time refresh never serves a credential replaced after the ticket check ([42aaab0](https://github.com/c-lgrant/tvault/commit/42aaab0f2a12b64478288dcd6ed9303a79459738))
+* **webhook:** fetch-time refresh never serves a credential replaced after the ticket check ([7da2ff4](https://github.com/c-lgrant/tvault/commit/7da2ff454bc4fa87f9b02d774b2874b68f2658bf))
+* **webhook:** keep credentials out of error responses, gate TOTP heal behind replay checks, bound proxy streams ([88d3330](https://github.com/c-lgrant/tvault/commit/88d3330d91b1763e4922f71a281c2320a69e2582))
+* **webhook:** make own-app OAuth refresh keep metadata and fail safely ([c404bba](https://github.com/c-lgrant/tvault/commit/c404bba5ec9961cabdd48889ffc44a0358707c27))
+* **webhook:** make the legacy tv-refresh capability opt-in ([bd9c035](https://github.com/c-lgrant/tvault/commit/bd9c03528dead04ce4ececdfdd55612aaf56789b))
+* **webhook:** prune used ticket nonces without the cron trigger ([#59](https://github.com/c-lgrant/tvault/issues/59)) ([cf61bc7](https://github.com/c-lgrant/tvault/commit/cf61bc71281599c7cab0f3b2f3773143cd837b27))
+
+
+### Performance
+
+* **cli:** tvault get skips GET /api/tokens/{name} ([bd1f950](https://github.com/c-lgrant/tvault/commit/bd1f950dadebbca5e946f568364d113865c30adf))
+* **webhook,cli:** stream MCP responses, parallel replay checks, bounded audit, Server-Timing ([03fb969](https://github.com/c-lgrant/tvault/commit/03fb969cb640827071a55c431daeb4f15b07c6d0))
+* **webhook:** stream /v1/proxy, parallel replay checks, bounded audit ([459a942](https://github.com/c-lgrant/tvault/commit/459a942b386d743d412b9e0ce76ed3fc9b86838f))
+
 ## [0.13.0](https://github.com/c-lgrant/tvault/compare/v0.12.0...v0.13.0) (2026-10-31)
 
 
