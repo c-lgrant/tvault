@@ -20,6 +20,7 @@ import { freshDocument } from "../core/protocol/oauthRefresh.ts";
 import { backgroundRunner } from "../core/middleware/background.ts";
 import type { FeatureModule } from "../core/registry.ts";
 import { isGcpServiceAccount, mintGcpAccessToken } from "./interceptors/gcpSa.ts";
+import { assertOriginAllowed, assertPublicUpstream, parseUpstreamUrl } from "../core/protocol/upstreamGuard.ts";
 
 // Hop-by-hop headers not forwarded from the upstream response (proxy.py:118).
 const HOP_BY_HOP = new Set(["content-encoding", "content-length", "transfer-encoding", "connection"]);
@@ -101,6 +102,7 @@ export function proxyModule(): FeatureModule {
 
           if (!ticket || !service) return fail(invalidRequest("Missing 'ticket' or 'service'"));
           if (!upstream.url) return fail(invalidRequest("Missing 'upstream.url'"));
+          const upstreamUrl = parseUpstreamUrl(upstream.url);
 
           // Both signatures (request HMAC in hmacAuth, ticket here) are CPU-only
           // and have passed before any I/O starts. Then the request-id check, the
@@ -122,6 +124,10 @@ export function proxyModule(): FeatureModule {
           if (payload.svc !== service) {
             return fail(ticketInvalid(`Ticket is for service '${payload.svc}', not '${service}'`));
           }
+          // The webhook's own rules for where a credential may go. Checked
+          // before the document is decrypted.
+          assertOriginAllowed(ctx.config.proxyAllowedOrigins, service, upstreamUrl);
+          await assertPublicUpstream(ctx, upstreamUrl);
           if (!storedDoc) return fail(tokenNotFound(`No token stored for service '${service}'`));
 
           assertCreationMatches(payload, storedDoc);
@@ -179,7 +185,7 @@ export function proxyModule(): FeatureModule {
           try {
             // Redirects are never followed by the runtime: the injected headers
             // carry the credential and must not leave the registered origin.
-            let target = new URL(upstream.url);
+            let target = upstreamUrl;
             const origin = target.origin;
             let hopMethod = method;
             let hopBody: Uint8Array | undefined = reqBody;

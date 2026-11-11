@@ -11,12 +11,13 @@ import { readTokenObject } from "../../src/core/protocol/tokendoc.ts";
 import type { TicketPayload } from "../../src/core/protocol/types.ts";
 import { makeContext } from "../conformance/_harness.ts";
 
-// Parity vector shared with the control plane's tests: same secret bytes, same
-// nonce, same outputs on both sides.
-const VECTOR_SECRET = Uint8Array.from({ length: 32 }, (_, i) => i) as Uint8Array<ArrayBuffer>;
+// The verifier comes from a key only the webhook holds, so there is no vector
+// shared with the control plane. The S256 challenge is checked against RFC 7636
+// appendix B.
+const VECTOR_KEY = Uint8Array.from({ length: 32 }, (_, i) => i) as Uint8Array<ArrayBuffer>;
 const VECTOR_NONCE = "0123456789abcdef0123456789abcdef";
-const VECTOR_VERIFIER = "VdqfFLJJny0ymbH0l91qjwz2kRjq_wIjWf_gn5SmEgw";
-const VECTOR_CHALLENGE = "fO8Zordyurr3pXrF1yZqffrkMGRKyGVxXohEw4Ekxwg";
+const RFC_VERIFIER = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+const RFC_CHALLENGE = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM";
 
 const EXTERNAL = "https://wh.example";
 const CALLBACK = `${EXTERNAL}/v1/oauth/callback`;
@@ -76,11 +77,12 @@ function resultOf(res: Response) {
 }
 
 describe("PKCE derivation", () => {
-  it("matches the shared parity vector", async () => {
-    const verifier = await derivePkceVerifier(VECTOR_SECRET, VECTOR_NONCE);
-    expect(verifier).toBe(VECTOR_VERIFIER);
+  it("is a stable 43-character value per key and nonce, with an RFC 7636 S256 challenge", async () => {
+    const verifier = await derivePkceVerifier(VECTOR_KEY, VECTOR_NONCE);
+    expect(verifier).toBe("-ebw0XDkVTDPjw12BK11_IX0E8RNq6tU3yeQyhQePY8");
     expect(verifier).toHaveLength(43);
-    expect(await pkceChallenge(verifier)).toBe(VECTOR_CHALLENGE);
+    expect(await derivePkceVerifier(VECTOR_KEY, `${VECTOR_NONCE}0`)).not.toBe(verifier);
+    expect(await pkceChallenge(RFC_VERIFIER)).toBe(RFC_CHALLENGE);
   });
 });
 
@@ -117,7 +119,9 @@ describe("GET /v1/oauth/callback", () => {
     expect(sent.get("client_secret")).toBe("local-secret");
     expect(sent.get("client_id")).toBe("client-123.apps.example");
     expect(sent.get("redirect_uri")).toBe(CALLBACK);
-    expect(sent.get("code_verifier")).toBe(await derivePkceVerifier(s.hmac, nonce));
+    expect(sent.get("code_verifier")).toBe(await derivePkceVerifier(s.key, nonce));
+    // Not derivable from the secret the control plane shares.
+    expect(sent.get("code_verifier")).not.toBe(await derivePkceVerifier(s.hmac, nonce));
 
     const doc = await s.ctx.storage.get("tokens", "my-gmail");
     const tok = await readTokenObject(s.key, doc!);
@@ -282,7 +286,7 @@ describe("GET /v1/oauth/start (browser binding)", () => {
     expect(loc.searchParams.get("client_id")).toBe("client-123.apps.example");
     expect(loc.searchParams.get("redirect_uri")).toBe(CALLBACK);
     expect(loc.searchParams.get("scope")).toBe("openid email");
-    expect(loc.searchParams.get("code_challenge")).toBe(await pkceChallenge(await derivePkceVerifier(s.hmac, nonce)));
+    expect(loc.searchParams.get("code_challenge")).toBe(await pkceChallenge(await derivePkceVerifier(s.key, nonce)));
     expect(loc.searchParams.get("code_challenge_method")).toBe("S256");
     expect(loc.searchParams.get("access_type")).toBe("offline");
     const cookie = res.headers.get("set-cookie")!;

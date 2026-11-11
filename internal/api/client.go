@@ -261,6 +261,15 @@ func kindForError(status int, code string) clierr.Kind {
 	case "SIGNIN_NO_VALUE":
 		// A sign-in credential has no value: same exit code as an empty one.
 		return clierr.KindEmpty
+	case "POLICY_DENIED":
+		// A policy's rate limit answered with 429 stays "rate limited" (7): the
+		// script's right move is the same, wait and retry.
+		if status == 429 {
+			return clierr.KindRateLimited
+		}
+		return clierr.KindPolicyDenied
+	case "NO_GRANT", "GRANT_EXPIRED", "GRANT_TOOLS_ONLY":
+		return clierr.KindNoGrant
 	}
 	return kindForStatus(status)
 }

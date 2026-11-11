@@ -6,14 +6,14 @@
 // The provider redirects the browser to this webhook's /v1/oauth/callback, so
 // the authorization code never reaches the control plane.
 //
-// PKCE: the code_verifier is NOT carried by the browser. Both sides derive it
-// from the shared HMAC secret and the ticket nonce:
+// PKCE: the code_verifier is NOT carried by the browser. The webhook derives it
+// from a key only it holds and the ticket nonce:
 //
-//   verifier  = base64url_nopad( HMAC-SHA256(hmacSecret, "tv-oauth-pkce-v1:" + nonce) )   // 43 chars
+//   verifier  = base64url_nopad( HMAC-SHA256(webhookKey, "tv-oauth-pkce-v2:" + nonce) )   // 43 chars
 //   challenge = base64url_nopad( SHA-256( ascii(verifier) ) )                              // S256
 //
 // so a state ticket seen in the browser history or a proxy log does not reveal
-// the verifier.
+// the verifier, and neither does the HMAC secret shared with the control plane.
 
 import { base64UrlEncodeNoPad, type Bytes, utf8 } from "../crypto/encoding.ts";
 
@@ -29,10 +29,14 @@ export const OAUTH_CALLBACK_CAPABILITY = "oauth-callback";
 /** State tickets live 10 minutes (the user is at the provider's consent screen meanwhile). */
 export const OAUTH_STATE_TTL_SECONDS = 600;
 
-const PKCE_INFO_PREFIX = "tv-oauth-pkce-v1:";
+const PKCE_INFO_PREFIX = "tv-oauth-pkce-v2:";
 
-export async function derivePkceVerifier(hmacSecret: Bytes, nonce: string): Promise<string> {
-  const key = await crypto.subtle.importKey("raw", hmacSecret, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+/**
+ * `webhookKey` must be key material the control plane never learns (the
+ * webhook's encryption key), never the shared HMAC secret.
+ */
+export async function derivePkceVerifier(webhookKey: Bytes, nonce: string): Promise<string> {
+  const key = await crypto.subtle.importKey("raw", webhookKey, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
   const mac = new Uint8Array(await crypto.subtle.sign("HMAC", key, utf8(PKCE_INFO_PREFIX + nonce)));
   return base64UrlEncodeNoPad(mac);
 }

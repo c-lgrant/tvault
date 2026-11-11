@@ -188,6 +188,10 @@ sends only the MCP server's name, URL and header *templates*.
 | `mcp-servers rm <service> <name>` | Detach an MCP server (`--force` skips the prompt). Grants naming it are not edited. |
 | `mcp-servers templates` | List the presets. |
 
+`add` needs your own login (an admin context): a key or agent cannot add an MCP
+server or change its URL or headers (`HUMAN_ONLY`, exit 9), because the server
+would keep getting the credential after that key had expired.
+
 `add` and `rm` read the current list and write the whole list back (the API is a
 full replace). Credentials go into a header with the literal text `${TOKEN}`;
 **single-quote it** so your shell does not expand it, and never put a real
@@ -342,6 +346,8 @@ parsing text.
 | 10 | `KEY_EXPIRED` — the API key is past its expiry. |
 | 11 | `KEY_SUSPENDED` — the API key is suspended. |
 | 12 | `INVALID_KEY` — the API key is unknown, malformed, or revoked. |
+| 13 | `POLICY_DENIED` — a policy refused the call (hours, rate, IP, usage); the message says which. |
+| 14 | No grant for this use — `NO_GRANT`, `GRANT_EXPIRED` or `GRANT_TOOLS_ONLY`. |
 
 Other server codes keep the code of their HTTP class and add a hint to the
 message (see `tvault explain <code>`):
@@ -350,7 +356,7 @@ message (see `tvault explain <code>`):
 |-------------|------|-------|
 | `VAULT_LOCKED` (423) | 5 | Same as the locked-vault code above. |
 | `REAUTH_REQUIRED` (401) | 2 | Creating a key as a human needs a fresh sign-in: run `tvault login` again. |
-| `NOT_OWNER`, `GRANT_REQUIRED` (403), `NO_GRANT` (404) | 1 | User errors; hints say what to do. |
+| `NOT_OWNER`, `GRANT_REQUIRED` (403) | 1 | User errors; hints say what to do. |
 | `UNKNOWN_SCOPE`, `INVALID_EXPIRY` (400/422) | 1 | Bad `--scopes` / `--expires`. |
 
 ## Other commands

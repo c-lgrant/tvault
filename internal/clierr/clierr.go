@@ -24,6 +24,8 @@ const (
 	KindKeyExpired               // 10 — 401 KEY_EXPIRED: the API key is past its expiry
 	KindKeySuspended             // 11 — 403 KEY_SUSPENDED: the key is suspended
 	KindInvalidKey               // 12 — 401 INVALID_KEY: the key is unknown or malformed
+	KindPolicyDenied             // 13 — POLICY_DENIED: a policy refused the call
+	KindNoGrant                  // 14 — NO_GRANT / GRANT_EXPIRED / GRANT_TOOLS_ONLY: no grant for this use
 )
 
 func (k Kind) exitCode() int {
@@ -52,6 +54,10 @@ func (k Kind) exitCode() int {
 		return 11
 	case KindInvalidKey:
 		return 12
+	case KindPolicyDenied:
+		return 13
+	case KindNoGrant:
+		return 14
 	default:
 		return 1
 	}

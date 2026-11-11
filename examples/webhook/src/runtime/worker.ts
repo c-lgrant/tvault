@@ -4,9 +4,11 @@
 //               redeploys because the seed is.
 //   - storage:  D1 (binding `DB`) — durable, strongly-consistent credential
 //               storage. The `kv` table self-creates on first request.
-//   - replay:   the per-colo Cache API (no binding, no daily write quota).
-// No KV namespace: storage is D1, replay is the Cache API, and the seed is a
-// Secret — so the Worker needs exactly one auto-provisioned resource (D1).
+//   - replay:   ticket nonces in D1 (atomic insert, pruned by the cron);
+//               request ids in the per-colo Cache API (no binding).
+// No KV namespace: storage and nonces are D1, request ids are the Cache API,
+// and the seed is a Secret — so the Worker needs exactly one auto-provisioned
+// resource (D1).
 // The app is built once per isolate and reused across requests.
 //
 // Only the FINISHED app is shared. On Workers, I/O belongs to the request that
@@ -23,6 +25,7 @@ import { configFromEnv } from "./config.ts";
 import { seedDerivedSecrets } from "../adapters/secrets/seedDerived.ts";
 import { D1StorageAdapter } from "../adapters/storage/d1.ts";
 import { CacheReplayGuard } from "../adapters/replay/cache.ts";
+import { pruneNonces, StoredNonceGuard } from "../adapters/replay/stored.ts";
 import type { RuntimeContext } from "./context.ts";
 import { runStartup } from "./startup.ts";
 import { refreshDueTokens } from "../core/protocol/oauthRefresh.ts";
@@ -48,11 +51,15 @@ async function buildContext(env: Env): Promise<RuntimeContext> {
     );
   }
 
+  const storage = await D1StorageAdapter.create(env.DB);
+  const cache = new CacheReplayGuard();
   const ctx: RuntimeContext = {
     config: configFromEnv((k) => (typeof env[k] === "string" ? (env[k] as string) : undefined)),
     secrets: seedDerivedSecrets(env.TV_WEBHOOK_SEED),
-    storage: await D1StorageAdapter.create(env.DB),
-    replay: new CacheReplayGuard(),
+    storage,
+    // Ticket nonces go to D1 (one atomic insert each) unless the operator chose
+    // the best-effort cache with TV_REPLAY_NONCES=cache.
+    replay: env.TV_REPLAY_NONCES === "cache" ? cache : new StoredNonceGuard(storage, cache),
   };
   await runStartup(ctx); // once per isolate, unless concurrent cold requests race
   return ctx;
@@ -79,6 +86,7 @@ export default {
     } finally {
       // Audit retention rides the same cron; a failed refresh sweep must not skip it.
       await pruneAudit(ctx).catch(() => console.error("[retention] audit prune failed"));
+      await pruneNonces(ctx.rawStorage ?? ctx.storage).catch(() => console.error("[replay] nonce prune failed"));
     }
   },
 } satisfies ExportedHandler<Env>;

@@ -53,7 +53,7 @@ func TestPolicyDenialSentences(t *testing.T) {
 			wrap(`{"code":"POLICY_DENIED","message":"closed","policy":"office-hours","rule":"time_window",
 				"appliedVia":{"type":"agent","id":"cursor"},
 				"ruleSettings":{"days":[1,2,3,4,5],"start":"08:00","end":"19:00","timezone":"Europe/London"}}`),
-			1,
+			13,
 			[]string{"denied: outside allowed hours Mon–Fri 08:00–19:00 Europe/London (policy office-hours, on agent cursor).",
 				"--agent cursor"},
 		},
@@ -61,56 +61,56 @@ func TestPolicyDenialSentences(t *testing.T) {
 			"time window opens again", 403, nil,
 			wrap(`{"code":"POLICY_DENIED","message":"closed","policy":"p","rule":"time_window","retryAfter":7200,
 				"appliedVia":{"type":"token","id":"github"},"ruleSettings":{"days":[1,3,6],"start":"09:00","end":"17:00"}}`),
-			1,
+			13,
 			[]string{"outside allowed hours Mon, Wed, Sat 09:00–17:00 (policy p, on credential github). Opens again in 2 h.", "--credential github"},
 		},
 		{
 			"lifetime cap", 403, nil,
 			wrap(`{"code":"POLICY_DENIED","message":"cap","policy":"cap-100","rule":"max_usage",
 				"appliedVia":{"type":"api_key","id":"k1"},"ruleSettings":{"max":100,"used":100}}`),
-			1,
+			13,
 			[]string{"lifetime cap reached: used 100 of 100 (policy cap-100, on key k1). It does not reset by itself.", "--key k1"},
 		},
 		{
 			"geo allow", 403, nil,
 			wrap(`{"code":"POLICY_DENIED","message":"geo","policy":"eu","rule":"geo_restrict",
 				"appliedVia":{"type":"token","id":"x"},"ruleSettings":{"mode":"allow","countryCodes":["GB","IE"]}}`),
-			1,
+			13,
 			[]string{"country not allowed: only GB and IE may use this (policy eu, on credential x)."},
 		},
 		{
 			"geo deny", 403, nil,
 			wrap(`{"code":"POLICY_DENIED","message":"geo","policy":"eu","rule":"geo_restrict",
 				"appliedVia":{"type":"token","id":"x"},"ruleSettings":{"mode":"deny","countryCodes":["RU"]}}`),
-			1,
+			13,
 			[]string{"requests from RU are refused"},
 		},
 		{
 			"channel", 403, nil,
 			wrap(`{"code":"POLICY_DENIED","message":"ch","policy":"web-only","rule":"access_channel",
 				"appliedVia":{"type":"token_group","id":"prod"},"ruleSettings":{"mode":"allow","channels":["web"]}}`),
-			1,
+			13,
 			[]string{"only the web app may read this (policy web-only, on folder prod).", "web app (Policies)"},
 		},
 		{
 			"ip allowlist", 403, nil,
 			wrap(`{"code":"POLICY_DENIED","message":"ip","policy":"office","rule":"ip_allowlist",
 				"appliedVia":{"type":"agent","id":"a"},"ruleSettings":{"cidrCount":3}}`),
-			1,
+			13,
 			[]string{"address not on the IP allowlist (policy office, on agent a)."},
 		},
 		{
 			"ip allowlist empty", 403, nil,
 			wrap(`{"code":"POLICY_DENIED","message":"ip","policy":"office","rule":"ip_allowlist",
 				"appliedVia":{"type":"agent","id":"a"},"ruleSettings":{"cidrCount":0}}`),
-			1,
+			13,
 			[]string{"the IP allowlist is empty, so nobody gets in"},
 		},
 		{
 			"top-level body (REST shape)", 403, nil,
 			`{"error":"Access denied by policy","policy":"cap","rule":"max_usage","reason":"cap","code":"POLICY_DENIED",
 				"appliedVia":{"type":"label","id":"ai"},"ruleSettings":{"max":5,"used":5}}`,
-			1,
+			13,
 			[]string{"denied: lifetime cap reached: used 5 of 5 (policy cap, on label ai)."},
 		},
 	}
@@ -154,8 +154,8 @@ func TestPolicyDenialAgentShapedBody(t *testing.T) {
 			t.Errorf("error %q should contain %q", s, w)
 		}
 	}
-	if got := clierr.ExitCode(err); got != 1 {
-		t.Errorf("exit = %d, want 1", got)
+	if got := clierr.ExitCode(err); got != 13 {
+		t.Errorf("exit = %d, want 13", got)
 	}
 }
 
@@ -168,8 +168,8 @@ func TestPolicyDenialOldServerBody(t *testing.T) {
 	if !strings.Contains(s, "Access denied by policy") || !strings.Contains(s, "403 POLICY_DENIED") {
 		t.Errorf("unexpected old-server output %q", s)
 	}
-	if got := clierr.ExitCode(err); got != 1 {
-		t.Errorf("exit = %d, want 1", got)
+	if got := clierr.ExitCode(err); got != 13 {
+		t.Errorf("exit = %d, want 13", got)
 	}
 }
 
@@ -181,9 +181,9 @@ func TestAccessRefusalsExplained(t *testing.T) {
 		sentence string
 		hint     string
 	}{
-		{"NO_GRANT", 404, 1, "no access to that credential", "tvault grant <agent> <credential>=value"},
-		{"GRANT_EXPIRED", 403, 1, "has expired", "tvault grant <agent> <credential>=value"},
-		{"GRANT_TOOLS_ONLY", 403, 1, "tool calls only", "=value"},
+		{"NO_GRANT", 404, 14, "no access to that credential", "tvault grant <agent> <credential>=value"},
+		{"GRANT_EXPIRED", 403, 14, "has expired", "tvault grant <agent> <credential>=value"},
+		{"GRANT_TOOLS_ONLY", 403, 14, "tool calls only", "=value"},
 		{"AGENT_INACTIVE", 403, 11, "agent is suspended", "tvault agents resume <agent>"},
 		{"VAULT_LOCKED", 423, 5, "vault is locked", "tvault vault unlock"},
 		{"SCOPE_DENIED", 403, 8, "lacks a permission", "tvault keys create --scopes x:y"},

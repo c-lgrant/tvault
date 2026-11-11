@@ -6,6 +6,7 @@
 // this host; the control plane only ever learns the HMAC secret via the
 // one-time /v1/exchange handshake.
 
+import { lookup } from "node:dns/promises";
 import { serve } from "@hono/node-server";
 import { createApp } from "../core/app.ts";
 import { allModules } from "../modules/index.ts";
@@ -24,6 +25,8 @@ async function main(): Promise<void> {
     secrets,
     storage,
     replay: new MemoryReplayGuard(),
+    // Lets /v1/proxy refuse an upstream name that resolves to a private address.
+    resolveHost: async (hostname: string) => (await lookup(hostname, { all: true })).map((a) => a.address),
   };
 
   await runStartup(ctx);

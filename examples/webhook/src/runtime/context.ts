@@ -32,7 +32,10 @@ export const BIND_CODES_COLLECTION = "_bind_codes";
  * adapters must still initialize them so internal reads/writes work on every
  * runtime.
  */
-export const INTERNAL_COLLECTIONS = ["meta", BIND_CODES_COLLECTION] as const;
+export const INTERNAL_COLLECTIONS = ["meta", BIND_CODES_COLLECTION, "_nonces"] as const;
+
+/** Internal collection of used ticket nonces (see adapters/replay/stored.ts). */
+export const NONCE_COLLECTION: (typeof INTERNAL_COLLECTIONS)[number] = "_nonces";
 
 /** Every collection an adapter must provision: agent-facing plus internal. */
 export const ALL_COLLECTIONS = [
@@ -101,6 +104,13 @@ export interface WebhookConfig {
   maxBodyBytes?: number;
   /** Cap for /v1/proxy (TV_MAX_PROXY_BODY_BYTES; default 16 MiB). */
   maxProxyBodyBytes?: number;
+  /**
+   * Origins /v1/proxy may send a credential to, by service name ("*" = every
+   * service). Set via TV_PROXY_ALLOWED_ORIGINS; absent = no allowlist.
+   */
+  proxyAllowedOrigins?: Readonly<Record<string, readonly string[]>>;
+  /** Let /v1/proxy call private addresses (TV_PROXY_ALLOW_PRIVATE=true; default off). */
+  proxyAllowPrivate?: boolean;
 }
 
 /** Locally-provisioned OAuth client credentials for autonomous refresh. */
@@ -252,4 +262,9 @@ export interface RuntimeContext {
   replay: ReplayGuard;
   /** Set by createApp: the un-wrapped adapter beneath the legacy-TOTP healing layer in `storage`. */
   rawStorage?: StorageAdapter;
+  /**
+   * Addresses a host name resolves to, on runtimes that can ask (Node). Used to
+   * refuse a /v1/proxy upstream whose name points at a private address.
+   */
+  resolveHost?: (hostname: string) => Promise<string[]>;
 }

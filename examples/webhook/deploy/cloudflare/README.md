@@ -5,9 +5,9 @@ AES-256 key + HMAC secret are HKDF-derived in memory from a single seed secret
 (`TV_WEBHOOK_SEED`) — never persisted, stable across redeploys.
 
 The Worker needs exactly **one provisioned resource**: a **D1 database** for
-credential storage. Replay protection uses the per-colo **Cache API** (no
-binding, no quota), and the seed is a **Workers Secret** — so there is no KV
-namespace to create.
+credential storage and used ticket nonces. Request-id replay protection uses the
+per-colo **Cache API** (no binding, no quota), and the seed is a **Workers
+Secret** — so there is no KV namespace to create.
 
 ## One-click deploy (button) — and push-to-deploy
 
@@ -63,15 +63,20 @@ npm run deploy
 Non-secret config (`TOKENVAULT_FRONTEND_URL`, optional `TOKENVAULT_IP`,
 `DENY_IPS`/`DENY_ORIGINS`) lives in `wrangler.toml` under `[vars]`.
 
-## Storage: D1 for credentials, Cache API for replay
+## Storage: D1 for credentials and nonces, Cache API for request ids
 
 Credentials are stored in **D1** (binding `DB`) — durable and strongly-consistent
-(read-your-writes, which matters for refresh writes). Replay protection (request
-IDs + ticket nonces) uses the Workers **Cache API**: per-colo and best-effort,
-with no binding and no daily write quota. It's defence-in-depth — the primary
-freshness bounds are the ticket's own short `exp` and the HMAC timestamp window —
-so the per-colo nature is acceptable. D1 is the only resource the deploy
-provisions.
+(read-your-writes, which matters for refresh writes). Each one-shot ticket nonce
+is one insert-if-absent row in the same database, so a ticket cannot be used
+twice, whichever colo the second request lands on. The cron trigger deletes
+expired nonce rows. Request ids use the Workers **Cache API**: per-colo and
+best-effort, with no binding and no daily write quota; the HMAC timestamp window
+is their primary bound. D1 is the only resource the deploy provisions.
+
+The nonce rows cost one D1 row write per credential read, store and proxy call.
+The D1 free plan allows 100,000 rows written per day. If you get near that, set
+`TV_REPLAY_NONCES = "cache"` under `[vars]` to keep nonces in the per-colo cache
+(best effort) instead.
 
 ## Seed custody & the security tradeoff
 

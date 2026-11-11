@@ -137,9 +137,35 @@ async function main(): Promise<void> {
     headerTemplates: { Authorization: "Bearer ${TOKEN}" },
   });
   const proxyText = await proxyResp.text();
+  if (process.env.SMOKE_EXPECT_PRIVATE_REFUSED === "1") {
+    // Default settings: the loopback upstream is a private address.
+    assert(proxyResp.status === 403, "POST /v1/proxy to a loopback upstream → 403");
+    assert(proxyText.includes("upstream_not_allowed"), "the refusal is upstream_not_allowed");
+    assert(!proxyText.includes("ghp_smoketoken"), "the refusal does not carry the credential");
+    console.log("\nPRIVATE-UPSTREAM SMOKE CHECKS PASSED");
+    return;
+  }
   assert(proxyResp.status === 200, "POST /v1/proxy → 200");
   assert(proxyResp.headers.get("x-upstream-status") === "200", "proxy sets X-Upstream-Status: 200");
   assert(proxyText.includes("healthy"), "proxy streamed the upstream body back");
+
+  // The server runs with an origin allowlist for "github" that holds only BASE.
+  const offList = await signedPost(secret, "/v1/proxy", {
+    ticket: await ticket(secret, { pur: "proxy", svc: "github" }),
+    service: "github",
+    upstream: { url: `http://localhost:${PORT}/v1/health`, method: "GET" },
+    headerTemplates: { Authorization: "Bearer ${TOKEN}" },
+  });
+  assert(offList.status === 403, "proxy to an origin off the allowlist → 403");
+  assert((await offList.text()).includes("upstream_not_allowed"), "the refusal is upstream_not_allowed");
+
+  // ── Storage get on tokens: metadata only ─────────────────────────────────
+  console.log("storage get:");
+  const getResp = await signedPost(secret, "/v1/storage", { operation: "get", collection: "tokens", key: "github" });
+  const getText = await getResp.text();
+  assert(getResp.status === 200, "get tokens/github → 200");
+  assert(getText.includes("github"), "get returns the token's metadata");
+  assert(!getText.includes("ghp_smoketoken") && !getText.includes('"fields"'), "get never returns the value or ciphertext");
 
   console.log("\nALL SMOKE CHECKS PASSED");
 }

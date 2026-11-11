@@ -19,8 +19,8 @@ Agent ──▶ Token Vault (control plane)         You deploy THIS:
 ```
 
 The Worker needs exactly **one provisioned resource** — a **D1 database** — and
-one **Secret** (the seed). Replay protection uses the per-colo Cache API, so
-there's no KV namespace to create.
+one **Secret** (the seed). Used ticket nonces go to the same D1 database and
+request ids to the per-colo Cache API, so there's no KV namespace to create.
 
 ---
 

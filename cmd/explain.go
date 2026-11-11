@@ -17,7 +17,7 @@ var errorExplanations = map[string]struct {
 		Fix:  "Run `tvault vault unlock` (admin only). Agents must wait for the owner to unlock.",
 	},
 	"POLICY_DENIED": {
-		What: "A policy rejected the request. The CLI says which rule (rate limit, allowed hours, lifetime cap, country, IP allowlist or channel), which policy, and what it is attached to (an agent, key, credential or label). Your own login sees all of that; an agent or key sees the policy name and, when it clears by itself, how long to wait, plus an event id to look up.",
+		What: "A policy rejected the request (exit code 13; 7 when a policy's rate limit answers with 429). The CLI says which rule (rate limit, allowed hours, lifetime cap, country, IP allowlist or channel), which policy, and what it is attached to (an agent, key, credential or label). Your own login sees all of that; an agent or key sees the policy name and, when it clears by itself, how long to wait, plus an event id to look up.",
 		Fix:  "Detach or loosen the policy: `tvault policy detach <policy-id> --label <label>` (or --credential, --agent, --key), or edit it in the web app. From an agent or key, ask the owner to look up the event id in Activity.",
 	},
 	"RATE_LIMITED": {
@@ -33,7 +33,7 @@ var errorExplanations = map[string]struct {
 		Fix:  "Make the change in the web app. The policy names the channels that may read the token.",
 	},
 	"GRANT_EXPIRED": {
-		What: "The agent's grant for this service has expired and was removed.",
+		What: "The agent's grant for this service has expired and was removed (exit code 14).",
 		Fix:  "Have an admin re-grant access: `tvault ag gr add <agent> <service>`.",
 	},
 	"DECRYPTION_FAILED": {
@@ -93,7 +93,7 @@ var errorExplanations = map[string]struct {
 		Fix:  "Grant the service to the acting principal first (`tvault keys grant <key> <service>`), then retry.",
 	},
 	"NO_GRANT": {
-		What: "This key or agent has no grant for that service.",
+		What: "This key or agent has no grant for that service (exit code 14).",
 		Fix:  "Ask the owner to grant it: `tvault grant <agent> <service>` or `tvault keys grant <key> <service>`.",
 	},
 	"SCOPE_NOT_DELEGABLE": {
@@ -235,6 +235,10 @@ var errorExplanations = map[string]struct {
 	"MCP_SERVER_INVALID": {
 		What: "The MCP server definition is malformed; typically the template id is not a short slug such as 'github'.",
 		Fix:  "Use a preset id from `tvault mcp-servers templates` with --preset, or drop --preset and give --name, --url and --header.",
+	},
+	"UPSTREAM_REDIRECT_BLOCKED": {
+		What: "The MCP server answered with a redirect to another address. Your webhook does not carry the credential there, and Token Vault does not pass the redirect on.",
+		Fix:  "Set the MCP server's URL to its final address (in the web app, or `tvault mcp-servers rm` then `add` from an admin context).",
 	},
 	"AUTO_GRANT_CANNOT_SET_SERVERS": {
 		What: "This key or agent can read the credential only through an automatic grant that lapses with the token, so it may not attach MCP servers (they would outlive the grant and point the next owner's credential at its URL).",

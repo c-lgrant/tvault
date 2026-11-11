@@ -40,13 +40,21 @@ TV_RATE_LIMIT_PER_MINUTE = "300"
 # plane). After changing it, press Verify Connection in the console so the
 # capability list is re-read.
 # TV_REFRESH_ENABLED = "true"
+# TV_PROXY_ALLOWED_ORIGINS — optional. JSON object, credential name → origins
+# /v1/proxy may send that credential to ("*" = every credential). When set, a
+# credential with no matching entry is refused. Not valid JSON = the Worker
+# does not start.
+# TV_PROXY_ALLOWED_ORIGINS = '{"github":["https://api.githubcopilot.com"]}'
+# TV_PROXY_ALLOW_PRIVATE — "true" lets /v1/proxy call private addresses (off by default).
+# TV_REPLAY_NONCES — "cache" keeps ticket nonces in the per-colo cache (best
+# effort) instead of D1 (atomic, the default; one row write per ticket).
 
 # ── D1 database (credential storage) ──────────────────────────────────────────
 # Credentials live in D1 — durable and strongly-consistent (read-your-writes,
 # which matters for OAuth refresh). The `kv` table self-creates on the first
 # request (idempotent CREATE TABLE IF NOT EXISTS in D1StorageAdapter.create);
-# there is no migration step. (Replay protection uses the per-colo Cache API —
-# no binding, no daily write quota — so there is NO KV namespace to provision.)
+# there is no migration step. Used ticket nonces are rows in the same table;
+# request ids use the per-colo Cache API. There is NO KV namespace to provision.
 #
 # `database_id` is DELIBERATELY OMITTED. Wrangler (>=4.45) auto-provisions the
 # database on first deploy and KEEPS IT LINKED across every later deploy, so a
