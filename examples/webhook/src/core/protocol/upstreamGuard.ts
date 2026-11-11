@@ -9,7 +9,7 @@
 //
 // Both are settings of the webhook. Nothing in a request can change them.
 
-import { invalidRequest, upstreamNotAllowed } from "./errors.ts";
+import { invalidRequest, upstreamError, upstreamNotAllowed } from "./errors.ts";
 import type { RuntimeContext } from "../../runtime/context.ts";
 
 /** Service name → allowed origins. The key "*" applies to every service. */
@@ -124,21 +124,30 @@ function ipv6Groups(host: string): number[] | null {
   return fill < 1 ? null : [...head, ...new Array<number>(fill).fill(0), ...rest];
 }
 
+/**
+ * Everything that is not plain global unicast is private. An address that
+ * carries an IPv4 address (mapped, NAT64, 6to4) is judged by that address;
+ * tunnel and documentation prefixes are refused outright.
+ */
 function isPrivateIpv6(g: number[]): boolean {
   const embedded = (hi: number, lo: number) => isPrivateIpv4([hi >> 8, hi & 0xff, lo >> 8, lo & 0xff]);
   const zeroTo = (n: number) => g.slice(0, n).every((x) => x === 0);
-  if (zeroTo(8)) return true; // ::
-  if (zeroTo(7) && g[7] === 1) return true; // ::1
-  if (zeroTo(5) && g[5] === 0xffff) return embedded(g[6]!, g[7]!); // IPv4-mapped
-  if (zeroTo(6)) return embedded(g[6]!, g[7]!); // IPv4-compatible
-  if (g[0] === 0x64 && g[1] === 0xff9b && g.slice(2, 6).every((x) => x === 0)) return embedded(g[6]!, g[7]!); // NAT64
+  if (zeroTo(5) && g[5] === 0xffff) return embedded(g[6]!, g[7]!); // IPv4-mapped ::ffff:0:0/96
+  if (g[0] === 0x64 && g[1] === 0xff9b && g.slice(2, 6).every((x) => x === 0)) return embedded(g[6]!, g[7]!); // NAT64 64:ff9b::/96
   if (g[0] === 0x2002) return embedded(g[1]!, g[2]!); // 6to4
   const first = g[0]!;
-  return (
-    (first & 0xfe00) === 0xfc00 || // unique local
-    (first & 0xffc0) === 0xfe80 || // link-local
-    (first & 0xff00) === 0xff00 // multicast
-  );
+  // Only 2000::/3 is global unicast. That leaves out ::, ::1, IPv4-compatible,
+  // 64:ff9b:1::/48, 100::/64, unique local, link-local and multicast.
+  if ((first & 0xe000) !== 0x2000) return true;
+  if (first === 0x2001 && g[1] === 0) return true; // Teredo 2001::/32
+  if (first === 0x2001 && g[1] === 0xdb8) return true; // documentation
+  return false;
+}
+
+/** Request headers that name a host other than the one in the URL. */
+export function isRoutingHeader(name: string): boolean {
+  const n = name.trim().toLowerCase();
+  return n === "host" || n === ":authority" || n === "forwarded" || n === "x-forwarded-host";
 }
 
 /** True for an IP address (v4 or v6 text) that is not a public unicast address. */
@@ -168,8 +177,10 @@ export function isPrivateHost(hostname: string): boolean {
 
 /**
  * Refuse a private upstream unless the operator allowed it. Where the runtime
- * can resolve names (Node), every address the name resolves to is checked too;
- * a name that does not resolve is left for the upstream call to fail on.
+ * can resolve names (Node), every address the name resolves to is checked too,
+ * and a name that does not resolve is not called. The upstream call resolves
+ * the name again, so a name that changes its answer between the two is not
+ * caught here (the connection is not pinned to the checked address).
  */
 export async function assertPublicUpstream(
   ctx: Pick<RuntimeContext, "config" | "resolveHost">,
@@ -186,7 +197,8 @@ export async function assertPublicUpstream(
   try {
     addresses = await ctx.resolveHost(url.hostname);
   } catch {
-    return;
+    // A name that cannot be checked is not called.
+    throw upstreamError("Upstream request failed");
   }
-  if (addresses.some(isPrivateAddress)) throw refuse();
+  if (addresses.length === 0 || addresses.some(isPrivateAddress)) throw refuse();
 }

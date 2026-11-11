@@ -218,7 +218,11 @@ press **Verify Connection** in the console so the capability list is re-read.
   private or link-local address, `localhost`, a single-label name or a name under
   `.local`, `.internal`, `.lan` or `.home.arpa` gets `403 upstream_not_allowed`.
   The Node runtime also resolves the name and checks every address. Set
-  `TV_PROXY_ALLOW_PRIVATE=true` if your upstream is on your own network.
+  `TV_PROXY_ALLOW_PRIVATE=true` if your upstream is on your own network. The
+  upstream call resolves the name again, so the connection is not pinned to the
+  checked address. A `Host`, `Forwarded` or `X-Forwarded-Host` header is never
+  sent upstream: a forwarded one is dropped, and a header template that sets one
+  gets `400 invalid_request`.
 - **Origin allowlist for `/v1/proxy` (opt-in).** The control plane names the
   upstream URL, and the webhook puts the credential into the request. To bind
   each credential to the origins you trust, set `TV_PROXY_ALLOWED_ORIGINS` to a

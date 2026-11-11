@@ -20,7 +20,7 @@ import { freshDocument } from "../core/protocol/oauthRefresh.ts";
 import { backgroundRunner } from "../core/middleware/background.ts";
 import type { FeatureModule } from "../core/registry.ts";
 import { isGcpServiceAccount, mintGcpAccessToken } from "./interceptors/gcpSa.ts";
-import { assertOriginAllowed, assertPublicUpstream, parseUpstreamUrl } from "../core/protocol/upstreamGuard.ts";
+import { assertOriginAllowed, assertPublicUpstream, isRoutingHeader, parseUpstreamUrl } from "../core/protocol/upstreamGuard.ts";
 
 // Hop-by-hop headers not forwarded from the upstream response (proxy.py:118).
 const HOP_BY_HOP = new Set(["content-encoding", "content-length", "transfer-encoding", "connection"]);
@@ -150,8 +150,17 @@ export function proxyModule(): FeatureModule {
           }
 
           const headers = new Headers();
-          for (const [k, v] of Object.entries(upstream.headers ?? {})) headers.set(k, v);
+          // A header that names another host could send the request (and the
+          // credential) to a different site on the same address than the one
+          // the URL checks passed. Forwarded ones are dropped; a template that
+          // sets one is refused.
+          for (const [k, v] of Object.entries(upstream.headers ?? {})) {
+            if (!isRoutingHeader(k)) headers.set(k, v);
+          }
           for (const [name, template] of Object.entries(headerTemplates)) {
+            if (isRoutingHeader(name)) {
+              throw invalidRequest("A header template cannot set Host, Forwarded or X-Forwarded-Host");
+            }
             const value = String(template).replaceAll("${TOKEN}", accessToken);
             // A credential with a control character (or a non-Latin-1 one) cannot
             // be a header value. Refuse it here with a fixed message: the runtime's
