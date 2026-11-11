@@ -3,6 +3,7 @@
   "release-type": "go",
   "include-component-in-tag": false,
   "include-v-in-tag": true,
+  "bump-minor-pre-major": true,
   "bootstrap-sha": "1ebadf4cd5dafc960fd275664cec860e25268e20",
   "packages": {
     ".": {

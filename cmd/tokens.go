@@ -44,7 +44,7 @@ func runTokensList(cmd *cobra.Command, _ []string) error {
 	rows := make([]map[string]string, len(toks))
 	for i, t := range toks {
 		rows[i] = map[string]string{
-			"service": t.ServiceName, "type": t.Type,
+			"service": t.ServiceName, "type": t.TypeLabel(),
 		}
 	}
 	return output.Render(os.Stdout, cc.Format,
@@ -114,7 +114,7 @@ func runTokensShow(cmd *cobra.Command, args []string) error {
 		return enrich(cmd, cc, err)
 	}
 	rows := []map[string]string{{
-		"service": t.ServiceName, "type": t.Type,
+		"service": t.ServiceName, "type": t.TypeLabel(),
 		"display_name": t.DisplayName, "notes": t.Notes,
 		"tags": strings.Join(t.Tags, ","),
 	}}
@@ -132,11 +132,15 @@ var tokensSetCmd = &cobra.Command{
 }
 
 func runTokensSet(cmd *cobra.Command, args []string) error {
-	value, _ := cmd.Flags().GetString("value")
-	if value == "" {
-		return &clierr.CLIError{Kind: clierr.KindUser, Command: "tokens set", Message: "--value is required"}
-	}
 	cc, err := resolve(cmd)
+	if err != nil {
+		return err
+	}
+	// A sign-in credential has no value: say so before asking for one.
+	if t, gerr := cc.Client.GetToken(args[0]); gerr == nil && t.Kind == api.KindSignIn {
+		return enrich(cmd, cc, api.SignInNoValueError(args[0], "GET /api/tokens/"+args[0]))
+	}
+	value, err := readSecretValue(cmd, "tokens set", false)
 	if err != nil {
 		return err
 	}
@@ -282,16 +286,21 @@ func runTokensCreate(cmd *cobra.Command, _ []string) error {
 
 	typ, _ := cmd.Flags().GetString("type")
 	service, _ := cmd.Flags().GetString("service")
-	value, _ := cmd.Flags().GetString("value")
 
 	var req *api.CreateTokenRequest
-	if typ != "" && service != "" {
+	if service != "" {
+		empty, _ := cmd.Flags().GetBool("empty")
+		value, verr := readSecretValue(cmd, "tokens create", empty)
+		if verr != nil {
+			return verr
+		}
+		// Service known but type missing → default to PlainText, so
+		// `tvault add foo` works without a --type flag for the most common
+		// case; explicit --type still overrides.
+		if typ == "" {
+			typ = "PlainText"
+		}
 		req = &api.CreateTokenRequest{Type: typ, ServiceName: service, Credential: value}
-	} else if service != "" {
-		// Service known but type missing → default to PlainText. This makes
-		// `tvault add foo --value bar` work without a --type flag for the
-		// most common case; explicit --type still overrides.
-		req = &api.CreateTokenRequest{Type: "PlainText", ServiceName: service, Credential: value}
 	} else {
 		if !cc.IsTTY {
 			return &clierr.CLIError{Kind: clierr.KindUser, Command: "tokens create",
@@ -310,7 +319,7 @@ func runTokensCreate(cmd *cobra.Command, _ []string) error {
 	}
 	if req.Credential == "" {
 		cmd.PrintErrf("Created token %q (no value stored).\n", req.ServiceName)
-		cmd.PrintErrf("  fill with: tvault tokens set %s --value <secret>\n", req.ServiceName)
+		cmd.PrintErrf("  fill with: printf %%s \"$SECRET\" | tvault set %s --value-stdin\n", req.ServiceName)
 	} else {
 		cmd.PrintErrf("Created token %q.\n", req.ServiceName)
 	}
@@ -331,7 +340,16 @@ var tokensStoreTicketCmd = &cobra.Command{
 	Args:              cobra.ExactArgs(1),
 	ValidArgsFunction: completeServices,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		value, _ := cmd.Flags().GetString("value")
+		// Same rules as add/set: --value warns about shell history, and
+		// --value-stdin reads stdin. Without either, only the envelope is
+		// printed (stdin is never read implicitly here).
+		var value string
+		if valueStdin, _ := cmd.Flags().GetBool("value-stdin"); valueStdin || cmd.Flags().Changed("value") {
+			var verr error
+			if value, verr = readSecretValue(cmd, "tokens store-ticket", false); verr != nil {
+				return verr
+			}
+		}
 		typ, _ := cmd.Flags().GetString("type")
 		if typ == "" {
 			typ = "PlainText"
@@ -369,15 +387,17 @@ var tokensStoreTicketCmd = &cobra.Command{
 func init() {
 	tokensGetCmd.Flags().Bool("check", false, "exit 0 if the token has a value, 6 if empty; never prints the secret")
 	// Note: --field, --kv, --json are registered as rootCmd.PersistentFlags() in root.go
-	tokensSetCmd.Flags().String("value", "", "new credential value")
+	addValueFlags(tokensSetCmd, "new credential value")
 	tokensEditCmd.Flags().String("name", "", "display name")
 	tokensEditCmd.Flags().String("notes", "", "freeform notes")
 	tokensEditCmd.Flags().StringSlice("tags", nil, "comma-separated tags")
 	tokensRmCmd.Flags().Bool("force", false, "skip the confirmation prompt")
 	tokensCreateCmd.Flags().String("type", "", "token type (JWT, PlainText, Certificate, SSHKey, RawCredential, TOTP)")
 	tokensCreateCmd.Flags().String("service", "", "service name")
-	tokensCreateCmd.Flags().String("value", "", "credential value")
-	tokensStoreTicketCmd.Flags().String("value", "", "secret to store on the webhook (omit to print ticket envelope only)")
+	addValueFlags(tokensCreateCmd, "credential value")
+	tokensCreateCmd.Flags().Bool("empty", false, "create the credential without a value (fill it later with `tvault set`)")
+	tokensStoreTicketCmd.Flags().String("value", "", "secret to store on the webhook (lands in shell history; prefer --value-stdin). Omit both to print the ticket envelope only")
+	tokensStoreTicketCmd.Flags().Bool("value-stdin", false, "read the secret to store from stdin")
 	tokensStoreTicketCmd.Flags().String("type", "PlainText", "token type when --value is set")
 
 	tokensCmd.AddCommand(

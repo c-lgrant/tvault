@@ -12,8 +12,10 @@ import (
 	"math/rand"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/c-lgrant/tvault/internal/clierr"
@@ -77,7 +79,8 @@ func New(baseURL string, timeout time.Duration) *Client {
 		BaseURL:   baseURL,
 		UserAgent: DefaultUserAgent,
 		HTTP: &http.Client{
-			Timeout: timeout,
+			Timeout:       timeout,
+			CheckRedirect: refuseInsecureRedirect,
 			Transport: &http.Transport{
 				MaxIdleConns:        10,
 				IdleConnTimeout:     30 * time.Second,
@@ -90,6 +93,71 @@ func New(baseURL string, timeout time.Duration) *Client {
 	}
 }
 
+// IsLoopbackHost reports whether host (no port) is localhost or a loopback IP.
+func IsLoopbackHost(host string) bool {
+	host = strings.TrimSuffix(strings.ToLower(host), ".")
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
+// isSecureURL reports whether u is https, or http to a loopback host.
+func isSecureURL(u *url.URL) bool {
+	return u.Scheme == "https" || (u.Scheme == "http" && IsLoopbackHost(u.Hostname()))
+}
+
+// refuseInsecureRedirect is an http.Client CheckRedirect: it follows at most
+// ten redirects and never to plain http, except to a loopback host.
+func refuseInsecureRedirect(req *http.Request, via []*http.Request) error {
+	if len(via) >= 10 {
+		return errors.New("stopped after 10 redirects")
+	}
+	if !isSecureURL(req.URL) {
+		return errors.New("refusing to follow a redirect to a non-https address")
+	}
+	return nil
+}
+
+// requireSecureWebhookURL rejects a webhook URL that is not https (loopback
+// excepted) before a ticket or a value is sent to it.
+func requireSecureWebhookURL(raw, reqLine string) error {
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" || !isSecureURL(u) {
+		return &clierr.CLIError{
+			Kind: clierr.KindServer, Request: reqLine,
+			Message: "the control plane returned a webhook URL that is not https; nothing was sent to it",
+		}
+	}
+	return nil
+}
+
+// withRedirectCheck returns hc, or a copy of it that refuses insecure
+// redirects when hc sets no CheckRedirect of its own.
+func withRedirectCheck(hc *http.Client) *http.Client {
+	if hc.CheckRedirect != nil {
+		return hc
+	}
+	cp := *hc
+	cp.CheckRedirect = refuseInsecureRedirect
+	return &cp
+}
+
+// stripURLQuery removes the query from the URL inside a *url.Error, so a
+// transport error never prints a one-shot ticket.
+func stripURLQuery(err error) error {
+	var ue *url.Error
+	if errors.As(err, &ue) {
+		if u, perr := url.Parse(ue.URL); perr == nil {
+			u.RawQuery = ""
+			u.Fragment = ""
+			ue.URL = u.String()
+		}
+	}
+	return err
+}
+
 // errorResponse is the backend's standard error envelope. The wire-level
 // "detail" field is either a string or an object {code, message}; it is
 // decoded procedurally in parseErrorBody.
@@ -97,13 +165,53 @@ type errorResponse struct {
 	Code         string
 	Message      string
 	MissingScope string
+	Denial       *denialFields // POLICY_DENIED extras; nil for any other error
+}
+
+// denialBody is the shape of a POLICY_DENIED body, either top-level (REST) or
+// inside "detail" (principal gate). Every field beyond code/policy/rule/reason
+// is additive: appliedVia and ruleSettings go to the owner's own (human)
+// login only; retryAfter and eventId may reach agents and keys too.
+type denialBody struct {
+	Code         string         `json:"code"`
+	Message      string         `json:"message"`
+	Error        string         `json:"error"`
+	Policy       string         `json:"policy"`
+	Rule         string         `json:"rule"`
+	Reason       string         `json:"reason"`
+	AppliedVia   *appliedVia    `json:"appliedVia"`
+	RuleSettings map[string]any `json:"ruleSettings"`
+	RetryAfter   *int           `json:"retryAfter"`
+	EventID      string         `json:"eventId"`
+}
+
+func (d denialBody) response() errorResponse {
+	msg := d.Message
+	if msg == "" {
+		msg = d.Reason
+	}
+	if msg == "" {
+		msg = d.Error
+	}
+	return errorResponse{Code: d.Code, Message: msg, Denial: &denialFields{
+		Policy: d.Policy, Rule: d.Rule, AppliedVia: d.AppliedVia,
+		RuleSettings: d.RuleSettings, RetryAfter: d.RetryAfter, EventID: d.EventID,
+	}}
 }
 
 func parseErrorBody(body []byte) errorResponse {
 	var probe struct {
 		Detail json.RawMessage `json:"detail"`
+		Code   string          `json:"code"`
 	}
-	if err := json.Unmarshal(body, &probe); err != nil || len(probe.Detail) == 0 {
+	if err := json.Unmarshal(body, &probe); err != nil {
+		return errorResponse{Message: string(body)}
+	}
+	if len(probe.Detail) == 0 {
+		var d denialBody
+		if probe.Code != "" && json.Unmarshal(body, &d) == nil {
+			return d.response()
+		}
 		return errorResponse{Message: string(body)}
 	}
 	// detail may be a bare string …
@@ -118,6 +226,12 @@ func parseErrorBody(body []byte) errorResponse {
 		MissingScope *string `json:"missingScope"`
 	}
 	if err := json.Unmarshal(probe.Detail, &obj); err == nil {
+		if obj.Code == "POLICY_DENIED" {
+			var d denialBody
+			if json.Unmarshal(probe.Detail, &d) == nil {
+				return d.response()
+			}
+		}
 		er := errorResponse{Code: obj.Code, Message: obj.Message}
 		if obj.MissingScope != nil {
 			er.MissingScope = *obj.MissingScope
@@ -144,6 +258,18 @@ func kindForError(status int, code string) clierr.Kind {
 		return clierr.KindInvalidKey
 	case "VAULT_LOCKED":
 		return clierr.KindVaultLocked
+	case "SIGNIN_NO_VALUE":
+		// A sign-in credential has no value: same exit code as an empty one.
+		return clierr.KindEmpty
+	case "POLICY_DENIED":
+		// A policy's rate limit answered with 429 stays "rate limited" (7): the
+		// script's right move is the same, wait and retry.
+		if status == 429 {
+			return clierr.KindRateLimited
+		}
+		return clierr.KindPolicyDenied
+	case "NO_GRANT", "GRANT_EXPIRED", "GRANT_TOOLS_ONLY":
+		return clierr.KindNoGrant
 	}
 	return kindForStatus(status)
 }
@@ -332,9 +458,15 @@ func (c *Client) attempt(method, path string, body any, query map[string]string)
 		cliErr.Hint = "the key is unknown or was revoked — check it, or log in with a valid key (`tvault login --key-stdin`)"
 	}
 	// FastAPI's bare 404 for a route that doesn't exist (as opposed to an
-	// application "X not found") means the server predates the endpoint.
-	if resp.StatusCode == http.StatusNotFound && er.Code == "" && er.Message == "Not Found" && cliErr.Hint == "" {
-		cliErr.Hint = "this server doesn't have that endpoint — it likely predates scoped keys (api.tokenvault.one has them)"
+	// application "X not found") or 405 means the server predates the endpoint.
+	bareNotFound := resp.StatusCode == http.StatusNotFound && er.Code == "" && er.Message == "Not Found"
+	bareNotAllowed := resp.StatusCode == http.StatusMethodNotAllowed && er.Code == "" && er.Message == "Method Not Allowed"
+	if (bareNotFound || bareNotAllowed) && cliErr.Hint == "" {
+		if path == "/api/agents/whoami" || path == "/api/keys" || strings.HasPrefix(path, "/api/keys/") {
+			cliErr.Hint = "this server doesn't have that endpoint — it likely predates scoped keys; it may need an upgrade"
+		} else {
+			cliErr.Hint = "this control plane does not have this command yet; it may need an upgrade"
+		}
 	}
 	// Code-specific guidance for codes that keep their status-derived Kind
 	// (and so their exit code: 1 for 4xx, 2 for 401).
@@ -357,18 +489,35 @@ func (c *Client) attempt(method, path string, body any, query map[string]string)
 			cliErr.Hint = "a key or agent can't loosen its own controls — ask the account owner to make this change"
 		case "ROTATION_CONFLICT":
 			cliErr.Hint = "another rotation of this key won the race — use the key it returned, or rotate again"
+		case "SIGNIN_NO_VALUE":
+			cliErr.Hint = "this is a Token Vault sign-in credential: it has no value to read or change. Agents use it through its MCP server (grant with `tvault grant <agent> <name>=mcp`). See `tvault explain SIGNIN_NO_VALUE`"
+		case "SIGNIN_TOOLS_ONLY":
+			cliErr.Hint = "a Token Vault sign-in credential can only be granted MCP access: `tvault grant <agent> <name>=mcp`"
 		case "UNKNOWN_SCOPE":
 			cliErr.Hint = "see the scope list in the README (Keys section)"
 		case "INVALID_EXPIRY":
 			cliErr.Hint = "use --expires 30d|90d|365d|YYYY-MM-DD|never (must be in the future)"
 		}
 	}
+	explainDenial(cliErr, er, query)
 	if resp.StatusCode == http.StatusTooManyRequests {
-		if secs, err := strconv.Atoi(resp.Header.Get("Retry-After")); err == nil && secs > 0 {
+		// A full policy explanation already carries its own hint and retry time.
+		keep := cliErr.Plain != "" && er.Code != "RATE_LIMITED"
+		secs, err := strconv.Atoi(resp.Header.Get("Retry-After"))
+		if (err != nil || secs <= 0) && er.Denial != nil && er.Denial.RetryAfter != nil {
+			// No header: fall back to the body's retryAfter.
+			secs, err = *er.Denial.RetryAfter, nil
+		}
+		if err == nil && secs > 0 {
 			cliErr.RetryAfter = time.Duration(secs) * time.Second
-			cliErr.Hint = fmt.Sprintf("rate limited — retry in %ds", secs)
-		} else {
+			if !keep {
+				cliErr.Hint = fmt.Sprintf("rate limited — retry in %ds", secs)
+			}
+		} else if !keep {
 			cliErr.Hint = "rate limited — back off before retrying"
+		}
+		if er.Denial != nil && !er.Denial.explainable() {
+			addEventHint(cliErr, er.Denial.EventID)
 		}
 		return nil, true, cliErr
 	}

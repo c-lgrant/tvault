@@ -1,4 +1,9 @@
 name = "tv-webhook"
+# This is the `develop` branch: defaults target the DEV control plane
+# (tokenvault.one) and a distinct worker name, so a dev deploy never binds to
+# or collides with production. `main` targets tokenvault.uk. Three values differ
+# between the branches (name, TOKENVAULT_FRONTEND_URL, database_name); see
+# RELEASING.md and scripts/check-wrangler-env.mjs.
 main = "src/runtime/worker.ts"
 compatibility_date = "2024-11-01"
 compatibility_flags = ["nodejs_compat"]
@@ -15,6 +20,9 @@ TOKENVAULT_FRONTEND_URL = "https://tokenvault.uk"
 # WEBHOOK_EXTERNAL_URL is normally auto-detected from the request host; set it
 # only if you front the Worker with a custom domain that rewrites Host.
 # WEBHOOK_EXTERNAL_URL = "https://tv-webhook.<account>.workers.dev"
+# AUDIT_RETENTION_DAYS — delete audit events older than this many days (runs on the
+# cron trigger). Unset or 0 keeps every event; nothing is deleted by default.
+# AUDIT_RETENTION_DAYS = "90"
 # TOKENVAULT_IP — TV's egress IP, denied on /v1/credential, /v1/store, /v1/totp-code.
 # TOKENVAULT_IP = ""
 # DENY_IPS / DENY_ORIGINS — extra comma-separated denylist entries.
@@ -26,13 +34,27 @@ TOKENVAULT_FRONTEND_URL = "https://tokenvault.uk"
 # "same IP > 300 requests / 1 min on this route → block for 1 min"; the free
 # tier includes one rule).
 TV_RATE_LIMIT_PER_MINUTE = "300"
+# TV_REFRESH_ENABLED — legacy `tv-refresh` capability, OFF by default. Set to
+# "true" only to let the control plane refresh tokens minted with its own
+# built-in OAuth apps (the one path that returns a refresh token to the control
+# plane). After changing it, press Verify Connection in the console so the
+# capability list is re-read.
+# TV_REFRESH_ENABLED = "true"
+# TV_PROXY_ALLOWED_ORIGINS — optional. JSON object, credential name → origins
+# /v1/proxy may send that credential to ("*" = every credential). When set, a
+# credential with no matching entry is refused. Not valid JSON = the Worker
+# does not start.
+# TV_PROXY_ALLOWED_ORIGINS = '{"github":["https://api.githubcopilot.com"]}'
+# TV_PROXY_ALLOW_PRIVATE — "true" lets /v1/proxy call private addresses (off by default).
+# TV_REPLAY_NONCES — "cache" keeps ticket nonces in the per-colo cache (best
+# effort) instead of D1 (atomic, the default; one row write per ticket).
 
 # ── D1 database (credential storage) ──────────────────────────────────────────
 # Credentials live in D1 — durable and strongly-consistent (read-your-writes,
 # which matters for OAuth refresh). The `kv` table self-creates on the first
 # request (idempotent CREATE TABLE IF NOT EXISTS in D1StorageAdapter.create);
-# there is no migration step. (Replay protection uses the per-colo Cache API —
-# no binding, no daily write quota — so there is NO KV namespace to provision.)
+# there is no migration step. Used ticket nonces are rows in the same table;
+# request ids use the per-colo Cache API. There is NO KV namespace to provision.
 #
 # `database_id` is DELIBERATELY OMITTED. Wrangler (>=4.45) auto-provisions the
 # database on first deploy and KEEPS IT LINKED across every later deploy, so a
@@ -45,6 +67,15 @@ TV_RATE_LIMIT_PER_MINUTE = "300"
 [[d1_databases]]
 binding = "DB"
 database_name = "tv-webhook"
+
+# ── Scheduled OAuth refresh ───────────────────────────────────────────────────
+# Every 10 minutes the Worker refreshes own-app OAuth tokens (connected through
+# /v1/oauth/callback) that expire within OAUTH_REFRESH_WINDOW_SECONDS (default
+# 1200). Token Vault does not schedule this: refresh is the webhook's job.
+# Removing the trigger leaves only Refresh in Token Vault and the fetch-time
+# refresh of an already-expired token.
+[triggers]
+crons = ["*/10 * * * *"]
 
 # ── Observability (Workers Logs + invocation traces) ──────────────────────────
 # Persists structured logs and per-invocation traces, viewable in the dashboard
@@ -64,8 +95,9 @@ head_sampling_rate = 1
 # provisions this Secret on the first deploy when the build token has
 # `Workers Scripts: Edit`, so a git-push deploy is bindable with no manual step.
 # See deploy/cloudflare/README.md.
-#   OAUTH_PROVIDERS_JSON — optional Secret. JSON map provider->{clientSecret,clientId?,tokenUrl?}
-#                          enabling autonomous OAuth refresh (/v1/refresh-notify).
+#   OAUTH_PROVIDERS_JSON — optional Secret. JSON map provider->{clientSecret,clientId?,tokenUrl?,
+#                          authorizeUrl?,authorizeParams?,tokenAuthMethod?} for "connect with
+#                          your own OAuth app" and autonomous refresh (cron + /v1/refresh-notify).
 #   TV_ADMIN_SECRET — optional Secret. When set, this value must be supplied as
 #                     the x-tv-admin-secret request header to access the setup
 #                     endpoints (/bind, /v1/register-url, /v1/exchange) after

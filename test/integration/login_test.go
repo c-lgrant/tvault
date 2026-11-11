@@ -23,7 +23,7 @@ func TestFullLoginDance(t *testing.T) {
 		case "/api/cli/auth/exchange":
 			json.NewEncoder(w).Encode(map[string]any{
 				"id_token": "idt", "refresh_token": "rt",
-				"expires_in": 3600, "identity": "conor@example.com",
+				"expires_in": 3600, "identity": "user@example.com",
 			})
 		default:
 			t.Errorf("unexpected backend path: %s", r.URL.Path)
@@ -58,7 +58,7 @@ func TestFullLoginDance(t *testing.T) {
 	// contract that every command depends on).
 	cfg, _ := config.Load()
 	cfg.Contexts["ci-admin"] = &config.Context{
-		Type: "admin", APIURL: backend.URL, Identity: "conor@example.com", RefreshToken: "rt",
+		Type: "admin", APIURL: backend.URL, Identity: "user@example.com", RefreshToken: "rt",
 	}
 	cfg.Current = "ci-admin"
 	if err := cfg.Save(); err != nil {

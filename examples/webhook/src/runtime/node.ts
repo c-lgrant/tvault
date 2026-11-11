@@ -6,6 +6,7 @@
 // this host; the control plane only ever learns the HMAC secret via the
 // one-time /v1/exchange handshake.
 
+import { lookup } from "node:dns/promises";
 import { serve } from "@hono/node-server";
 import { createApp } from "../core/app.ts";
 import { allModules } from "../modules/index.ts";
@@ -14,6 +15,8 @@ import { FileSecretProvider } from "../adapters/secrets/fileSecret.ts";
 import { MemoryReplayGuard } from "../adapters/replay/memory.ts";
 import { configFromEnv } from "./config.ts";
 import { runStartup } from "./startup.ts";
+import { refreshDueTokens } from "../core/protocol/oauthRefresh.ts";
+import { pruneAudit } from "../core/protocol/retention.ts";
 
 async function main(): Promise<void> {
   const [storage, secrets] = await Promise.all([FsStorageAdapter.create(), FileSecretProvider.create()]);
@@ -22,16 +25,46 @@ async function main(): Promise<void> {
     secrets,
     storage,
     replay: new MemoryReplayGuard(),
+    // Lets /v1/proxy refuse an upstream name that resolves to a private address.
+    resolveHost: async (hostname: string) => (await lookup(hostname, { all: true })).map((a) => a.address),
   };
 
   await runStartup(ctx);
 
-  const app = createApp(ctx, allModules());
+  const app = createApp(ctx, allModules({ tvRefreshEnabled: ctx.config.tvRefreshEnabled === true }));
 
   const port = Number(process.env.PORT) || 8080;
   serve({ fetch: app.fetch, port, hostname: "0.0.0.0" });
   console.log(`tv-webhook (node) listening on :${port} — webhookId=${await secrets.webhookId()}`);
+
+  // Audit retention: shortly after start, then hourly.
+  const prune = () => void pruneAudit(ctx).catch(() => console.error("[retention] audit prune failed"));
+  setTimeout(prune, 10_000).unref();
+  setInterval(prune, 3_600_000).unref();
+
+  // Refresh own-app OAuth tokens before they expire (Workers use a cron
+  // trigger instead). Runs once shortly after start, then every interval.
+  const raw = process.env.OAUTH_REFRESH_INTERVAL_SECONDS;
+  const interval = raw === undefined || raw === "" ? DEFAULT_REFRESH_INTERVAL_SECONDS : Number(raw);
+  if (Number.isFinite(interval) && interval > 0) {
+    let running = false;
+    const sweep = async () => {
+      if (running) return; // never overlap two sweeps
+      running = true;
+      try {
+        await refreshDueTokens(ctx);
+      } catch {
+        console.error("[refresh] sweep failed");
+      } finally {
+        running = false;
+      }
+    };
+    setTimeout(sweep, 5_000).unref();
+    setInterval(sweep, interval * 1000).unref();
+  }
 }
+
+const DEFAULT_REFRESH_INTERVAL_SECONDS = 600;
 
 main().catch((err) => {
   console.error("fatal: failed to start tv-webhook", err);

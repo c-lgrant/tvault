@@ -24,6 +24,8 @@ const (
 	KindKeyExpired               // 10 — 401 KEY_EXPIRED: the API key is past its expiry
 	KindKeySuspended             // 11 — 403 KEY_SUSPENDED: the key is suspended
 	KindInvalidKey               // 12 — 401 INVALID_KEY: the key is unknown or malformed
+	KindPolicyDenied             // 13 — POLICY_DENIED: a policy refused the call
+	KindNoGrant                  // 14 — NO_GRANT / GRANT_EXPIRED / GRANT_TOOLS_ONLY: no grant for this use
 )
 
 func (k Kind) exitCode() int {
@@ -52,6 +54,10 @@ func (k Kind) exitCode() int {
 		return 11
 	case KindInvalidKey:
 		return 12
+	case KindPolicyDenied:
+		return 13
+	case KindNoGrant:
+		return 14
 	default:
 		return 1
 	}
@@ -65,15 +71,26 @@ type CLIError struct {
 	Scope      string        // missing scope for SCOPE_DENIED, e.g. "tokens:create"
 	Command    string        // e.g. "agents create"
 	Message    string        // human-readable summary
-	Context    string        // e.g. "nuc-admin (admin · conor@example.com)"
+	Context    string        // e.g. "work-admin (admin · user@example.com)"
 	Request    string        // e.g. "POST /api/agents"
 	Response   string        // e.g. "403 POLICY_DENIED — agent quota exceeded"
 	Hint       string        // a likely fix; rendered only when known
 	RetryAfter time.Duration // server-provided backoff (429 Retry-After); 0 = unknown
+	// Plain, when set, replaces the multi-line footer with a two-line
+	// explanation: "denied: <Plain>" then "hint: <Hint>". Used for policy and
+	// access refusals, whose sentence already says everything the footer would.
+	Plain string
 }
 
 func (e *CLIError) Error() string {
 	var b strings.Builder
+	if e.Plain != "" {
+		fmt.Fprintf(&b, "denied: %s", e.Plain)
+		if e.Hint != "" {
+			fmt.Fprintf(&b, "\nhint: %s", e.Hint)
+		}
+		return b.String()
+	}
 	cmd := e.Command
 	if cmd == "" {
 		cmd = "error"

@@ -8,6 +8,7 @@ import (
 
 	"github.com/c-lgrant/tvault/internal/auth"
 	"github.com/c-lgrant/tvault/internal/clierr"
+	"github.com/c-lgrant/tvault/internal/config"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 )
@@ -31,6 +32,18 @@ var loginCmd = &cobra.Command{
 		frontendURL, _ := cmd.Flags().GetString("frontend-url")
 		keyStdin, _ := cmd.Flags().GetBool("key-stdin")
 
+		// `tvault --ctx dev login` signs the dev context in again: --ctx names
+		// the context like --as, and a known context keeps its own server.
+		if asName == "" {
+			asName = contextOverride(cmd)
+		}
+		apiURLSet := cmd.Flags().Changed("api-url")
+		if !apiURLSet {
+			if stored := storedAPIURL(asName); stored != "" {
+				apiURL, apiURLSet = stored, true
+			}
+		}
+
 		if keyStdin {
 			if apiKey != "" {
 				return &clierr.CLIError{Kind: clierr.KindUser, Command: "login", Message: "--key and --key-stdin are mutually exclusive"}
@@ -50,11 +63,19 @@ var loginCmd = &cobra.Command{
 			return nil
 		}
 
-		if cmd.Flags().Changed("api-url") && !cmd.Flags().Changed("frontend-url") {
+		// An explicit --frontend-url is remembered in the context and reused by
+		// a later bare login and by re-sign-in; older contexts have none.
+		remember := cmd.Flags().Changed("frontend-url")
+		if !remember {
+			if stored := storedFrontendURL(asName, apiURL); stored != "" {
+				frontendURL, remember = stored, true
+			}
+		}
+		if apiURLSet && !remember {
 			derived, ok := deriveFrontendURL(apiURL)
 			if !ok {
 				return &clierr.CLIError{Kind: clierr.KindUser, Command: "login",
-					Message: "cannot derive the frontend URL from --api-url " + apiURL,
+					Message: "cannot derive the frontend URL from the API URL " + apiURL,
 					Hint:    "pass --frontend-url too (the site that hosts /cli/auth)"}
 			}
 			frontendURL = derived
@@ -65,6 +86,8 @@ var loginCmd = &cobra.Command{
 			APIURL:      apiURL,
 			FrontendURL: frontendURL,
 			ForceManual: noBrowser,
+
+			RememberFrontendURL: remember,
 		})
 		if err != nil {
 			return err
@@ -76,6 +99,41 @@ var loginCmd = &cobra.Command{
 		cmd.Printf("Logged in — context %q is now active.\n", name)
 		return nil
 	},
+}
+
+// storedAPIURL returns the API URL saved for the named context, or "" when the
+// name is empty, unknown or the config can't be read (login then uses the flags).
+func storedAPIURL(name string) string {
+	if name == "" {
+		name = "default"
+	}
+	cfg, err := config.Load()
+	if err != nil {
+		return ""
+	}
+	if c, ok := cfg.Contexts[name]; ok && c != nil {
+		return c.APIURL
+	}
+	return ""
+}
+
+// storedFrontendURL returns the frontend URL saved for the named context, but
+// only while the login is for the API URL that context was made for ("" when
+// none is saved, the name is unknown or the config can't be read).
+func storedFrontendURL(name, apiURL string) string {
+	if name == "" {
+		name = "default"
+	}
+	cfg, err := config.Load()
+	if err != nil {
+		return ""
+	}
+	c, ok := cfg.Contexts[name]
+	if !ok || c == nil || c.FrontendURL == "" ||
+		strings.TrimRight(c.APIURL, "/") != strings.TrimRight(apiURL, "/") {
+		return ""
+	}
+	return c.FrontendURL
 }
 
 // deriveFrontendURL maps an API base URL to the frontend that issued its login

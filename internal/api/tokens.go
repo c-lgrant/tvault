@@ -31,6 +31,37 @@ type Token struct {
 	DisplayName string   `json:"displayName,omitempty"`
 	Notes       string   `json:"description,omitempty"`
 	Tags        []string `json:"tags,omitempty"`
+	Labels      []string `json:"labels,omitempty"`
+	// LabelsKnown is whether the response carried a "labels" field at all. The
+	// control plane omits it when its metadata read failed, which is not the
+	// same as "no labels": writing a label set computed from it would drop
+	// the real ones.
+	LabelsKnown bool `json:"-"`
+	// Kind is "tv_signin" for a "Token Vault sign-in" credential (no stored
+	// value); empty for an ordinary credential.
+	Kind string `json:"kind,omitempty"`
+}
+
+// KindSignIn is the Token.Kind of a "Token Vault sign-in" credential.
+const KindSignIn = "tv_signin"
+
+// SignInLabel is how the CLI shows a sign-in credential's type.
+const SignInLabel = "Token Vault sign-in"
+
+// TypeLabel is the type shown by list/show: "Token Vault sign-in" for a
+// sign-in credential, otherwise the stored token type.
+func (t Token) TypeLabel() string {
+	if t.Kind == KindSignIn {
+		return SignInLabel
+	}
+	return t.Type
+}
+
+// CreateSignIn creates a "Token Vault sign-in" credential: a name with no
+// stored value. Its MCP server is attached separately with PutMCPServers.
+func (c *Client) CreateSignIn(service string) error {
+	_, err := c.doRequest("POST", "/api/tokens/sign-in", map[string]any{"serviceName": service}, nil)
+	return err
 }
 
 func (t *Token) UnmarshalJSON(b []byte) error {
@@ -43,6 +74,13 @@ func (t *Token) UnmarshalJSON(b []byte) error {
 		return err
 	}
 	*t = Token(v.plain)
+	var probe map[string]json.RawMessage
+	if err := json.Unmarshal(b, &probe); err == nil {
+		_, t.LabelsKnown = probe["labels"]
+		if string(probe["labels"]) == "null" {
+			t.LabelsKnown = false
+		}
+	}
 	if t.Notes == "" {
 		t.Notes = v.LegacyNotes
 	}
@@ -115,26 +153,32 @@ func credentialFieldForType(typ string) string {
 //   - Agent context (AgentKey set): GET /api/agents/credentials?service=X.
 //     For webhook-mode vaults the backend issues a 307 to the user's webhook;
 //     Go's HTTP client follows it transparently.
-//   - Admin context (BearerToken set): GET /api/tokens/{service}. The
-//     response carries the secret in one of several type-specific fields.
-//     In webhook mode the backend strips those (TV never holds plaintext),
-//     and we fall back to the credential-ticket flow (POST
+//   - Admin context (BearerToken set): the credential-ticket flow (POST
 //     /api/vault/credential-ticket → GET <webhook>/v1/credential, bypassing
-//     TV's backend on the credential leg).
+//     TV's backend on the credential leg). The webhook is the only vault
+//     mode, so GET /api/tokens/{service} never carries a value; skipping it
+//     saves a full round trip. The ticket route runs the same policies and
+//     answers 409 SIGNIN_NO_VALUE for a sign-in credential.
 func (c *Client) GetTokenValue(service string) (string, error) {
 	// Agents and scoped keys (credentials:read) both read through the
-	// agent-credentials endpoint; only the admin persona uses /api/tokens.
+	// agent-credentials endpoint.
 	if c.AgentKey != "" || c.APIKey != "" {
 		return c.getTokenValueAgent(service)
 	}
-	body, err := c.doRequest("GET", "/api/tokens/"+service, nil, nil)
-	if err != nil {
-		return "", err
-	}
-	if v := firstSecretField(body); v != "" {
-		return v, nil
-	}
 	return c.getTokenValueZK(service)
+}
+
+// SignInNoValueError is the error for reading or changing the value of a
+// "Token Vault sign-in" credential, which has none. It uses the same exit code
+// as an empty credential (6) and carries the server's SIGNIN_NO_VALUE code.
+func SignInNoValueError(service, request string) *clierr.CLIError {
+	return &clierr.CLIError{
+		Kind:    clierr.KindEmpty,
+		Code:    "SIGNIN_NO_VALUE",
+		Request: request,
+		Message: service + " is a Token Vault sign-in credential: it has no value to read or change",
+		Hint:    "agents use it through its MCP server; grant with `tvault grant <agent> " + service + "=mcp`. See `tvault explain SIGNIN_NO_VALUE`",
+	}
 }
 
 // getTokenValueAgent is the agent-persona path. In platform mode the
@@ -271,9 +315,12 @@ func (c *Client) fetchWebhookCredential(webhookURL, ticket, service string) (str
 			Message: "backend returned empty webhook URL or ticket",
 		}
 	}
+	reqLine := "GET " + webhookURL + "/v1/credential"
+	if err := requireSecureWebhookURL(webhookURL, reqLine); err != nil {
+		return "", err
+	}
 	u := webhookURL + "/v1/credential?ticket=" + url.QueryEscape(ticket) +
 		"&service=" + url.QueryEscape(service)
-	reqLine := "GET " + webhookURL + "/v1/credential"
 
 	timeout := c.webhookTimeout()
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
@@ -287,9 +334,12 @@ func (c *Client) fetchWebhookCredential(webhookURL, ticket, service string) (str
 	if httpClient == nil {
 		httpClient = &http.Client{Timeout: 30 * time.Second}
 	}
+	httpClient = withRedirectCheck(httpClient)
 	start := time.Now()
 	resp, err := httpClient.Do(req)
 	if err != nil {
+		// The *url.Error text carries the request URL, ticket included.
+		err = stripURLQuery(err)
 		if c.Debug {
 			fmt.Fprintf(os.Stderr, "[debug] %s → connection error after %s: %v\n", reqLine, time.Since(start), err)
 		}
@@ -372,8 +422,13 @@ func (c *Client) CreateToken(req CreateTokenRequest) error {
 // the value is stored as PlainText.
 func (c *Client) SetTokenValue(service, credential string) error {
 	typ := "PlainText"
-	if t, err := c.GetToken(service); err == nil && t.Type != "" {
-		typ = t.Type
+	if t, err := c.GetToken(service); err == nil {
+		if t.Kind == KindSignIn {
+			return SignInNoValueError(service, "GET /api/tokens/"+service)
+		}
+		if t.Type != "" {
+			typ = t.Type
+		}
 	}
 	return c.StoreTokenViaWebhook(service, typ, credential)
 }
@@ -422,6 +477,9 @@ func (c *Client) postWebhookStore(webhookURL string, payload any) error {
 		}
 	}
 	reqLine := "POST " + webhookURL + "/v1/store"
+	if err := requireSecureWebhookURL(webhookURL, reqLine); err != nil {
+		return err
+	}
 	raw, err := json.Marshal(payload)
 	if err != nil {
 		return &clierr.CLIError{Kind: clierr.KindUser, Request: reqLine, Message: err.Error()}
@@ -436,9 +494,11 @@ func (c *Client) postWebhookStore(webhookURL string, payload any) error {
 	if httpClient == nil {
 		httpClient = &http.Client{Timeout: 30 * time.Second}
 	}
+	httpClient = withRedirectCheck(httpClient)
 	start := time.Now()
 	resp, err := httpClient.Do(req)
 	if err != nil {
+		err = stripURLQuery(err)
 		if c.Debug {
 			fmt.Fprintf(os.Stderr, "[debug] %s → connection error after %s: %v\n", reqLine, time.Since(start), err)
 		}

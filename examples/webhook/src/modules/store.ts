@@ -7,7 +7,7 @@ import { corsHeaders, preflightResponse } from "../core/middleware/cors.ts";
 import { denylist } from "../core/middleware/denylist.ts";
 import { readJsonBody } from "../core/middleware/body.ts";
 import { sendError } from "../core/middleware/respond.ts";
-import { invalidRequest, setupRequired, ticketInvalid } from "../core/protocol/errors.ts";
+import { alreadyExists, invalidRequest, setupRequired, ticketInvalid } from "../core/protocol/errors.ts";
 import { verifyTicket } from "../core/protocol/tickets.ts";
 import { buildEncryptedTokenDocument, EXTRA_SENSITIVE_FIELDS } from "../core/protocol/tokendoc.ts";
 import { SENSITIVE_FIELDS } from "../core/protocol/types.ts";
@@ -117,7 +117,15 @@ export function storeModule(): FeatureModule {
             meta,
             extraSensitive,
           );
-          await ctx.storage.set("tokens", service, doc);
+          if (payload.mode === "create" && ctx.storage.setIfAbsent) {
+            // Create-only: the read above can race a concurrent store, so the
+            // write itself refuses an existing service.
+            if (!(await ctx.storage.setIfAbsent("tokens", service, doc))) {
+              throw alreadyExists("A token already exists for this service");
+            }
+          } else {
+            await ctx.storage.set("tokens", service, doc);
+          }
 
           return c.json({ status: "stored", service, meta }, 200, cors);
         } catch (e) {

@@ -18,15 +18,18 @@ import (
 // the list endpoint returns "grantCount" instead. Grants here is populated
 // from the single-agent GET via GetAgent.
 type Agent struct {
-	ID         string   `json:"id"`
-	Name       string   `json:"name"`
-	Status     string   `json:"status"` // "active" | "suspended"
+	ID     string `json:"id"`
+	Name   string `json:"name"`
+	Status string `json:"status"` // "active" | "suspended"
+	// MCPEnabled is nil when the server doesn't report it.
+	MCPEnabled *bool    `json:"mcpEnabled,omitempty"`
 	GrantCount looseInt `json:"grantCount,omitempty"`
 	Grants     []Grant  `json:"grants,omitempty"`
 	// LastActiveAt is an RFC 3339 timestamp, or "" if the agent has never
 	// fetched a credential.
 	LastActiveAt  string   `json:"lastActiveAt,omitempty"`
 	TotalAccesses looseInt `json:"totalAccesses,omitempty"`
+	Labels        []string `json:"labels,omitempty"`
 }
 
 // looseInt is an int that survives sloppy wire formats. The backend routes
@@ -59,6 +62,9 @@ type Grant struct {
 	ServiceName    string `json:"serviceName"`
 	RefreshPolicy  string `json:"refreshPolicy,omitempty"`
 	GrantExpiresAt string `json:"grantExpiresAt,omitempty"`
+	// Uses is what the grant may be used for ("value", "tools"); empty on
+	// servers that predate grant uses.
+	Uses []string `json:"uses,omitempty"`
 }
 
 // CreateAgentResult carries the freshly minted key — shown to the user once.
@@ -97,7 +103,7 @@ func (c *Client) GetAgent(id string) (*Agent, error) {
 }
 
 // CreateAgent creates an agent. The backend's POST /api/agents body only
-// accepts {name, description, mcpEnabled} — there is NO grants field, so
+// accepts {name, description} — there is NO grants field, so
 // grants cannot be set at creation time. Callers that want grants must follow
 // up with AddGrants once the agent exists.
 func (c *Client) CreateAgent(name string) (*CreateAgentResult, error) {
@@ -108,6 +114,8 @@ func (c *Client) CreateAgent(name string) (*CreateAgentResult, error) {
 // fields. An empty kind is omitted so the server applies its default
 // ("classic"); scopes are only sent when non-empty.
 func (c *Client) CreateAgentWithKind(name, kind string, scopes []string) (*CreateAgentResult, error) {
+	// No mcpEnabled: there is no per-agent MCP switch any more. What lets an
+	// agent use an MCP server is its grant (and the mcp:use scope).
 	payload := map[string]any{"name": name}
 	if kind != "" {
 		payload["kind"] = kind
@@ -143,6 +151,15 @@ func (c *Client) DeleteAgents(ids []string) error {
 func (c *Client) SetAgentStatus(id, status string) error {
 	_, err := c.doRequest("PATCH", "/api/agents/"+id,
 		map[string]string{"status": status}, nil)
+	return err
+}
+
+// SetAgentMCPEnabled clears a stored MCP off-switch on an agent via
+// PATCH /api/agents/{id} with {"mcpEnabled": true}. The server has no way to
+// turn MCP off any more (MCP_TOGGLE_REMOVED); this only clears the leftover.
+func (c *Client) SetAgentMCPEnabled(id string) error {
+	_, err := c.doRequest("PATCH", "/api/agents/"+id,
+		map[string]bool{"mcpEnabled": true}, nil)
 	return err
 }
 
@@ -212,18 +229,85 @@ func (r GrantResult) Err() error {
 // bulk/array grant route, so we issue one request per service. On the first
 // failure we stop and report which services succeeded and which were skipped.
 func (c *Client) AddGrants(agentID string, services []string) GrantResult {
-	res := GrantResult{Failed: map[string]error{}}
+	specs := make([]GrantSpec, len(services))
 	for i, svc := range services {
-		_, err := c.doRequest("POST", "/api/agents/"+agentID+"/grants",
-			map[string]string{"agentId": agentID, "serviceName": svc}, nil)
+		specs[i] = GrantSpec{Service: svc}
+	}
+	return c.AddGrantSpecs(agentID, specs)
+}
+
+// GrantSpec is one grant to create: a service plus, optionally, what it may
+// be used for. Uses holds "value" and/or "tools"; empty means the server's
+// default (value only). Servers narrows a tools grant to the named MCP
+// servers; empty means every server of the credential. Only these words are
+// sent, never a credential value.
+type GrantSpec struct {
+	Service string
+	Uses    []string
+	Servers []string
+}
+
+// AddGrantSpecs is AddGrants with per-service uses and servers.
+func (c *Client) AddGrantSpecs(agentID string, specs []GrantSpec) GrantResult {
+	res := GrantResult{Failed: map[string]error{}}
+	for i, s := range specs {
+		body := map[string]any{"agentId": agentID, "serviceName": s.Service}
+		if len(s.Uses) > 0 {
+			body["uses"] = s.Uses
+		}
+		if len(s.Servers) > 0 {
+			body["servers"] = s.Servers
+		}
+		resp, err := c.doRequest("POST", "/api/agents/"+agentID+"/grants", body, nil)
+		if err == nil && len(s.Uses) > 0 && !c.DryRun && !grantEchoesUses(resp, s.Service) {
+			err = c.undoGrantWithoutUses(agentID, s.Service)
+		}
 		if err != nil {
-			res.Failed[svc] = err
-			res.Skipped = append(res.Skipped, services[i+1:]...)
+			res.Failed[s.Service] = err
+			for _, rest := range specs[i+1:] {
+				res.Skipped = append(res.Skipped, rest.Service)
+			}
 			return res
 		}
-		res.OK = append(res.OK, svc)
+		res.OK = append(res.OK, s.Service)
 	}
 	return res
+}
+
+// grantEchoesUses reports whether a create-grant response carries the grant's
+// uses: top-level, under "grant", or in a "grants" list entry for service. A
+// control plane that predates grant uses drops the field it does not know, so
+// the response has none and the grant it made is a full value grant.
+func grantEchoesUses(resp []byte, service string) bool {
+	var r struct {
+		Uses   []string `json:"uses"`
+		Grant  *Grant   `json:"grant"`
+		Grants []Grant  `json:"grants"`
+	}
+	if json.Unmarshal(resp, &r) != nil {
+		return false
+	}
+	if len(r.Uses) > 0 || (r.Grant != nil && len(r.Grant.Uses) > 0) {
+		return true
+	}
+	for _, g := range r.Grants {
+		if g.ServiceName == service && len(g.Uses) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// undoGrantWithoutUses removes the grant just created by a server that ignored
+// its uses, and returns the error to report.
+func (c *Client) undoGrantWithoutUses(agentID, service string) error {
+	msg := "this control plane predates grant uses, so it ignored the requested uses and made a full value grant; upgrade the control plane"
+	if rerr := c.RemoveGrants(agentID, []string{service}).Err(); rerr != nil {
+		// The command goes in the message: GrantResult.Err keeps only messages.
+		return &clierr.CLIError{Kind: clierr.KindUser,
+			Message: fmt.Sprintf("%s; the grant could not be removed, revoke it by hand: tvault ag gr rm %s %s", msg, agentID, service)}
+	}
+	return &clierr.CLIError{Kind: clierr.KindUser, Message: msg + "; the grant was removed"}
 }
 
 // RemoveGrants revokes an agent's access to one or more services. The backend

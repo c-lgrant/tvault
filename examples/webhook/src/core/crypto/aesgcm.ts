@@ -9,11 +9,20 @@ import { base64Decode, base64Encode, type Bytes, fromUtf8, utf8 } from "./encodi
 const IV_LENGTH = 12;
 const MIN_RAW_LENGTH = IV_LENGTH + 16; // IV + GCM tag, no ciphertext
 
+// Non-extractable imported keys, per isolate/process, keyed by the identity of
+// the raw key bytes (the secret provider returns the same array every call).
+// Only the opaque CryptoKey handle is kept. Decrypted values are never cached.
+const keyCache = new WeakMap<Bytes, CryptoKey>();
+
 async function importKey(key: Bytes): Promise<CryptoKey> {
-  return crypto.subtle.importKey("raw", key, { name: "AES-GCM" }, false, [
+  const hit = keyCache.get(key);
+  if (hit) return hit;
+  const imported = await crypto.subtle.importKey("raw", key, { name: "AES-GCM" }, false, [
     "encrypt",
     "decrypt",
   ]);
+  keyCache.set(key, imported);
+  return imported;
 }
 
 export async function encrypt(key: Bytes, plaintext: string): Promise<string> {

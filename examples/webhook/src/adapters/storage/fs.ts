@@ -3,13 +3,15 @@
 // list-response shaping (meta-only projection + SENSITIVE_FIELDS stripping)
 // lives in the storage module so every adapter shares one audited filter.
 
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import {
   ALL_COLLECTIONS,
   type StorageAdapter,
   type StoredDocument,
+  type TimeQuery,
 } from "../../runtime/context.ts";
+import { countSince, queryByTime, staleKeys } from "./timeQuery.ts";
 
 type Store = Record<string, Record<string, StoredDocument>>;
 
@@ -47,11 +49,40 @@ export class FsStorageAdapter implements StorageAdapter {
     return col;
   }
 
-  private async flush(): Promise<void> {
-    await mkdir(dirname(this.path), { recursive: true });
-    const tmp = `${this.path}.tmp`;
-    await writeFile(tmp, JSON.stringify(this.store), "utf-8");
-    await rename(tmp, this.path);
+  // Single-flight flush. A mutation marks the store dirty and joins the write in
+  // progress; the writer loops until nothing is dirty, so every caller's promise
+  // resolves only after a write that includes its change, and at most one write
+  // runs at a time (no interleaved renames, no shared temp file).
+  private dirty = false;
+  private flushing: Promise<void> | null = null;
+  private tmpSeq = 0;
+
+  private flush(): Promise<void> {
+    this.dirty = true;
+    if (!this.flushing) this.flushing = this.runFlush();
+    return this.flushing;
+  }
+
+  private async runFlush(): Promise<void> {
+    try {
+      while (this.dirty) {
+        this.dirty = false;
+        const tmp = `${this.path}.${process.pid}.${++this.tmpSeq}.tmp`;
+        try {
+          await mkdir(dirname(this.path), { recursive: true });
+          await writeFile(tmp, JSON.stringify(this.store), "utf-8");
+          await rename(tmp, this.path);
+        } catch (e) {
+          this.dirty = true; // not persisted: the next mutation retries
+          await rm(tmp, { force: true }).catch(() => {});
+          throw e;
+        }
+      }
+    } finally {
+      // Same tick as the loop's last dirty check: a mutation arriving after this
+      // starts a new flush instead of joining one that has already finished.
+      this.flushing = null;
+    }
   }
 
   async get(collection: string, key: string): Promise<StoredDocument | null> {
@@ -63,6 +94,34 @@ export class FsStorageAdapter implements StorageAdapter {
     await this.flush();
   }
 
+  /** Atomic insert-if-absent (the check and the write share one tick). */
+  async setIfAbsent(collection: string, key: string, data: StoredDocument): Promise<boolean> {
+    const col = this.collection(collection);
+    if (Object.hasOwn(col, key)) return false;
+    col[key] = data;
+    await this.flush();
+    return true;
+  }
+
+  /**
+   * Conditional write: the check and the in-memory update share one tick, so no
+   * delete or replace can slip between them; the flush then persists it.
+   */
+  async setIfUnchanged(
+    collection: string,
+    key: string,
+    expected: StoredDocument,
+    data: StoredDocument,
+  ): Promise<boolean> {
+    const col = this.collection(collection);
+    const current = col[key];
+    if (current === undefined) return false;
+    if (current !== expected && JSON.stringify(current) !== JSON.stringify(expected)) return false;
+    col[key] = data;
+    await this.flush();
+    return true;
+  }
+
   async delete(collection: string, key: string): Promise<void> {
     delete this.collection(collection)[key];
     await this.flush();
@@ -72,7 +131,19 @@ export class FsStorageAdapter implements StorageAdapter {
     return Object.entries(this.collection(collection));
   }
 
-  async count(collection: string): Promise<number> {
-    return Object.keys(this.collection(collection)).length;
+  async count(collection: string, opts: Pick<TimeQuery, "since" | "timestampField"> = {}): Promise<number> {
+    return countSince(Object.entries(this.collection(collection)), opts);
+  }
+
+  async list(collection: string, opts: TimeQuery): Promise<Array<[string, StoredDocument]>> {
+    return queryByTime(Object.entries(this.collection(collection)), opts);
+  }
+
+  async prune(collection: string, olderThan: string, timestampField: string): Promise<number> {
+    const col = this.collection(collection);
+    const stale = staleKeys(Object.entries(col), olderThan, timestampField);
+    for (const k of stale) delete col[k];
+    if (stale.length > 0) await this.flush();
+    return stale.length;
   }
 }

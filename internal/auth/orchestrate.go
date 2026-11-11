@@ -17,6 +17,10 @@ type LoginOptions struct {
 	FrontendURL string        // frontend base URL (hosts /cli/auth)
 	ForceManual bool          // force the manual code-paste flow (SSH/headless)
 	Timeout     time.Duration // overall wait budget; 0 → 3 minutes
+
+	// RememberFrontendURL saves FrontendURL in the context, so a later login
+	// or re-sign-in reuses it instead of deriving one from the API URL.
+	RememberFrontendURL bool
 }
 
 // Login runs the full admin login: browser dance → code exchange → persist a
@@ -47,12 +51,16 @@ func Login(opts LoginOptions) error {
 		return err
 	}
 	forgetReplaced(cfg, name)
-	cfg.Contexts[name] = &config.Context{
+	ctx := &config.Context{
 		Type:         "admin",
 		APIURL:       opts.APIURL,
 		Identity:     res.Identity,
 		RefreshToken: res.RefreshToken,
 	}
+	if opts.RememberFrontendURL {
+		ctx.FrontendURL = opts.FrontendURL
+	}
+	cfg.Contexts[name] = ctx
 	cfg.Current = name
 	return cfg.Save()
 }

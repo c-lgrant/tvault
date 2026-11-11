@@ -17,15 +17,23 @@ var errorExplanations = map[string]struct {
 		Fix:  "Run `tvault vault unlock` (admin only). Agents must wait for the owner to unlock.",
 	},
 	"POLICY_DENIED": {
-		What: "An ABAC policy attached to this entity rejected the request.",
-		Fix:  "Inspect the policy named in the error footer; the request must satisfy every rule.",
+		What: "A policy rejected the request (exit code 13; 7 when a policy's rate limit answers with 429). The CLI says which rule (rate limit, allowed hours, lifetime cap, country, IP allowlist or channel), which policy, and what it is attached to (an agent, key, credential or label). Your own login sees all of that; an agent or key sees the policy name and, when it clears by itself, how long to wait, plus an event id to look up.",
+		Fix:  "Detach or loosen the policy: `tvault policy detach <policy-id> --label <label>` (or --credential, --agent, --key), or edit it in the web app. From an agent or key, ask the owner to look up the event id in Activity.",
+	},
+	"RATE_LIMITED": {
+		What: "Token Vault's own safety limit: this caller is asking faster than allowed, or was locked out briefly after too many refusals. It is not one of your policies (exit code 7).",
+		Fix:  "Wait for the retry time in the hint and slow down. It clears by itself.",
+	},
+	"WEBHOOK_CIRCUIT_OPEN": {
+		What: "Your webhook has been failing, so Token Vault stopped calling it to avoid hammering a broken service.",
+		Fix:  "Fix the webhook (`tvault webhook status`); calls resume after a successful check.",
 	},
 	"WEB_CONSOLE_REQUIRED": {
-		What: "An access channel policy restricts who can read this token, and this change could widen that (a grant, a folder change, a proxy, a key hand-over, or loosening the policy). Only the web console may do that; the CLI, agents and API keys may not.",
-		Fix:  "Make the change in the web console. The policy names the channels that may read the token.",
+		What: "An access channel policy restricts who can read this token, and this change could widen that (a grant, a folder change, a proxy, a key hand-over, or loosening the policy). Only the web app may do that; the CLI, agents and API keys may not.",
+		Fix:  "Make the change in the web app. The policy names the channels that may read the token.",
 	},
 	"GRANT_EXPIRED": {
-		What: "The agent's grant for this service has expired and was removed.",
+		What: "The agent's grant for this service has expired and was removed (exit code 14).",
 		Fix:  "Have an admin re-grant access: `tvault ag gr add <agent> <service>`.",
 	},
 	"DECRYPTION_FAILED": {
@@ -85,7 +93,7 @@ var errorExplanations = map[string]struct {
 		Fix:  "Grant the service to the acting principal first (`tvault keys grant <key> <service>`), then retry.",
 	},
 	"NO_GRANT": {
-		What: "This key or agent has no grant for that service.",
+		What: "This key or agent has no grant for that service (exit code 14).",
 		Fix:  "Ask the owner to grant it: `tvault grant <agent> <service>` or `tvault keys grant <key> <service>`.",
 	},
 	"SCOPE_NOT_DELEGABLE": {
@@ -118,11 +126,139 @@ var errorExplanations = map[string]struct {
 	},
 	"REAUTH_REQUIRED": {
 		What: "Creating a key as a human needs a fresh browser sign-in (exit code 2).",
-		Fix:  "Run `tvault login` again, then retry the command.",
+		Fix:  "Run `tvault login` again, then retry the command. (`agents create`, `add --for`, `mcp-servers add` and `connect` do this inline in an interactive admin context.)",
+	},
+	"MCP_SERVER_LITERAL_CREDENTIAL": {
+		What: "A header whose name looks like a credential (Authorization, Cookie, X-Api-Key, anything with key/token/secret/auth) holds a literal value. Token Vault never stores a credential, so such a header may hold only the placeholder ${TOKEN}.",
+		Fix:  "Use --header 'Authorization: Bearer ${TOKEN}' (single quotes, so your shell does not expand it). Your webhook substitutes the credential.",
+	},
+	"MCP_SERVER_HEADERS_REQUIRED": {
+		What: "None of the server's headers contains ${TOKEN}, so the credential would not be sent to the upstream.",
+		Fix:  "Add a header such as --header 'Authorization: Bearer ${TOKEN}', or start from a preset: `tvault mcp-servers add <service> --preset <id>`.",
+	},
+	"SERVICE_NOT_HOSTABLE": {
+		What: "The credential's name is part of its MCP server URL, so it must be made of letters, digits and . _ ~ - and start with a letter or digit.",
+		Fix:  "Rename the credential (store it under a plain name), then attach the server. Removing servers is always allowed.",
+	},
+	"MCP_SERVERS_CAP": {
+		What: "A credential can have at most five MCP servers.",
+		Fix:  "Remove one first: `tvault mcp-servers rm <service> <name>`.",
+	},
+	"INVALID_GRANT_USES": {
+		What: "A grant's uses must be \"value\" and/or \"mcp\", and mcp needs a credential with at least one MCP server.",
+		Fix:  "Attach a server first (`tvault mcp-servers add <service> --preset <id>`), then `tvault grant <agent> <service>=mcp`.",
+	},
+	"INVALID_GRANT_SERVERS": {
+		What: "A grant names MCP servers that the credential does not have, or names servers without MCP access.",
+		Fix:  "Check the names with `tvault mcp-servers ls <service>`; the syntax is <service>=mcp:<server>,<server>.",
+	},
+	"GRANT_USES_EXCEEDED": {
+		What: "A key or agent can only pass on a grant no wider than its own, and the uses requested are not covered by the grant it holds (a value grant cannot be passed on as MCP access).",
+		Fix:  "Request only uses the acting principal holds, or have a person make the grant.",
+	},
+	"GRANT_SERVERS_EXCEEDED": {
+		What: "A key or agent can only pass on MCP servers its own grant covers, and none of the requested servers are covered.",
+		Fix:  "Name servers within the acting principal's own grant, or have a person make the grant.",
+	},
+	"GRANT_TOOLS_ONLY": {
+		What: "The acting key or agent holds only MCP access to this credential, which does not allow reading the value or changing its MCP servers.",
+		Fix:  "Have a person make the change, or give the principal a value grant.",
+	},
+	"SIGNIN_NO_VALUE": {
+		What: "A Token Vault sign-in credential has no value, so there is nothing to read, rotate, store or connect through OAuth (exit code 6).",
+		Fix:  "Agents use it through its MCP server: `tvault grant <agent> <name>=mcp`. To change where it signs in, edit its MCP server with `tvault mcp-servers add <name> --name <mcp-server> --url <url> --header 'Authorization: Bearer ${AGENT_SESSION}'`.",
+	},
+	"SIGNIN_TOOLS_ONLY": {
+		What: "A Token Vault sign-in credential can only be granted MCP access, to an agent. It has no value to hand out, and a key cannot hold it.",
+		Fix:  "Grant MCP access only: `tvault grant <agent> <name>=mcp` (or `tvault add <name> --sign-in <url> --for <agent>=mcp`).",
+	},
+	"SIGNIN_URL_ON_TOKEN_VAULT": {
+		What: "The URL of a Token Vault sign-in MCP server must be a different service. It cannot point back at Token Vault itself.",
+		Fix:  "Use the https URL of your own MCP server: `tvault add <name> --sign-in https://mcp.example.com/mcp`.",
+	},
+	"USE_SIGNIN_ROUTE": {
+		What: "The request tried to create a Token Vault sign-in credential through the ordinary add route, which only stores credentials with a value.",
+		Fix:  "Create it with `tvault add <name> --sign-in <url>`.",
+	},
+	"SIGNIN_SESSION_REFUSED": {
+		What: "Token Vault refused to issue the agent a sign-in pass for this MCP server: the agent is suspended, expired or gone, its MCP access is switched off, or the MCP server entry is no longer valid.",
+		Fix:  "Resume the agent (`tvault agents resume <agent>`), check its access (`tvault grant <agent> <name>=mcp`), and check the MCP server with `tvault mcp-servers ls <name>`.",
+	},
+	"SIGNIN_SESSION_UNAVAILABLE": {
+		What: "Token Vault could not issue a sign-in pass just now: the account is locked, or Token Vault could not read its lock state.",
+		Fix:  "If you locked the account, unlock it in the web app. Otherwise retry after the Retry-After delay.",
+	},
+	"MCP_KEY_RETIRED": {
+		What: "This old app key (an mcp_ key for an old MCP connection) has been switched off. Old app keys stopped working 90 days after the connection was converted.",
+		Fix:  "Point the app at the MCP server's own URL, /api/mcp/<name>/<mcp-server> (see `tvault mcp-servers ls <name>`), and sign in as the agent. Old connection URLs keep working with an agent sign-in.",
+	},
+	"PROXY_CREATE_REMOVED": {
+		What: "You can no longer create old-style MCP connections (proxies).",
+		Fix:  "Attach an MCP server to a credential instead: `tvault mcp-servers add <name> --preset <id>`, or `tvault add <name> --sign-in <url>` for an MCP server that signs the agent in itself.",
+	},
+	"PROXY_FROZEN": {
+		What: "This old MCP connection was converted to an MCP server and is frozen: it can be suspended or deleted but no longer edited.",
+		Fix:  "Change the MCP server it became: `tvault mcp-servers ls <name>` and `tvault mcp-servers add <name> ...`.",
+	},
+	"PROXY_GROUPS_REMOVED": {
+		What: "Old MCP connection groups (proxy groups) can no longer be created or changed.",
+		Fix:  "Use labels to organise credentials and their MCP servers: `tvault label --help`.",
+	},
+	"MCP_TOGGLE_REMOVED": {
+		What: "There is no per-agent MCP switch any more, so it cannot be turned off. (An agent that still carries an old off-switch can be cleared with `tvault agents mcp-on <agent>`.)",
+		Fix:  "Remove the agent's MCP grant (`tvault ag gr rm <agent> <name>`) or suspend the agent (`tvault agents suspend <agent>`).",
+	},
+	"SCOPE_RETIRED": {
+		What: "That scope is retired and can no longer be given to a new key or agent. Keys that already hold it keep it, to delete or suspend old MCP connections.",
+		Fix:  "Create the key without it: `tvault keys create --scopes mcp:use,...`. Use `mcp:use` for MCP servers.",
 	},
 	"WEBHOOK_AUTH_FAILED": {
 		What: "The webhook rejected Token Vault's HMAC authentication.",
 		Fix:  "The HMAC secret is out of sync — re-run the vault webhook setup to rotate it.",
+	},
+	"MCP_SERVER_NAME_INVALID": {
+		What: "An MCP server name is not allowed: it must be 1-32 lowercase letters, digits, '-' or '_', starting with a letter or digit.",
+		Fix:  "Pick another name: `tvault mcp-servers add <service> --name <name> ...`.",
+	},
+	"MCP_SERVER_NAME_DUPLICATE": {
+		What: "Two MCP servers on the same credential share a name; names are unique within a credential.",
+		Fix:  "Use a different --name, or remove the existing server first: `tvault mcp-servers ls <service>`, then `tvault mcp-servers rm <service> <name>`.",
+	},
+	"MCP_SERVER_CREDENTIAL_TYPE_UNSUPPORTED": {
+		What: "MCP servers can only be attached to PlainText or JWT credentials, because ${TOKEN} substitution needs a single-value credential. SSH keys, certificates and other structured types are refused.",
+		Fix:  "Attach the server to a PlainText or JWT credential instead (`tvault tokens show <service>` shows the type).",
+	},
+	"MCP_SERVER_HEADER_INVALID": {
+		What: "A header on the MCP server is refused: a bad header name, control characters in a value, or the wrong placeholder for the credential. A stored credential uses ${TOKEN} (not ${AGENT_SESSION}); a Token Vault sign-in credential uses ${AGENT_SESSION} (not ${TOKEN}) and cannot set certain headers.",
+		Fix:  "Fix the --header value, for example --header 'Authorization: Bearer ${TOKEN}' in single quotes so your shell does not expand it.",
+	},
+	"MCP_SERVER_INVALID": {
+		What: "The MCP server definition is malformed; typically the template id is not a short slug such as 'github'.",
+		Fix:  "Use a preset id from `tvault mcp-servers templates` with --preset, or drop --preset and give --name, --url and --header.",
+	},
+	"UPSTREAM_REDIRECT_BLOCKED": {
+		What: "The MCP server answered with a redirect to another address. Your webhook does not carry the credential there, and Token Vault does not pass the redirect on.",
+		Fix:  "Set the MCP server's URL to its final address (in the web app, or `tvault mcp-servers rm` then `add` from an admin context).",
+	},
+	"AUTO_GRANT_CANNOT_SET_SERVERS": {
+		What: "This key or agent can read the credential only through an automatic grant that lapses with the token, so it may not attach MCP servers (they would outlive the grant and point the next owner's credential at its URL).",
+		Fix:  "Ask a person to attach the servers, or have the key's owner grant the credential explicitly first.",
+	},
+	"NAME_TAKEN": {
+		What: "A credential with that name already exists, so a Token Vault sign-in credential (or a converted one) cannot take it.",
+		Fix:  "Pick another name, or remove the existing credential first (`tvault rm <service>`).",
+	},
+	"INVALID_LABELS": {
+		What: "A label is not allowed: labels are lowercase letters, digits and '-', 1-32 characters, at most 10 per object.",
+		Fix:  "Fix the label: `tvault label set <credential|agent|key> <id> <label>...`.",
+	},
+	"INVALID_ENTITY_TYPE": {
+		What: "Labels can only be set on a credential, an agent or an API key.",
+		Fix:  "Use one of `credential`, `agent` or `key` as the first argument of `tvault label`.",
+	},
+	"SIGNIN_SERVER_NOT_AGGREGATED": {
+		What: "A Token Vault sign-in credential's MCP server is reached only through its own URL, never through the combined tool list.",
+		Fix:  "Register the server's own entry: `tvault connect <agent> <service>=mcp --server <service>/<server>`, and use that entry in your MCP client.",
 	},
 }
 

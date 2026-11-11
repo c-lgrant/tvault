@@ -43,7 +43,20 @@ export async function verifyTicket(
   ticket: string,
   secret: Bytes,
   replay: ReplayGuard,
+  nonceTtlSeconds?: number,
 ): Promise<TicketPayload> {
+  const payload = await verifyTicketSignature(ticket, secret);
+  await consumeTicketNonce(payload, replay, nonceTtlSeconds);
+  return payload;
+}
+
+/**
+ * CPU-only half of `verifyTicket`: signature, decode, expiry and nonce shape.
+ * No I/O, so callers can run the nonce check (`consumeTicketNonce`) alongside
+ * other reads once every signature has verified. The payload it returns is NOT
+ * yet replay-checked and must not be acted on until `consumeTicketNonce` passes.
+ */
+export async function verifyTicketSignature(ticket: string, secret: Bytes): Promise<TicketPayload> {
   const parts = ticket.split(".");
   if (parts.length !== 2) throw ticketInvalid("Malformed ticket");
   const payloadB64 = parts[0]!;
@@ -73,9 +86,20 @@ export async function verifyTicket(
   if (typeof nonce !== "string" || !nonce) {
     throw ticketInvalid("Ticket is missing required nonce");
   }
-  if (await replay.checkNonce(nonce)) {
+  return payload;
+}
+
+/**
+ * Record the ticket's nonce; throws if it was already used. Tickets that live
+ * longer than the default 2-minute nonce window (the OAuth state ticket lives
+ * 10 minutes) pass a TTL that covers their whole life.
+ */
+export async function consumeTicketNonce(
+  payload: TicketPayload,
+  replay: ReplayGuard,
+  nonceTtlSeconds?: number,
+): Promise<void> {
+  if (await replay.checkNonce(payload.nonce as string, nonceTtlSeconds)) {
     throw ticketInvalid("Ticket nonce already used (replay)");
   }
-
-  return payload;
 }

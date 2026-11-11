@@ -15,14 +15,19 @@ class TtlSet {
     const now = Date.now();
     const expiry = this.entries.get(value);
     if (expiry !== undefined && expiry > now) return true;
+    // Delete first so a re-recorded (previously expired) value moves to the back:
+    // with a fixed TTL, Map insertion order is then expiry order.
+    this.entries.delete(value);
     this.entries.set(value, now + this.ttlMs);
     if (this.entries.size > MAX_ENTRIES) this.prune(now);
     return false;
   }
 
+  /** Evict from the oldest end and stop at the first live entry: O(evicted), not O(size). */
   private prune(now: number): void {
     for (const [k, exp] of this.entries) {
-      if (exp <= now) this.entries.delete(k);
+      if (exp > now) break;
+      this.entries.delete(k);
     }
   }
 }
@@ -30,12 +35,15 @@ class TtlSet {
 export class MemoryReplayGuard implements ReplayGuard {
   private readonly requestIds = new TtlSet(600_000);
   private readonly nonces = new TtlSet(120_000);
+  private readonly longNonces = new TtlSet(3_600_000);
 
   async checkRequestId(id: string): Promise<boolean> {
     return this.requestIds.checkAndAdd(id);
   }
 
-  async checkNonce(nonce: string): Promise<boolean> {
-    return this.nonces.checkAndAdd(nonce);
+  async checkNonce(nonce: string, ttlSeconds?: number): Promise<boolean> {
+    // A longer-lived ticket (OAuth state) is remembered for the hour so a
+    // replay inside its whole validity window is caught.
+    return (ttlSeconds && ttlSeconds > 120 ? this.longNonces : this.nonces).checkAndAdd(nonce);
   }
 }

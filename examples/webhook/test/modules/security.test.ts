@@ -176,3 +176,67 @@ describe("FIX 4d — X-TokenVault-Request-Id is required on HMAC-auth endpoints"
     expect(json.message).toContain("Request-Id");
   });
 });
+
+describe("signed attemptId binds the request-id header", () => {
+  async function signedCall(app: ReturnType<typeof createApp>, body: string, requestId: string) {
+    const ts = String(Math.floor(Date.now() / 1000));
+    const { computeRequestSignature } = await import("../../src/core/protocol/hmac.ts");
+    const { utf8: u8 } = await import("../../src/core/crypto/encoding.ts");
+    const sig = await computeRequestSignature(secret, ts, u8(body));
+    return app.request("/v1/proxy", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "X-TokenVault-Signature": `sha256=${sig}`,
+        "X-TokenVault-Timestamp": ts,
+        "X-TokenVault-Request-Id": requestId,
+      },
+      body,
+    });
+  }
+  const proxyBody = (attemptId?: string) =>
+    JSON.stringify({
+      ticket: "x",
+      service: "github",
+      upstream: { url: "https://example.invalid" },
+      ...(attemptId === undefined ? {} : { attemptId }),
+    });
+
+  it("rejects a request whose header id differs from the signed attemptId", async () => {
+    const app = createApp(makeContext({ hmacSecret: secret }), [proxyModule()]);
+    const res = await signedCall(app, proxyBody("req-a"), "req-b");
+    expect(res.status).toBe(401);
+    expect(((await res.json()) as { message: string }).message).toContain("attemptId");
+  });
+
+  it("passes auth when the header id equals the signed attemptId", async () => {
+    const app = createApp(makeContext({ hmacSecret: secret }), [proxyModule()]);
+    const res = await signedCall(app, proxyBody("req-c"), "req-c");
+    // Auth passed; the bogus ticket is what fails now.
+    expect(((await res.json()) as { error: string }).error).not.toBe("auth_failed");
+  });
+
+  it("keeps working for an older control plane that sends no attemptId", async () => {
+    const app = createApp(makeContext({ hmacSecret: secret }), [proxyModule()]);
+    const res = await signedCall(app, proxyBody(), "req-d");
+    expect(((await res.json()) as { error: string }).error).not.toBe("auth_failed");
+  });
+
+  it("does not record the id of a request with a bad signature", async () => {
+    const ctx = makeContext({ hmacSecret: secret });
+    const app = createApp(ctx, [proxyModule()]);
+    const bad = await app.request("/v1/proxy", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "X-TokenVault-Signature": "sha256=00",
+        "X-TokenVault-Timestamp": String(Math.floor(Date.now() / 1000)),
+        "X-TokenVault-Request-Id": "req-e",
+      },
+      body: proxyBody("req-e"),
+    });
+    expect(bad.status).toBe(401);
+    const good = await signedCall(app, proxyBody("req-e"), "req-e");
+    expect(((await good.json()) as { error: string }).error).not.toBe("auth_failed");
+  });
+});

@@ -9,6 +9,7 @@ import {
   type WebhookConfig,
 } from "../../src/runtime/context.ts";
 import { type Bytes, bytesToHex } from "../../src/core/crypto/encoding.ts";
+import { WEBHOOK_VERSION } from "../../src/core/protocol/types.ts";
 import { MemoryReplayGuard } from "../../src/adapters/replay/memory.ts";
 
 class MemoryStorage implements StorageAdapter {
@@ -71,7 +72,7 @@ export function makeContext(opts: {
 }): RuntimeContext {
   const key = opts.encryptionKey ?? crypto.getRandomValues(new Uint8Array(32));
   const config: WebhookConfig = {
-    version: "2.4.0",
+    version: WEBHOOK_VERSION,
     timestampTolerance: 300,
     tokenvaultFrontendUrl: "https://tokenvault.test",
     denyIps: opts.denyIps ?? [],

@@ -32,7 +32,10 @@ export const BIND_CODES_COLLECTION = "_bind_codes";
  * adapters must still initialize them so internal reads/writes work on every
  * runtime.
  */
-export const INTERNAL_COLLECTIONS = ["meta", BIND_CODES_COLLECTION] as const;
+export const INTERNAL_COLLECTIONS = ["meta", BIND_CODES_COLLECTION, "_nonces"] as const;
+
+/** Internal collection of used ticket nonces (see adapters/replay/stored.ts). */
+export const NONCE_COLLECTION: (typeof INTERNAL_COLLECTIONS)[number] = "_nonces";
 
 /** Every collection an adapter must provision: agent-facing plus internal. */
 export const ALL_COLLECTIONS = [
@@ -60,6 +63,11 @@ export interface WebhookConfig {
    */
   adminSecret?: string;
   /**
+   * Register the legacy `tv-refresh` module (and advertise the capability).
+   * Set via TV_REFRESH_ENABLED=true; absent/anything else leaves it off.
+   */
+  tvRefreshEnabled?: boolean;
+  /**
    * Client IPs that must be rejected on the credential + store endpoints.
    * Token Vault's own server egress IP belongs here: a real ticket replayed
    * from TV's IP must NOT yield a credential (TV stays zero-knowledge).
@@ -82,6 +90,27 @@ export interface WebhookConfig {
    * Python reference's bug (refresh.py:246 trusts the hint) is fixed by this.
    */
   oauthProviders?: Record<string, OAuthProviderConfig>;
+  /**
+   * The scheduled refresh renews an own-app OAuth token once it expires
+   * within this many seconds (OAUTH_REFRESH_WINDOW_SECONDS; default 1200).
+   */
+  refreshWindowSeconds?: number;
+  /**
+   * Delete audit events older than this many days (AUDIT_RETENTION_DAYS).
+   * Absent or 0 keeps every event.
+   */
+  auditRetentionDays?: number;
+  /** Request-body cap in bytes before authentication (TV_MAX_BODY_BYTES; default 1 MiB). */
+  maxBodyBytes?: number;
+  /** Cap for /v1/proxy (TV_MAX_PROXY_BODY_BYTES; default 16 MiB). */
+  maxProxyBodyBytes?: number;
+  /**
+   * Origins /v1/proxy may send a credential to, by service name ("*" = every
+   * service). Set via TV_PROXY_ALLOWED_ORIGINS; absent = no allowlist.
+   */
+  proxyAllowedOrigins?: Readonly<Record<string, readonly string[]>>;
+  /** Let /v1/proxy call private addresses (TV_PROXY_ALLOW_PRIVATE=true; default off). */
+  proxyAllowPrivate?: boolean;
 }
 
 /** Locally-provisioned OAuth client credentials for autonomous refresh. */
@@ -90,8 +119,26 @@ export interface OAuthProviderConfig {
   clientSecret: string;
   /** Client ID; falls back to the refresh hint when omitted. */
   clientId?: string;
-  /** Token endpoint; falls back to the refresh hint when omitted. */
+  /**
+   * Token endpoint. Optional for google/github/spotify (built in). For any
+   * other provider it is required: the client secret is only ever sent to this
+   * URL or a built-in one, never to a URL a request or hint names.
+   */
   tokenUrl?: string;
+  /** Authorize endpoint, for a provider outside the built-in table (oauth-callback). */
+  authorizeUrl?: string;
+  /**
+   * Extra authorize-URL parameters (e.g. `{"audience": "…", "prompt": "consent"}`),
+   * added to the built-in ones. They never replace the parameters the webhook
+   * sets itself (response_type, client_id, redirect_uri, state, PKCE).
+   */
+  authorizeParams?: Record<string, string>;
+  /**
+   * How to send the client secret to the token endpoint: in the form body
+   * (`client_secret_post`, the default) or as HTTP Basic (`client_secret_basic`,
+   * the built-in default for spotify).
+   */
+  tokenAuthMethod?: "client_secret_post" | "client_secret_basic";
 }
 
 /**
@@ -145,10 +192,52 @@ export interface StorageAdapter {
   get(collection: string, key: string): Promise<StoredDocument | null>;
   set(collection: string, key: string, data: StoredDocument): Promise<void>;
   delete(collection: string, key: string): Promise<void>;
+  /**
+   * Atomic insert-if-absent: true if written, false if the key already existed.
+   * Optional: callers fall back to read-then-set.
+   */
+  setIfAbsent?(collection: string, key: string, data: StoredDocument): Promise<boolean>;
+  /**
+   * Conditional write: replace the document only if the stored one is still
+   * `expected` (the object this process read). False, with nothing written, if
+   * it was deleted or replaced since: a refresh must not resurrect or overwrite
+   * it. Optional: callers fall back to an unconditional `set`.
+   */
+  setIfUnchanged?(collection: string, key: string, expected: StoredDocument, data: StoredDocument): Promise<boolean>;
   /** All [key, document] pairs in a collection (unshaped). */
   entries(collection: string): Promise<Array<[string, StoredDocument]>>;
-  /** Number of documents in a collection, without loading them. */
-  count(collection: string): Promise<number>;
+  /**
+   * Number of documents in a collection, without loading them. With `since`,
+   * only documents whose timestamp field is >= it (see `TimeQuery`).
+   */
+  count(collection: string, opts?: Pick<TimeQuery, "since" | "timestampField">): Promise<number>;
+  /**
+   * Newest-first window of a collection, ordered and limited by the store
+   * (no full load). Optional: callers fall back to `entries` when absent.
+   */
+  list?(collection: string, opts: TimeQuery): Promise<Array<[string, StoredDocument]>>;
+  /**
+   * Delete documents whose timestamp field is a string older than `olderThan`
+   * (documents without one are kept). Returns the number deleted. Optional.
+   */
+  prune?(collection: string, olderThan: string, timestampField: string): Promise<number>;
+}
+
+/** Newest-first query over a collection's documents, ordered by a string timestamp field. */
+export interface TimeQuery {
+  /** Max documents to return. */
+  limit?: number;
+  /** Only documents with timestamp strictly older than this. */
+  before?: string;
+  /**
+   * Tie-break for `before`: also return documents whose timestamp equals
+   * `before` and whose key sorts below this one. Ignored without `before`.
+   */
+  beforeKey?: string;
+  /** Only documents with timestamp >= this. */
+  since?: string;
+  /** JSON field holding the ISO timestamp (letters/underscore only). Default "timestamp". */
+  timestampField?: string;
 }
 
 /**
@@ -158,8 +247,11 @@ export interface StorageAdapter {
 export interface ReplayGuard {
   /** TTL ~10 min. Returns true if this request ID was already used. */
   checkRequestId(id: string): Promise<boolean>;
-  /** TTL ~2 min. Returns true if this ticket nonce was already used. */
-  checkNonce(nonce: string): Promise<boolean>;
+  /**
+   * TTL ~2 min by default, or `ttlSeconds` for tickets that live longer (the
+   * OAuth state ticket). Returns true if this ticket nonce was already used.
+   */
+  checkNonce(nonce: string, ttlSeconds?: number): Promise<boolean>;
 }
 
 /** Everything a module needs at request time. */
@@ -170,4 +262,9 @@ export interface RuntimeContext {
   replay: ReplayGuard;
   /** Set by createApp: the un-wrapped adapter beneath the legacy-TOTP healing layer in `storage`. */
   rawStorage?: StorageAdapter;
+  /**
+   * Addresses a host name resolves to, on runtimes that can ask (Node). Used to
+   * refuse a /v1/proxy upstream whose name points at a private address.
+   */
+  resolveHost?: (hostname: string) => Promise<string[]>;
 }
