@@ -1,4 +1,4 @@
-name = "tv-webhook-dev"
+name = "tv-webhook"
 # This is the `develop` branch: defaults target the DEV control plane
 # (tokenvault.one) and a distinct worker name, so a dev deploy never binds to
 # or collides with production. `main` targets tokenvault.uk. Three values differ
