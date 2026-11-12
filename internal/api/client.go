@@ -52,7 +52,7 @@ type Client struct {
 	AgentKey    string // agent: tvagent_*
 	APIKey      string // key: tvkey_* scoped key
 	UserAgent   string // sent as User-Agent; defaults to DefaultUserAgent when New() is used
-	ClientLabel string // sent as X-Tvault-Client; New() sets it from TVAULT_CLIENT_LABEL or the host name
+	ClientLabel string // sent as X-Tvault-Client; New() sets it from TVAULT_CLIENT_LABEL (empty = not sent)
 	Debug       bool
 
 	// WebhookTimeout bounds each direct CLI → webhook credential fetch;
@@ -130,29 +130,15 @@ func refuseInsecureRedirect(req *http.Request, via []*http.Request) error {
 // which machine made a request.
 const clientLabelHeader = "X-Tvault-Client"
 
-// ClientLabelEnv overrides the host label; "-" sends none.
+// ClientLabelEnv holds the host label. Nothing is sent unless it is set: a
+// host name can name a person, so the owner chooses the text.
 const ClientLabelEnv = "TVAULT_CLIENT_LABEL"
 
 const clientLabelMax = 48
 
-// clientLabel is TVAULT_CLIENT_LABEL, or the machine's short host name. It
-// returns "" when the label is switched off ("-") or has nothing usable.
+// clientLabel is the cleaned TVAULT_CLIENT_LABEL, or "" when it is not set.
 func clientLabel() string {
-	raw, set := os.LookupEnv(ClientLabelEnv)
-	if set {
-		raw = strings.TrimSpace(raw)
-		if raw == "-" {
-			return ""
-		}
-	}
-	if raw == "" {
-		host, err := os.Hostname()
-		if err != nil {
-			return ""
-		}
-		raw, _, _ = strings.Cut(host, ".")
-	}
-	return cleanClientLabel(raw)
+	return cleanClientLabel(strings.TrimSpace(os.Getenv(ClientLabelEnv)))
 }
 
 // cleanClientLabel keeps letters, digits and . _ @ : - (the set the control

@@ -87,13 +87,12 @@ machine where agents run.
 
 ### The host label: `TVAULT_CLIENT_LABEL`
 
-Each request to Token Vault carries a short host label, so the Activity page
-can say which machine made a read ("Program: tvault/0.16.0 macmini"). The
-default is the machine's short host name. Set `TVAULT_CLIENT_LABEL=<label>` to
-choose the text (letters, digits and `. _ @ : -`, up to 48 characters), or
-`TVAULT_CLIENT_LABEL=-` to send no label. The label goes to the Token Vault
-API only, never to a webhook. Token Vault shows it and makes no decision from
-it.
+Set `TVAULT_CLIENT_LABEL=<label>` on a machine and each request to Token Vault
+carries that label, so the Activity page can say which machine made a read
+("Program: tvault/0.16.0 macmini"). Nothing is sent when the variable is not
+set: you choose the text, and it is stored with the event. Use letters, digits
+and `. _ @ : -`, up to 48 characters. The label goes to the Token Vault API
+only, never to a webhook. Token Vault shows it and makes no decision from it.
 
 | Command | Purpose |
 |---------|---------|

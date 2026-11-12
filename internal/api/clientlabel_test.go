@@ -28,28 +28,19 @@ func TestCleanClientLabel(t *testing.T) {
 	}
 }
 
-func TestClientLabelFromEnvOrHostName(t *testing.T) {
-	t.Setenv(ClientLabelEnv, "build box 3")
+func TestClientLabelIsSentOnlyWhenTheOwnerSetsIt(t *testing.T) {
+	t.Setenv(ClientLabelEnv, " build box 3 ")
 	if got := clientLabel(); got != "buildbox3" {
 		t.Errorf("env label = %q", got)
 	}
-	t.Setenv(ClientLabelEnv, " - ")
-	if got := clientLabel(); got != "" {
-		t.Errorf("\"-\" must send no label, got %q", got)
-	}
-	// Unset (or empty): the short host name.
-	os.Unsetenv(ClientLabelEnv)
-	host, err := os.Hostname()
-	if err != nil {
-		t.Skip("no host name on this machine")
-	}
-	short, _, _ := strings.Cut(host, ".")
-	if got := clientLabel(); got != cleanClientLabel(short) {
-		t.Errorf("default label = %q, want the short host name %q", got, cleanClientLabel(short))
-	}
+	// Not set, or empty: nothing. The host name is never sent by default.
 	t.Setenv(ClientLabelEnv, "")
-	if got := clientLabel(); got != cleanClientLabel(short) {
-		t.Errorf("an empty value falls back to the host name, got %q", got)
+	if got := clientLabel(); got != "" {
+		t.Errorf("an empty value must send no label, got %q", got)
+	}
+	os.Unsetenv(ClientLabelEnv)
+	if got := clientLabel(); got != "" {
+		t.Errorf("with the variable unset no label is sent, got %q", got)
 	}
 }
 
@@ -67,7 +58,7 @@ func TestClientLabelIsSentToTheControlPlane(t *testing.T) {
 	if _, err := c.doRequest("GET", "/api/x", nil, nil); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv(ClientLabelEnv, "-")
+	t.Setenv(ClientLabelEnv, "")
 	c = New(srv.URL, 0)
 	if _, err := c.doRequest("GET", "/api/x", nil, nil); err != nil {
 		t.Fatal(err)
