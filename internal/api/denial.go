@@ -270,13 +270,14 @@ func explainAccess(ce *clierr.CLIError, er errorResponse, query map[string]strin
 	switch er.Code {
 	case "NO_GRANT":
 		ce.Plain = "no access to " + name + ": this key or agent was never granted it."
-		ce.Hint = "grant it with `tvault grant <agent> " + cred + "=value` (a key: `tvault keys grant <key> " + cred + "`)"
+		// No `=value` here: it is the default, and at the end of a command it reads like a placeholder.
+		ce.Hint = "grant it with `tvault grant <agent> " + cred + "` (a key: `tvault keys grant <key> " + cred + "`)"
 	case "GRANT_EXPIRED":
 		ce.Plain = "access to " + name + " has expired and was removed."
-		ce.Hint = "grant it again with `tvault grant <agent> " + cred + "=value`"
+		ce.Hint = "grant it again with `tvault grant <agent> " + cred + "`"
 	case "GRANT_TOOLS_ONLY":
 		ce.Plain = "access to " + name + " allows tool calls only, not reading the value."
-		ce.Hint = "add the value use: `tvault grant <agent> " + cred + "=value`"
+		ce.Hint = "add the value use next to MCP: `tvault grant <agent> " + cred + "=value,mcp`"
 	case "AGENT_INACTIVE":
 		ce.Plain = "this agent is suspended, so every call is refused."
 		ce.Hint = "resume it from an admin context: `tvault agents resume <agent>`"

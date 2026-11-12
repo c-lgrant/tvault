@@ -181,9 +181,10 @@ func TestAccessRefusalsExplained(t *testing.T) {
 		sentence string
 		hint     string
 	}{
-		{"NO_GRANT", 404, 14, "no access to that credential", "tvault grant <agent> <credential>=value"},
-		{"GRANT_EXPIRED", 403, 14, "has expired", "tvault grant <agent> <credential>=value"},
-		{"GRANT_TOOLS_ONLY", 403, 14, "tool calls only", "=value"},
+		// A value grant is written with no "=value": it read like a placeholder for the secret.
+		{"NO_GRANT", 404, 14, "no access to that credential", "tvault grant <agent> <credential>` (a key"},
+		{"GRANT_EXPIRED", 403, 14, "has expired", "tvault grant <agent> <credential>`"},
+		{"GRANT_TOOLS_ONLY", 403, 14, "tool calls only", "<credential>=value,mcp`"},
 		{"AGENT_INACTIVE", 403, 11, "agent is suspended", "tvault agents resume <agent>"},
 		{"VAULT_LOCKED", 423, 5, "vault is locked", "tvault vault unlock"},
 		{"SCOPE_DENIED", 403, 8, "lacks a permission", "tvault keys create --scopes x:y"},
