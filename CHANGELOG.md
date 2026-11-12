@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.15.0](https://github.com/c-lgrant/tvault/compare/v0.14.1...v0.15.0) (2026-11-12)
+
+
+### Features
+
+* TVAULT_CONTEXT pins a shell to one context ([#67](https://github.com/c-lgrant/tvault/issues/67)) ([d38fcf9](https://github.com/c-lgrant/tvault/commit/d38fcf9abcf9569fd2cf5e023169a81b2c1388d4))
+
 ## [0.14.1](https://github.com/c-lgrant/tvault/compare/v0.14.0...v0.14.1) (2026-11-11)
 
 
