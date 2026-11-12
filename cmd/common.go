@@ -32,13 +32,62 @@ func (cc *cmdContext) label() string {
 // its SCOPE_DENIED / HUMAN_ONLY answers map to distinct exit codes.
 // contextOverride reads --context, falling back to its --ctx alias.
 // Both set → --context wins.
+//
+// TVAULT_CONTEXT pins the context for the whole process: it is used with no
+// flag, and pinGuard refuses anything that would use or change another one.
 func contextOverride(cmd *cobra.Command) string {
+	if pin := pinnedContext(); pin != "" {
+		return pin
+	}
+	return flagContext(cmd)
+}
+
+// flagContext is what the command line names: --context, else --ctx.
+func flagContext(cmd *cobra.Command) string {
 	v, _ := cmd.Flags().GetString("context")
 	if v != "" {
 		return v
 	}
 	v, _ = cmd.Flags().GetString("ctx")
 	return v
+}
+
+// contextEnv names the context every command in this process must use. A
+// harness sets it so an agent's shell acts as that agent and nothing else.
+const contextEnv = "TVAULT_CONTEXT"
+
+func pinnedContext() string { return strings.TrimSpace(os.Getenv(contextEnv)) }
+
+// pinnedCommands change which context is stored or active. Under a pin they
+// are refused: the pin would still win for this shell, and the change would
+// reach every other shell on the machine.
+var pinnedCommands = map[string]bool{
+	"tvault login":       true,
+	"tvault logout":      true,
+	"tvault context use": true,
+	"tvault context rm":  true,
+	"tvault use":         true,
+	"tvault connect":     true,
+}
+
+// pinGuard is the root pre-run check for TVAULT_CONTEXT. Without the variable
+// it does nothing.
+func pinGuard(cmd *cobra.Command) error {
+	pin := pinnedContext()
+	if pin == "" {
+		return nil
+	}
+	if flag := flagContext(cmd); flag != "" && flag != pin {
+		return &clierr.CLIError{Kind: clierr.KindUser, Command: cmd.CommandPath(),
+			Message: fmt.Sprintf("%s pins this shell to context %q, so --context %q is refused", contextEnv, pin, flag),
+			Hint:    "Run the command without --context, or unset " + contextEnv + "."}
+	}
+	if pinnedCommands[cmd.CommandPath()] {
+		return &clierr.CLIError{Kind: clierr.KindUser, Command: cmd.CommandPath(),
+			Message: fmt.Sprintf("%s pins this shell to context %q, so contexts cannot be changed from it", contextEnv, pin),
+			Hint:    "Unset " + contextEnv + " to sign in, sign out or switch contexts."}
+	}
+	return nil
 }
 
 func resolve(cmd *cobra.Command) (*cmdContext, error) {
