@@ -52,6 +52,7 @@ type Client struct {
 	AgentKey    string // agent: tvagent_*
 	APIKey      string // key: tvkey_* scoped key
 	UserAgent   string // sent as User-Agent; defaults to DefaultUserAgent when New() is used
+	ClientLabel string // sent as X-Tvault-Client; New() sets it from TVAULT_CLIENT_LABEL or the host name
 	Debug       bool
 
 	// WebhookTimeout bounds each direct CLI → webhook credential fetch;
@@ -76,8 +77,9 @@ func New(baseURL string, timeout time.Duration) *Client {
 		timeout = 30 * time.Second
 	}
 	return &Client{
-		BaseURL:   baseURL,
-		UserAgent: DefaultUserAgent,
+		BaseURL:     baseURL,
+		UserAgent:   DefaultUserAgent,
+		ClientLabel: clientLabel(),
 		HTTP: &http.Client{
 			Timeout:       timeout,
 			CheckRedirect: refuseInsecureRedirect,
@@ -117,7 +119,59 @@ func refuseInsecureRedirect(req *http.Request, via []*http.Request) error {
 	if !isSecureURL(req.URL) {
 		return errors.New("refusing to follow a redirect to a non-https address")
 	}
+	// The host label is for the control plane's activity log only.
+	if len(via) > 0 && req.URL.Host != via[0].URL.Host {
+		req.Header.Del(clientLabelHeader)
+	}
 	return nil
+}
+
+// clientLabelHeader carries a short host label, so the Activity page can say
+// which machine made a request.
+const clientLabelHeader = "X-Tvault-Client"
+
+// ClientLabelEnv overrides the host label; "-" sends none.
+const ClientLabelEnv = "TVAULT_CLIENT_LABEL"
+
+const clientLabelMax = 48
+
+// clientLabel is TVAULT_CLIENT_LABEL, or the machine's short host name. It
+// returns "" when the label is switched off ("-") or has nothing usable.
+func clientLabel() string {
+	raw, set := os.LookupEnv(ClientLabelEnv)
+	if set {
+		raw = strings.TrimSpace(raw)
+		if raw == "-" {
+			return ""
+		}
+	}
+	if raw == "" {
+		host, err := os.Hostname()
+		if err != nil {
+			return ""
+		}
+		raw, _, _ = strings.Cut(host, ".")
+	}
+	return cleanClientLabel(raw)
+}
+
+// cleanClientLabel keeps letters, digits and . _ @ : - (the set the control
+// plane accepts), drops the rest, and cuts the result to clientLabelMax. The
+// label must start with a letter or digit.
+func cleanClientLabel(raw string) string {
+	var b strings.Builder
+	for _, r := range raw {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+			b.WriteRune(r)
+		case (r == '.' || r == '_' || r == '@' || r == ':' || r == '-') && b.Len() > 0:
+			b.WriteRune(r)
+		}
+		if b.Len() >= clientLabelMax {
+			break
+		}
+	}
+	return b.String()
 }
 
 // requireSecureWebhookURL rejects a webhook URL that is not https (loopback
@@ -392,6 +446,9 @@ func (c *Client) attempt(method, path string, body any, query map[string]string)
 	}
 	if c.UserAgent != "" {
 		req.Header.Set("User-Agent", c.UserAgent)
+	}
+	if c.ClientLabel != "" {
+		req.Header.Set(clientLabelHeader, c.ClientLabel)
 	}
 
 	start := time.Now()

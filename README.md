@@ -85,6 +85,16 @@ The pin stops mistakes. It is not a wall: a process that can unset the variable
 or read the stored contexts is not held by it. Keep an admin sign-in off a
 machine where agents run.
 
+### The host label: `TVAULT_CLIENT_LABEL`
+
+Each request to Token Vault carries a short host label, so the Activity page
+can say which machine made a read ("Program: tvault/0.16.0 macmini"). The
+default is the machine's short host name. Set `TVAULT_CLIENT_LABEL=<label>` to
+choose the text (letters, digits and `. _ @ : -`, up to 48 characters), or
+`TVAULT_CLIENT_LABEL=-` to send no label. The label goes to the Token Vault
+API only, never to a webhook. Token Vault shows it and makes no decision from
+it.
+
 | Command | Purpose |
 |---------|---------|
 | `tvault login` | Browser-based admin login. `--as <name>` names the context; `--key-stdin` reads a `tvagent_*`/`tvkey_*` key from a pipe for a non-interactive login (agent or key context, detected from the prefix; needs `--as`) — `printf %s "$TVAULT_KEY" \| tvault login --key-stdin --as ci`. `--key <key>` does the same but leaves the key in your shell history and process list, so prefer `--key-stdin`; `--no-launch-browser` uses the manual code-paste flow for SSH/headless sessions. |
