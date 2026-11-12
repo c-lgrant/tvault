@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.16.0](https://github.com/c-lgrant/tvault/compare/v0.15.0...v0.16.0) (2026-11-12)
+
+
+### Features
+
+* host label on requests; clearer grant hints ([#71](https://github.com/c-lgrant/tvault/issues/71)) ([c01af6e](https://github.com/c-lgrant/tvault/commit/c01af6ec07557d303496f037e8238e02aef184c6))
+
+
+### Bug Fixes
+
+* say why an admin sign-in ended ([#72](https://github.com/c-lgrant/tvault/issues/72)) ([51e499e](https://github.com/c-lgrant/tvault/commit/51e499eeff09ea9a28edd9939f661277d980b0cd))
+
 ## [0.15.0](https://github.com/c-lgrant/tvault/compare/v0.14.1...v0.15.0) (2026-11-12)
 
 
