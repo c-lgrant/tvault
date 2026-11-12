@@ -34,9 +34,13 @@ var contextListCmd = &cobra.Command{
 			names = append(names, n)
 		}
 		sort.Strings(names)
+		current := cfg.Current
+		if pin := pinnedContext(); pin != "" {
+			current = pin
+		}
 		for _, n := range names {
 			marker := "  "
-			if n == cfg.Current {
+			if n == current {
 				marker = "* "
 			}
 			c := cfg.Contexts[n]
@@ -77,12 +81,16 @@ var contextCurrentCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		if cfg.Current == "" {
+		current := cfg.Current
+		if pin := pinnedContext(); pin != "" {
+			current = pin // TVAULT_CONTEXT is what every command in this shell uses
+		}
+		if current == "" {
 			return &clierr.CLIError{Kind: clierr.KindAuth, Command: "context current", Message: "no active context"}
 		}
 		// stdout, not cmd.Println — scripts pipe $(tvault ctx current) into
 		// other commands. Same Cobra-to-stderr footgun fixed for tokens get.
-		fmt.Println(cfg.Current)
+		fmt.Println(current)
 		return nil
 	},
 }
