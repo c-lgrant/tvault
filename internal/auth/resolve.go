@@ -97,7 +97,7 @@ func adminIDToken(client *api.Client, ctx *config.Context, debug bool) (string, 
 		if errors.As(err, &ce) && ce.Kind == clierr.KindAuth {
 			return "", &clierr.CLIError{
 				Kind:    clierr.KindAuth,
-				Message: "session expired — run `tvault login` to reauth",
+				Message: sessionEndedMessage(ce),
 			}
 		}
 		return "", err
