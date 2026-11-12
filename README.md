@@ -68,6 +68,23 @@ token and so only works in an admin context.
 Commands resolve the active context automatically; override it
 per-invocation with `--context <name>`.
 
+### Pin a shell to one context: `TVAULT_CONTEXT`
+
+Set `TVAULT_CONTEXT=<name>` and every command in that shell uses that context,
+with no flag. Use it to make an agent's shell act as that agent and nothing
+else, for example in the environment a coding agent's harness sets.
+
+While it is set:
+
+- `--context` with another name is refused (exit 1).
+- `tvault login`, `logout`, `use`, `context use`, `context rm` and `connect`
+  are refused, so the shell cannot change what is stored for other shells.
+- `tvault context current` prints the pinned name.
+
+The pin stops mistakes. It is not a wall: a process that can unset the variable
+or read the stored contexts is not held by it. Keep an admin sign-in off a
+machine where agents run.
+
 | Command | Purpose |
 |---------|---------|
 | `tvault login` | Browser-based admin login. `--as <name>` names the context; `--key-stdin` reads a `tvagent_*`/`tvkey_*` key from a pipe for a non-interactive login (agent or key context, detected from the prefix; needs `--as`) — `printf %s "$TVAULT_KEY" \| tvault login --key-stdin --as ci`. `--key <key>` does the same but leaves the key in your shell history and process list, so prefer `--key-stdin`; `--no-launch-browser` uses the manual code-paste flow for SSH/headless sessions. |

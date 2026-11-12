@@ -43,6 +43,9 @@ admin and agent personas.`,
 		if cmd.Name() == "version" || cmd.Name() == "completion" || cmd.Name() == "help" {
 			return nil
 		}
+		if err := pinGuard(cmd); err != nil {
+			return err
+		}
 		_, err := config.MigrateLegacy(func(prompt string) bool {
 			if !term.IsTerminal(int(os.Stdin.Fd())) {
 				return false // never block scripts on a prompt
