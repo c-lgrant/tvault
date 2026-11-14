@@ -22,7 +22,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="TokenVault webhook service (sovereign)",
+    title="Token Vault webhook service (sovereign)",
     version=WEBHOOK_VERSION,
     lifespan=lifespan,
 )

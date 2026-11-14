@@ -53,7 +53,7 @@ Once the webhook is running:
 1. Check the logs. If the webhook is not configured, it will print a bind URL:
    `Please open https://your-domain.ngrok-free.app/bind in your browser`
 2. Open that URL in your browser.
-3. Click **Connect to TokenVault**. You will be redirected to the Token Vault dashboard.
+3. Click **Connect to Token Vault**. You will be redirected to the Token Vault dashboard.
 4. Token Vault will establish a secure HMAC secret with your webhook.
 5. Your vault is now connected! You can now add and manage tokens from the dashboard.
 

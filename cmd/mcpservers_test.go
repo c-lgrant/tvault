@@ -636,15 +636,15 @@ func TestConnectServer_AddsPerServerEntry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "mcp add --transport http --scope user tv-github-github " + b.srv.URL + "/api/mcp/github/github"
-	if len(*ran) != 2 || (*ran)[0] != "mcp get tv-github-github" || (*ran)[1] != want {
+	want := "mcp add --transport http --scope user tokenvault-github-github " + b.srv.URL + "/api/mcp/github/github"
+	if len(*ran) != 2 || (*ran)[0] != "mcp get tokenvault-github-github" || (*ran)[1] != want {
 		t.Errorf("claude invocations = %q, want get then %q", *ran, want)
 	}
 	if !strings.Contains(stderr, "claude "+want) {
 		t.Errorf("the command should be printed first: %q", stderr)
 	}
 	for _, a := range *ran {
-		if strings.Contains(a, "mcp add --transport http --scope user tokenvault") {
+		if strings.Contains(a, "mcp add --transport http --scope user tokenvault ") {
 			t.Errorf("must not register the general entry: %q", *ran)
 		}
 	}
@@ -717,8 +717,8 @@ func TestConnect_AggregatorOffRegistersOneEntryPerServer(t *testing.T) {
 		}
 	}
 	want := []string{
-		"mcp add --transport http --scope user tv-github-github " + b.srv.URL + "/api/mcp/github/github",
-		"mcp add --transport http --scope user tv-github-docs " + b.srv.URL + "/api/mcp/github/docs",
+		"mcp add --transport http --scope user tokenvault-github-github " + b.srv.URL + "/api/mcp/github/github",
+		"mcp add --transport http --scope user tokenvault-github-docs " + b.srv.URL + "/api/mcp/github/docs",
 	}
 	if strings.Join(adds, "\n") != strings.Join(want, "\n") {
 		t.Errorf("adds = %q, want %q", adds, want)
@@ -734,7 +734,7 @@ func TestConnect_AggregatorOffHonoursServerListAndNoServers(t *testing.T) {
 	if _, _, err := runCLI(t, "connect", "my-agent", "github=mcp:docs"); err != nil {
 		t.Fatal(err)
 	}
-	if got := strings.Join(*ran, "\n"); !strings.Contains(got, "tv-github-docs") || strings.Contains(got, "tv-github-github") {
+	if got := strings.Join(*ran, "\n"); !strings.Contains(got, "tokenvault-github-docs") || strings.Contains(got, "tokenvault-github-github") {
 		t.Errorf("claude invocations = %q", *ran)
 	}
 	// A credential with no servers: say so, and do not fall back to the empty general entry.
