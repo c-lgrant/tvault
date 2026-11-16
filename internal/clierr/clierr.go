@@ -12,20 +12,22 @@ import (
 type Kind int
 
 const (
-	KindUser         Kind = iota // 1 — bad args, validation, not found
-	KindAuth                     // 2 — no context, expired, refresh failed
-	KindNetwork                  // 3 — connect timeout, DNS, no route
-	KindServer                   // 4 — 5xx
-	KindVaultLocked              // 5 — 423 VAULT_LOCKED
-	KindEmpty                    // 6 — token exists but has no credential value
-	KindRateLimited              // 7 — 429 rate limited / penalty-boxed
-	KindScopeDenied              // 8 — 403 SCOPE_DENIED: the key lacks a required scope
-	KindHumanOnly                // 9 — 403 HUMAN_ONLY: operation needs a signed-in human
-	KindKeyExpired               // 10 — 401 KEY_EXPIRED: the API key is past its expiry
-	KindKeySuspended             // 11 — 403 KEY_SUSPENDED: the key is suspended
-	KindInvalidKey               // 12 — 401 INVALID_KEY: the key is unknown or malformed
-	KindPolicyDenied             // 13 — POLICY_DENIED: a policy refused the call
-	KindNoGrant                  // 14 — NO_GRANT / GRANT_EXPIRED / GRANT_TOOLS_ONLY: no grant for this use
+	KindUser           Kind = iota // 1 — bad args, validation, not found
+	KindAuth                       // 2 — no context, expired, refresh failed
+	KindNetwork                    // 3 — connect timeout, DNS, no route
+	KindServer                     // 4 — 5xx
+	KindVaultLocked                // 5 — 423 VAULT_LOCKED
+	KindEmpty                      // 6 — token exists but has no credential value
+	KindRateLimited                // 7 — 429 rate limited / penalty-boxed
+	KindScopeDenied                // 8 — 403 SCOPE_DENIED: the key lacks a required scope
+	KindHumanOnly                  // 9 — 403 HUMAN_ONLY: operation needs a signed-in human
+	KindKeyExpired                 // 10 — 401 KEY_EXPIRED: the API key is past its expiry
+	KindKeySuspended               // 11 — 403 KEY_SUSPENDED: the key is suspended
+	KindInvalidKey                 // 12 — 401 INVALID_KEY: the key is unknown or malformed
+	KindPolicyDenied               // 13 — POLICY_DENIED: a policy refused the call
+	KindNoGrant                    // 14 — NO_GRANT / GRANT_EXPIRED / GRANT_TOOLS_ONLY: no grant for this use
+	KindRequestDenied              // 15 — `access request --wait`: the owner denied the request
+	KindRequestExpired             // 16 — `access request --wait`: the request expired, or the wait ran out
 )
 
 func (k Kind) exitCode() int {
@@ -58,6 +60,10 @@ func (k Kind) exitCode() int {
 		return 13
 	case KindNoGrant:
 		return 14
+	case KindRequestDenied:
+		return 15
+	case KindRequestExpired:
+		return 16
 	default:
 		return 1
 	}
