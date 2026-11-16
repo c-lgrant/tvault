@@ -3,6 +3,8 @@ package api
 import (
 	"encoding/json"
 	"net/url"
+
+	"github.com/c-lgrant/tvault/internal/textsafe"
 )
 
 // GrantRequest is a key or agent's request for grants. The owner approves or
@@ -21,6 +23,36 @@ type GrantRequest struct {
 	URL            string           `json:"url"`
 	Uses           []string         `json:"uses,omitempty"`
 	ExpiresInHours int              `json:"expiresInHours,omitempty"`
+}
+
+// sanitize makes every server-provided string safe to print: control and
+// escape characters come back quoted (textsafe), so a hostile or broken
+// server can't repaint the terminal. A URL that is not plain http(s) is
+// dropped, so the CLI never prints a javascript: or garbled link as "the
+// approval link".
+func (r *GrantRequest) sanitize() {
+	r.RequestID = textsafe.Safe(r.RequestID)
+	r.Status = textsafe.Safe(r.Status)
+	r.CreatedAt = textsafe.Safe(r.CreatedAt)
+	r.ExpiresAt = textsafe.Safe(r.ExpiresAt)
+	r.Reason = textsafe.Safe(r.Reason)
+	r.Requester.Name = textsafe.Safe(r.Requester.Name)
+	safeAll(r.Services)
+	safeAll(r.Granted)
+	for i := range r.Skipped {
+		r.Skipped[i].Service = textsafe.Safe(r.Skipped[i].Service)
+		r.Skipped[i].Reason = textsafe.Safe(r.Skipped[i].Reason)
+	}
+	if u, err := url.Parse(r.URL); err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" ||
+		textsafe.Safe(r.URL) != r.URL {
+		r.URL = ""
+	}
+}
+
+func safeAll(items []string) {
+	for i := range items {
+		items[i] = textsafe.Safe(items[i])
+	}
 }
 
 // SkippedService is a requested service the approval did not grant, and why.
@@ -48,6 +80,7 @@ func (c *Client) CreateGrantRequest(req NewGrantRequest) (*GrantRequest, error) 
 	if err := json.Unmarshal(body, &res); err != nil {
 		return nil, err
 	}
+	res.sanitize()
 	return &res, nil
 }
 
@@ -61,6 +94,7 @@ func (c *Client) GetGrantRequest(id string) (*GrantRequest, error) {
 	if err := json.Unmarshal(body, &res); err != nil {
 		return nil, err
 	}
+	res.sanitize()
 	return &res, nil
 }
 
@@ -81,5 +115,7 @@ func (c *Client) DropGrants(services []string) (*DropResult, error) {
 	if err := json.Unmarshal(body, &res); err != nil {
 		return nil, err
 	}
+	safeAll(res.Dropped)
+	safeAll(res.NotHeld)
 	return &res, nil
 }

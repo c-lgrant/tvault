@@ -118,7 +118,7 @@ func TestAccessRequest_WaitRunsOut(t *testing.T) {
 	requestPollInterval = 20 * time.Millisecond
 	defer func() { requestPollInterval = old }()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"requestId":"r1","url":"u","status":"pending"}`))
+		w.Write([]byte(`{"requestId":"r1","url":"https://tv.example/requests/r1","status":"pending"}`))
 	}))
 	defer srv.Close()
 	setupContext(t, &config.Context{Type: "agent", APIURL: srv.URL, Identity: "bot", AgentKey: "tvagent_abc"})
