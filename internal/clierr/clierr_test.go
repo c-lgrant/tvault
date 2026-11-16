@@ -26,6 +26,8 @@ func TestExitCode(t *testing.T) {
 		{&CLIError{Kind: KindPolicyDenied}, 13},
 		{&CLIError{Kind: KindNoGrant}, 14},
 		{&CLIError{Kind: KindInvalidKey}, 12},
+		{&CLIError{Kind: KindRequestDenied}, 15},
+		{&CLIError{Kind: KindRequestExpired}, 16},
 		{errors.New("plain error"), 1},
 	}
 	for _, c := range cases {

@@ -271,7 +271,8 @@ func explainAccess(ce *clierr.CLIError, er errorResponse, query map[string]strin
 	case "NO_GRANT":
 		ce.Plain = "no access to " + name + ": this key or agent was never granted it."
 		// No `=value` here: it is the default, and at the end of a command it reads like a placeholder.
-		ce.Hint = "grant it with `tvault grant <agent> " + cred + "` (a key: `tvault keys grant <key> " + cred + "`)"
+		ce.Hint = "grant it with `tvault grant <agent> " + cred + "` (a key: `tvault keys grant <key> " + cred +
+			"`), or from this key or agent ask the owner: `tvault access request " + cred + " --reason \"...\"`"
 	case "GRANT_EXPIRED":
 		ce.Plain = "access to " + name + " has expired and was removed."
 		ce.Hint = "grant it again with `tvault grant <agent> " + cred + "`"
