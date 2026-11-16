@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -17,6 +18,20 @@ import (
 )
 
 // Agent refs (names or IDs) are resolved in refs.go; see pickRef for the rules.
+
+// printNewKey writes a freshly minted agent key to stdout, the only place it
+// ever goes. Plain: the key alone on one line (KEY=$(tvault agents create ...)).
+// With an explicit --format json: one JSON object holding the key and the
+// agent's details, so a script can parse it. A piped stdout alone does not
+// switch to JSON here: that would break the plain-key scripts above.
+func printNewKey(cmd *cobra.Command, key string, details map[string]any) error {
+	if f, _ := cmd.Flags().GetString("format"); strings.EqualFold(f, "json") {
+		details["apiKey"] = key
+		return json.NewEncoder(os.Stdout).Encode(details)
+	}
+	_, err := fmt.Println(key)
+	return err
+}
 
 // agentIDPattern matches the IDs the backend issues for agents: Firestore
 // auto-IDs, 20 alphanumeric characters.
@@ -213,8 +228,16 @@ var agentsCreateCmd = &cobra.Command{
 			}
 		}
 		cmd.PrintErrln("API key (shown once — store it now):")
-		// stdout: scripts capture KEY=$(tvault agents create ... | tail -1).
-		fmt.Println(res.APIKey)
+		// stdout: scripts capture KEY=$(tvault agents create ... | tail -1), or
+		// parse the object with --format json.
+		granted := gr.OK
+		if granted == nil {
+			granted = []string{}
+		}
+		if err := printNewKey(cmd, res.APIKey, map[string]any{
+			"id": res.ID, "name": res.Name, "kind": res.Kind, "grants": granted}); err != nil {
+			return err
+		}
 		if grantErr != nil {
 			// The key is already printed (it is never shown again), but a
 			// half-granted agent must not exit 0: scripts would assume access.
@@ -274,15 +297,14 @@ an agent can rotate itself with --self, which also switches the active context t
 		cmd.PrintErrf("Rotated key for agent %s — the old key no longer works.\n", label)
 		if self {
 			if err := storeRotatedKey(cc, res.APIKey); err != nil {
-				fmt.Println(res.APIKey)
+				_ = printNewKey(cmd, res.APIKey, map[string]any{"id": id})
 				return err
 			}
 			cmd.PrintErrf("Context %q now uses the new key.\n", cc.ContextName)
 		}
 		cmd.PrintErrln("API key (shown once — store it now):")
-		// stdout: scripts capture KEY=$(tvault agents rotate-key ...).
-		fmt.Println(res.APIKey)
-		return nil
+		// stdout: scripts capture KEY=$(tvault agents rotate-key ...), or parse --format json.
+		return printNewKey(cmd, res.APIKey, map[string]any{"id": id})
 	},
 }
 

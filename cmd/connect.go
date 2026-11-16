@@ -225,7 +225,7 @@ With --server <service>/<server>, the one credential MCP server (see
 ` + "`tvault mcp-servers`" + `) is added to Claude Code as its own entry instead of the
 general Token Vault one: ` + "`claude mcp add --transport http --scope user <name> <url>`" + `
 with the per-server URL <api>/api/mcp/<service>/<server>. The entry name
-defaults to tv-<service>-<server>; override it with --name.
+defaults to tokenvault-<service>-<server>; override it with --name.
 
 The credential values never pass through Token Vault; this only creates the
 agent and its grants. In Claude Code, run /mcp, sign in, and pick the agent.`,
@@ -279,7 +279,7 @@ func runConnect(cmd *cobra.Command, args []string) error {
 		}
 		if !noClaude {
 			if entryName == "" {
-				entryName = "tv-" + svc + "-" + srv
+				entryName = "tokenvault-" + svc + "-" + srv
 			}
 			url := strings.TrimRight(cc.Ctx.APIURL, "/") + "/api/mcp/" + neturl.PathEscape(svc) + "/" + neturl.PathEscape(srv)
 			registerEntryWithClaude(cmd, cc, printOnly, entryName, url)
@@ -350,7 +350,7 @@ func registerServerEntries(cmd *cobra.Command, cc *cmdContext, printOnly bool, s
 		}
 		for _, n := range names {
 			url := base + "/api/mcp/" + neturl.PathEscape(s.Service) + "/" + neturl.PathEscape(n)
-			registerEntryWithClaude(cmd, cc, printOnly, "tv-"+s.Service+"-"+n, url)
+			registerEntryWithClaude(cmd, cc, printOnly, "tokenvault-"+s.Service+"-"+n, url)
 		}
 	}
 	return true
@@ -447,6 +447,6 @@ func init() {
 	connectCmd.Flags().Bool("no-claude", false, "do not look for or touch Claude Code")
 	connectCmd.Flags().Bool("print", false, "only print the `claude mcp add` command; run nothing")
 	connectCmd.Flags().String("server", "", "add one credential MCP server (<service>/<server>) to Claude Code as its own entry, instead of the general Token Vault one")
-	connectCmd.Flags().String("name", "", "with --server: the Claude Code entry name (default tv-<service>-<server>)")
+	connectCmd.Flags().String("name", "", "with --server: the Claude Code entry name (default tokenvault-<service>-<server>)")
 	rootCmd.AddCommand(connectCmd)
 }

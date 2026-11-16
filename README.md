@@ -136,8 +136,8 @@ the backend-assigned ID — the CLI resolves names through `agents list`.
 |---------|---------|
 | `ag list` (`ls`) | List agents. |
 | `ag show <name-or-id>` (`info`) | Show agent details and grants. |
-| `ag create` (`new`) | Create an agent — interactive name + grants wizard, or `--name`/`--grants`. `--kind scoped --scopes a,b` creates a scoped agent. The API key is shown once. There is no per-agent MCP switch: MCP access is what lets an agent use an MCP server. If Token Vault asks for a fresh sign-in (`REAUTH_REQUIRED`), an interactive admin context runs the browser login and retries once. |
-| `ag rotate-key <name-or-id>` | Replace an agent's API key. The new key is printed once, on stdout (status goes to stderr). |
+| `ag create` (`new`) | Create an agent — interactive name + grants wizard, or `--name`/`--grants`. `--kind scoped --scopes a,b` creates a scoped agent. The API key is shown once: alone on stdout, or with `--format json` as one object `{id, name, kind, grants, apiKey}`. To store it without it ever reaching a terminal, pipe the plain form straight in: `tvault ag create --name bot --non-interactive \| tvault add bot-key --value-stdin`. There is no per-agent MCP switch: MCP access is what lets an agent use an MCP server. If Token Vault asks for a fresh sign-in (`REAUTH_REQUIRED`), an interactive admin context runs the browser login and retries once. |
+| `ag rotate-key <name-or-id>` | Replace an agent's API key. The new key is printed once, on stdout (status goes to stderr); `--format json` prints `{id, apiKey}`. |
 | `ag rm <name-or-id>...` (`del`, `d`) | Delete one or more agents. |
 | `ag suspend <name-or-id>` (`off`) | Suspend an agent. |
 | `ag resume <name-or-id>` (`on`) | Resume a suspended agent. |
@@ -330,6 +330,23 @@ object carrying it. A label never grants access. `<kind>` is `credential`,
 
 The bare `tvault <service>` form is still the back-compat shim (see below).
 
+## Asking for access (keys and agents)
+
+A key or agent cannot grant itself access. From a key or agent context it can
+ask the owner, and it can give up access it no longer needs:
+
+```bash
+tvault access request openai --reason "summarise the build logs"   # prints the approval link
+tvault access request github --uses mcp --expires 7d --reason "triage" --wait 10m
+tvault access status <request-id>
+tvault access drop github linear                                    # no scope needed
+```
+
+The link opens the request in the console; it grants nothing by itself, and
+only the signed-in owner can approve or deny it. A request expires after one
+hour. `--wait` waits (at most one hour) and exits 0, 15 (denied) or 16
+(expired, or the wait ran out).
+
 ## Back-compat shim
 
 For drop-in compatibility with the legacy bash script, a bare invocation works:
@@ -374,6 +391,8 @@ parsing text.
 | 12 | `INVALID_KEY` — the API key is unknown, malformed, or revoked. |
 | 13 | `POLICY_DENIED` — a policy refused the call (hours, rate, IP, usage); the message says which. |
 | 14 | No grant for this use — `NO_GRANT`, `GRANT_EXPIRED` or `GRANT_TOOLS_ONLY`. |
+| 15 | `access request --wait`: the owner denied the request. |
+| 16 | `access request --wait`: the request expired, or the wait ran out first. |
 
 Other server codes keep the code of their HTTP class and add a hint to the
 message (see `tvault explain <code>`):
