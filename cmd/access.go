@@ -196,6 +196,11 @@ approved, 15 when denied, and 16 when the request expires or the wait runs out.`
 		if err != nil {
 			return enrich(cmd, cc, err)
 		}
+		if req.URL == "" { // missing, or not a plain http(s) link (api.GrantRequest.sanitize)
+			return &clierr.CLIError{Kind: clierr.KindServer, Command: "access request",
+				Message: "request " + req.RequestID + " was sent, but the server returned no usable approval link",
+				Hint:    "the owner can find it in the console inbox"}
+		}
 		fmt.Fprintln(os.Stdout, req.URL)
 		cmd.PrintErrf("Request %s sent for %s. Open the link above to approve. It expires %s.\n",
 			req.RequestID, strings.Join(args, ", "), req.ExpiresAt)

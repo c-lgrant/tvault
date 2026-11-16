@@ -409,3 +409,66 @@ func TestKeysRotate_NeedsArgOrSelf(t *testing.T) {
 		}
 	}
 }
+
+// resetFormat clears every flag (cobra keeps values between Execute calls in
+// one process) before the test and again after it, so --format json never
+// leaks into another test.
+func resetFormat(t *testing.T) {
+	resetFlags(t)
+	t.Cleanup(func() { resetFlags(t) })
+}
+
+// --format json: stdout is one JSON object with the key, so a script can
+// parse it (`| jq -r .apiKey`). Hints stay on stderr and never hold the key.
+func TestAgentsCreate_FormatJSONIsOneObject(t *testing.T) {
+	resetFormat(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == "POST" && r.URL.Path == "/api/agents":
+			w.WriteHeader(201)
+			w.Write([]byte(`{"id":"a1","name":"child","apiKey":"tvagent_child","kind":"scoped"}`))
+		case r.Method == "POST" && r.URL.Path == "/api/agents/a1/grants":
+			w.Write([]byte(`{"success":true,"serviceName":"github"}`))
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(500)
+		}
+	}))
+	defer srv.Close()
+	setupContext(t, &config.Context{Type: "key", APIURL: srv.URL, Identity: "ci", APIKey: "tvkey_k"})
+
+	stdout, stderr, err := runCLI(t, "agents", "create", "--kind", "scoped", "--name", "child",
+		"--scopes", "credentials:read", "--grants", "github", "--non-interactive", "--format", "json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]any
+	if jerr := json.Unmarshal([]byte(stdout), &got); jerr != nil {
+		t.Fatalf("stdout is not one JSON object: %q (%v)", stdout, jerr)
+	}
+	if got["apiKey"] != "tvagent_child" || got["id"] != "a1" || got["name"] != "child" {
+		t.Errorf("object = %v", got)
+	}
+	if g, _ := got["grants"].([]any); len(g) != 1 || g[0] != "github" {
+		t.Errorf("grants = %v", got["grants"])
+	}
+	if strings.Contains(stderr, "tvagent_child") {
+		t.Errorf("key leaked to stderr: %q", stderr)
+	}
+}
+
+// Without an explicit --format json, a piped stdout still gets the bare key:
+// KEY=$(tvault agents create ...) scripts keep working.
+func TestAgentsCreate_PipedDefaultIsBareKey(t *testing.T) {
+	resetFormat(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(201)
+		w.Write([]byte(`{"id":"a1","name":"child","apiKey":"tvagent_child","kind":"classic"}`))
+	}))
+	defer srv.Close()
+	setupContext(t, &config.Context{Type: "key", APIURL: srv.URL, Identity: "ci", APIKey: "tvkey_k"})
+	stdout, _, err := runCLI(t, "agents", "create", "--name", "child", "--non-interactive")
+	if err != nil || stdout != "tvagent_child\n" {
+		t.Errorf("stdout = %q, err = %v", stdout, err)
+	}
+}

@@ -136,8 +136,8 @@ the backend-assigned ID — the CLI resolves names through `agents list`.
 |---------|---------|
 | `ag list` (`ls`) | List agents. |
 | `ag show <name-or-id>` (`info`) | Show agent details and grants. |
-| `ag create` (`new`) | Create an agent — interactive name + grants wizard, or `--name`/`--grants`. `--kind scoped --scopes a,b` creates a scoped agent. The API key is shown once. There is no per-agent MCP switch: MCP access is what lets an agent use an MCP server. If Token Vault asks for a fresh sign-in (`REAUTH_REQUIRED`), an interactive admin context runs the browser login and retries once. |
-| `ag rotate-key <name-or-id>` | Replace an agent's API key. The new key is printed once, on stdout (status goes to stderr). |
+| `ag create` (`new`) | Create an agent — interactive name + grants wizard, or `--name`/`--grants`. `--kind scoped --scopes a,b` creates a scoped agent. The API key is shown once: alone on stdout, or with `--format json` as one object `{id, name, kind, grants, apiKey}`. To store it without it ever reaching a terminal, pipe the plain form straight in: `tvault ag create --name bot --non-interactive \| tvault add bot-key --value-stdin`. There is no per-agent MCP switch: MCP access is what lets an agent use an MCP server. If Token Vault asks for a fresh sign-in (`REAUTH_REQUIRED`), an interactive admin context runs the browser login and retries once. |
+| `ag rotate-key <name-or-id>` | Replace an agent's API key. The new key is printed once, on stdout (status goes to stderr); `--format json` prints `{id, apiKey}`. |
 | `ag rm <name-or-id>...` (`del`, `d`) | Delete one or more agents. |
 | `ag suspend <name-or-id>` (`off`) | Suspend an agent. |
 | `ag resume <name-or-id>` (`on`) | Resume a suspended agent. |

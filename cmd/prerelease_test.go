@@ -528,3 +528,25 @@ func TestOldServer_MissingRoutesHintAtScopedKeys(t *testing.T) {
 		t.Errorf("keys ls: want a hint about old servers, got %v", err)
 	}
 }
+
+func TestAgentsRotateKey_FormatJSON(t *testing.T) {
+	resetFormat(t)
+	rec := newRecorder(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method + " " + r.URL.Path {
+		case "GET /api/agents":
+			w.Write([]byte(`[{"id":"` + agentID + `","name":"bot","status":"active"}]`))
+		case "POST /api/agents/" + agentID + "/rotate-key":
+			w.Write([]byte(`{"apiKey":"tvagent_fresh","agentId":"` + agentID + `"}`))
+		default:
+			w.WriteHeader(500)
+		}
+	})
+	setupContext(t, &config.Context{Type: "key", APIURL: rec.srv.URL, Identity: "k", APIKey: "tvkey_k"})
+	stdout, _, err := run(t, "agents", "rotate-key", "bot", "--format", "json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := `{"apiKey":"tvagent_fresh","id":"` + agentID + `"}` + "\n"; stdout != want {
+		t.Errorf("stdout = %q, want %q", stdout, want)
+	}
+}
