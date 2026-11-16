@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.17.0](https://github.com/c-lgrant/tvault/compare/v0.16.0...v0.17.0) (2026-11-16)
+
+
+### Features
+
+* tvault access request, status and drop ([60610ee](https://github.com/c-lgrant/tvault/commit/60610eea7ebe2429ede04b477780fc64077fa7e4))
+
+
+### Bug Fixes
+
+* agents create and rotate-key honour --format json; sanitise access output ([808f40c](https://github.com/c-lgrant/tvault/commit/808f40c4353836619c9c68b68dfb7ac1910bdc57))
+* use the tokenvault name for Claude Code entries and the webhook package ([dd306ea](https://github.com/c-lgrant/tvault/commit/dd306ea94b32cdcfa048c39a28bc9861b59a975b))
+
 ## [0.16.0](https://github.com/c-lgrant/tvault/compare/v0.15.0...v0.16.0) (2026-11-12)
 
 
