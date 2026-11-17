@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -82,6 +83,30 @@ func parseRequestUses(s string) ([]string, error) {
 		}
 	}
 	return out, nil
+}
+
+// splitList splits a comma-separated flag value, dropping blanks and repeats.
+func splitList(s string) []string {
+	var out []string
+	for _, v := range strings.Split(s, ",") {
+		if v = strings.TrimSpace(v); v != "" && !slices.Contains(out, v) {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
+// checkRequestNames refuses a service argument that packs options into the
+// name (e.g. "home-hub=mcp:otto"): a credential name has no '=' or ':'.
+func checkRequestNames(names []string) error {
+	for _, n := range names {
+		if strings.ContainsAny(n, "=:") {
+			return &clierr.CLIError{Kind: clierr.KindUser, Command: "access request",
+				Message: fmt.Sprintf("%q is not a credential name. Name the credential, and use --uses mcp "+
+					"and --servers <name> for MCP access, e.g. tvault access request home-hub --servers otto", safeText(n))}
+		}
+	}
+	return nil
 }
 
 // resolveSelf resolves the active context and refuses an admin one before any
@@ -192,7 +217,11 @@ grants nothing by itself. A request expires after one hour.
 With --wait, the command waits for the decision (bounded) and exits 0 when
 approved, 15 when denied, and 16 when the request expires or the wait runs out.`,
 	Example: `  tvault access request openai --reason "summarise the build logs"
-  tvault access request github --uses mcp --expires 7d --reason "triage issues" --wait 10m`,
+  tvault access request github --uses mcp --expires 7d --reason "triage issues" --wait 10m
+  tvault access request home-hub --servers otto --reason "use the otto tools only"
+
+Name only credentials and MCP servers that exist (tvault list, tvault
+mcp-servers list <credential>): the request is refused otherwise.`,
 	Args: cobra.MinimumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		reason, _ := cmd.Flags().GetString("reason")
@@ -203,9 +232,22 @@ approved, 15 when denied, and 16 when the request expires or the wait runs out.`
 			return &clierr.CLIError{Kind: clierr.KindUser, Command: "access request",
 				Message: "--reason is required: the owner reads it before approving"}
 		}
+		if err := checkRequestNames(args); err != nil {
+			return err
+		}
 		uses, err := parseRequestUses(usesFlag)
 		if err != nil {
 			return err
+		}
+		serversFlag, _ := cmd.Flags().GetString("servers")
+		servers := splitList(serversFlag)
+		if len(servers) > 0 {
+			if uses == nil {
+				uses = []string{"tools"} // --servers alone asks for MCP on those servers
+			} else if !slices.Contains(uses, "tools") {
+				return &clierr.CLIError{Kind: clierr.KindUser, Command: "access request",
+					Message: "--servers needs --uses mcp: servers limit an MCP grant"}
+			}
 		}
 		hours, err := parseGrantHours(expires)
 		if err != nil {
@@ -216,7 +258,7 @@ approved, 15 when denied, and 16 when the request expires or the wait runs out.`
 			return err
 		}
 		req, err := cc.Client.CreateGrantRequest(api.NewGrantRequest{
-			Services: args, Reason: reason, Uses: uses, ExpiresInHours: hours})
+			Services: args, Reason: reason, Uses: uses, Servers: servers, ExpiresInHours: hours})
 		if err != nil {
 			return enrich(cmd, cc, err)
 		}
@@ -426,6 +468,7 @@ use ` + "`tvault access request`" + `.`,
 func init() {
 	accessRequestCmd.Flags().String("reason", "", "why this key or agent needs the access (the owner reads it)")
 	accessRequestCmd.Flags().String("uses", "", "what the grant is for: value, mcp, or value,mcp (agents only)")
+	accessRequestCmd.Flags().String("servers", "", "MCP grant on these servers only, comma-separated (implies --uses mcp)")
 	accessRequestCmd.Flags().String("expires", "never", "when the grant ends: 12h, 7d or never")
 	accessRequestCmd.Flags().Duration("wait", 0, "wait up to this long for the owner's decision, e.g. 10m (max 1h)")
 	accessDropCmd.Flags().Bool("force", false, "skip the confirmation prompt")

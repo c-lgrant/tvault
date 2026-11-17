@@ -89,6 +89,7 @@ type NewGrantRequest struct {
 	Actions        json.RawMessage `json:"actions,omitempty"`
 	Reason         string          `json:"reason"`
 	Uses           []string        `json:"uses,omitempty"`
+	Servers        []string        `json:"servers,omitempty"`
 	ExpiresInHours int             `json:"expiresInHours,omitempty"`
 }
 
