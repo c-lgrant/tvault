@@ -1,7 +1,9 @@
 package cmd
 
 import (
+	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"strconv"
 	"strings"
@@ -29,6 +31,8 @@ var accessCmd = &cobra.Command{
 	Long: `For a key or agent context. A key or agent cannot grant itself access.
 
   tvault access request <service>... --reason "..."   ask the owner; prints a link to approve
+  tvault access plan <file|->                         ask for a list of changes (create agent, grant, ...)
+  tvault access claim-key <request-id> <action-id>    collect a created agent's key, once
   tvault access status <request-id>                   check a request
   tvault access drop <service>...                     remove grants this key or agent holds`,
 }
@@ -143,6 +147,26 @@ func decisionError(req *api.GrantRequest) error {
 func printDecision(cmd *cobra.Command, req *api.GrantRequest) {
 	switch req.Status {
 	case "approved":
+		if req.Kind == "changes" {
+			done := 0
+			for _, r := range req.Results {
+				if r.Status == "done" {
+					done++
+				}
+			}
+			cmd.PrintErrf("Approved. %d of %d actions done.\n", done, len(req.Results))
+			for _, r := range req.Results {
+				line := fmt.Sprintf("  %s %s: %s", r.ID, r.Type, r.Status)
+				if r.Message != "" {
+					line += " (" + r.Message + ")"
+				}
+				if r.Type == "create_agent" && r.Status == "done" && r.KeyClaimedAt == "" {
+					line += "; collect its key: tvault access claim-key " + req.RequestID + " " + r.ID
+				}
+				cmd.PrintErrln(line)
+			}
+			return
+		}
 		granted := "nothing"
 		if len(req.Granted) > 0 {
 			granted = strings.Join(req.Granted, ", ")
@@ -216,6 +240,137 @@ approved, 15 when denied, and 16 when the request expires or the wait runs out.`
 	},
 }
 
+// maxPlanBytes caps a plan file: 25 actions never come close.
+const maxPlanBytes = 256 << 10
+
+// readPlan reads a change-request plan from a file or stdin ("-"): either a
+// JSON array of actions, or an object {"reason": "...", "actions": [...]}.
+// The actions are sent as written; the server checks them.
+func readPlan(cmd *cobra.Command, path string) (string, json.RawMessage, error) {
+	bad := func(msg string) error {
+		return &clierr.CLIError{Kind: clierr.KindUser, Command: "access plan", Message: msg}
+	}
+	var r io.Reader
+	if path == "-" {
+		r = cmd.InOrStdin()
+	} else {
+		f, err := os.Open(path)
+		if err != nil {
+			return "", nil, bad("cannot read the plan: " + safeText(err.Error()))
+		}
+		defer f.Close()
+		r = f
+	}
+	data, err := io.ReadAll(io.LimitReader(r, maxPlanBytes+1))
+	if err != nil {
+		return "", nil, bad("cannot read the plan: " + safeText(err.Error()))
+	}
+	if len(data) > maxPlanBytes {
+		return "", nil, bad("the plan is larger than 256 KB")
+	}
+	trimmed := strings.TrimSpace(string(data))
+	if strings.HasPrefix(trimmed, "[") {
+		return "", json.RawMessage(trimmed), nil
+	}
+	var obj struct {
+		Reason  string          `json:"reason"`
+		Actions json.RawMessage `json:"actions"`
+	}
+	if err := json.Unmarshal([]byte(trimmed), &obj); err != nil || len(obj.Actions) == 0 {
+		return "", nil, bad(`the plan must be a JSON array of actions, or {"reason": "...", "actions": [...]}`)
+	}
+	return obj.Reason, obj.Actions, nil
+}
+
+var accessPlanCmd = &cobra.Command{
+	Use:   "plan <file|->",
+	Short: "Ask the owner to approve a list of changes; prints the approval link",
+	Long: `Sends a change request: a list of actions the owner ticks on one page. The
+owner may allow all, some or none. Actions:
+
+  grant               to (agent name or "self"), service, uses?, expiresInMinutes?
+  revoke              to (agent name), services
+  create_agent        name, kind?, scopes?
+  delete_agents       names        (starts unticked for the owner)
+  delete_credentials  names        (starts unticked for the owner)
+  suspend, resume     to (agent name)
+
+Each action has an "id"; "parent" names an earlier action it needs (it runs
+only if the parent ran). Never put a secret value in a plan.
+
+With --wait, exits 0 when approved, 15 when denied, 16 when it expires or the
+wait runs out. Collect a created agent's key with ` + "`tvault access claim-key`" + `.`,
+	Example: `  tvault access plan setup-ci.json --wait 10m
+  echo '[{"id":"a1","type":"grant","to":"self","service":"github","expiresInMinutes":1}]' \
+    | tvault access plan - --reason "check one issue"`,
+	Args: cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		reason, _ := cmd.Flags().GetString("reason")
+		wait, _ := cmd.Flags().GetDuration("wait")
+		planReason, actions, err := readPlan(cmd, args[0])
+		if err != nil {
+			return err
+		}
+		if strings.TrimSpace(reason) == "" {
+			reason = planReason
+		}
+		if strings.TrimSpace(reason) == "" {
+			return &clierr.CLIError{Kind: clierr.KindUser, Command: "access plan",
+				Message: "a reason is required (--reason, or \"reason\" in the plan): the owner reads it"}
+		}
+		cc, err := resolveSelf(cmd, "access plan")
+		if err != nil {
+			return err
+		}
+		req, err := cc.Client.CreateGrantRequest(api.NewGrantRequest{Actions: actions, Reason: reason})
+		if err != nil {
+			return enrich(cmd, cc, err)
+		}
+		if req.URL == "" {
+			return &clierr.CLIError{Kind: clierr.KindServer, Command: "access plan",
+				Message: "request " + req.RequestID + " was sent, but the server returned no usable approval link",
+				Hint:    "the owner can find it in the console inbox"}
+		}
+		fmt.Fprintln(os.Stdout, req.URL)
+		cmd.PrintErrf("Request %s sent. Open the link above to review it. It expires %s.\n", req.RequestID, req.ExpiresAt)
+		if wait <= 0 {
+			return nil
+		}
+		final, err := waitForDecision(cmd, cc, req.RequestID, wait)
+		if err != nil {
+			return enrich(cmd, cc, err)
+		}
+		printDecision(cmd, final)
+		return decisionError(final)
+	},
+}
+
+var accessClaimKeyCmd = &cobra.Command{
+	Use:   "claim-key <request-id> <action-id>",
+	Short: "Collect the key of an agent your approved change request created",
+	Long: `Prints the new agent's key on stdout, once. Works within one hour of the
+approval. The server issues a fresh key at this moment. Pipe it straight into
+storage; never print it:
+
+  tvault access claim-key <request-id> a1 | tvault add ci-bot --value-stdin`,
+	Args: cobra.ExactArgs(2),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		cc, err := resolveSelf(cmd, "access claim-key")
+		if err != nil {
+			return err
+		}
+		res, err := cc.Client.ClaimAgentKey(args[0], args[1])
+		if err != nil {
+			return enrich(cmd, cc, err)
+		}
+		if !strings.HasPrefix(res.APIKey, "tvagent_") || safeText(res.APIKey) != res.APIKey {
+			return &clierr.CLIError{Kind: clierr.KindServer, Command: "access claim-key",
+				Message: "the server returned something that is not an agent key"}
+		}
+		return printNewKey(cmd, res.APIKey, map[string]any{"agentId": res.AgentID})
+	},
+}
+
 var accessStatusCmd = &cobra.Command{
 	Use:   "status <request-id>",
 	Short: "Show a grant request's status",
@@ -271,6 +426,8 @@ func init() {
 	accessRequestCmd.Flags().String("expires", "never", "when the grant ends: 12h, 7d or never")
 	accessRequestCmd.Flags().Duration("wait", 0, "wait up to this long for the owner's decision, e.g. 10m (max 1h)")
 	accessDropCmd.Flags().Bool("force", false, "skip the confirmation prompt")
-	accessCmd.AddCommand(accessRequestCmd, accessStatusCmd, accessDropCmd)
+	accessPlanCmd.Flags().String("reason", "", "why (the owner reads it); overrides \"reason\" in the plan")
+	accessPlanCmd.Flags().Duration("wait", 0, "wait up to this long for the owner's decision, e.g. 10m (max 1h)")
+	accessCmd.AddCommand(accessRequestCmd, accessPlanCmd, accessClaimKeyCmd, accessStatusCmd, accessDropCmd)
 	rootCmd.AddCommand(accessCmd)
 }
