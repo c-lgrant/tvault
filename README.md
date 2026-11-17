@@ -347,6 +347,30 @@ only the signed-in owner can approve or deny it. A request expires after one
 hour. `--wait` waits (at most one hour) and exits 0, 15 (denied) or 16
 (expired, or the wait ran out).
 
+### Asking for several changes at once
+
+`tvault access plan` sends a list of actions. The owner ticks which ones run
+(all, some or none). Delete actions start unticked. An action can name a
+`parent`; it runs only if its parent ran.
+
+```json
+{ "reason": "set up ci-bot", "actions": [
+  { "id": "a1", "type": "create_agent", "name": "ci-bot", "kind": "scoped", "scopes": ["credentials:read"] },
+  { "id": "a2", "parent": "a1", "type": "grant", "to": "ci-bot", "service": "github" },
+  { "id": "a3", "type": "grant", "to": "self", "service": "openai", "expiresInMinutes": 1 }
+] }
+```
+
+```bash
+tvault access plan setup-ci.json --wait 10m
+tvault access claim-key <request-id> a1 | tvault add ci-bot --value-stdin   # the new agent's key, once
+```
+
+Action types: `grant`, `revoke`, `create_agent`, `delete_agents`,
+`delete_credentials`, `suspend`, `resume`. A plan never carries a secret
+value. `claim-key` works once, within one hour of the approval, and the server
+issues a fresh key at that moment.
+
 ## Back-compat shim
 
 For drop-in compatibility with the legacy bash script, a bare invocation works:
@@ -391,8 +415,8 @@ parsing text.
 | 12 | `INVALID_KEY` — the API key is unknown, malformed, or revoked. |
 | 13 | `POLICY_DENIED` — a policy refused the call (hours, rate, IP, usage); the message says which. |
 | 14 | No grant for this use — `NO_GRANT`, `GRANT_EXPIRED` or `GRANT_TOOLS_ONLY`. |
-| 15 | `access request --wait`: the owner denied the request. |
-| 16 | `access request --wait`: the request expired, or the wait ran out first. |
+| 15 | `access request --wait` / `access plan --wait`: the owner denied the request. |
+| 16 | `access request --wait` / `access plan --wait`: the request expired, or the wait ran out first. |
 
 Other server codes keep the code of their HTTP class and add a hint to the
 message (see `tvault explain <code>`):

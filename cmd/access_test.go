@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -126,6 +127,116 @@ func TestAccessRequest_WaitRunsOut(t *testing.T) {
 		"--wait", "50ms")
 	if got := clierr.ExitCode(err); got != 16 {
 		t.Errorf("exit = %d, want 16 (err=%v)", got, err)
+	}
+}
+
+func writePlan(t *testing.T, content string) string {
+	t.Helper()
+	path := t.TempDir() + "/plan.json"
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func TestAccessPlan_SendsActionsAndPrintsLink(t *testing.T) {
+	var body map[string]json.RawMessage
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewDecoder(r.Body).Decode(&body)
+		w.Write([]byte(`{"requestId":"r1","url":"https://tv.example/requests/r1","status":"pending","expiresAt":"soon"}`))
+	}))
+	defer srv.Close()
+	setupContext(t, &config.Context{Type: "agent", APIURL: srv.URL, Identity: "bot", AgentKey: "tvagent_abc"})
+	plan := writePlan(t, `{"reason":"set up ci","actions":[{"id":"a1","type":"create_agent","name":"ci-bot"},
+		{"id":"a2","parent":"a1","type":"grant","to":"ci-bot","service":"github"}]}`)
+
+	out, errOut, err := runCLI(t, "access", "plan", plan, "--reason", "", "--wait", "0s")
+	if err != nil {
+		t.Fatalf("err = %v (%s)", err, errOut)
+	}
+	if strings.TrimSpace(out) != "https://tv.example/requests/r1" {
+		t.Errorf("stdout = %q", out)
+	}
+	if string(body["reason"]) != `"set up ci"` || !strings.Contains(string(body["actions"]), `"parent":"a1"`) {
+		t.Errorf("body = %s / %s", body["reason"], body["actions"])
+	}
+	if _, has := body["services"]; has {
+		t.Error("a plan must not send services")
+	}
+}
+
+func TestAccessPlan_ArrayNeedsReason(t *testing.T) {
+	setupContext(t, &config.Context{Type: "agent", APIURL: "http://127.0.0.1:1", Identity: "bot", AgentKey: "tvagent_abc"})
+	plan := writePlan(t, `[{"id":"a1","type":"grant","to":"self","service":"github"}]`)
+	_, _, err := runCLI(t, "access", "plan", plan, "--reason", "", "--wait", "0s")
+	if err == nil || !strings.Contains(err.Error(), "reason is required") {
+		t.Errorf("err = %v", err)
+	}
+}
+
+func TestAccessPlan_RefusesBadJSON(t *testing.T) {
+	setupContext(t, &config.Context{Type: "agent", APIURL: "http://127.0.0.1:1", Identity: "bot", AgentKey: "tvagent_abc"})
+	_, _, err := runCLI(t, "access", "plan", writePlan(t, `{"nope":1}`), "--reason", "x", "--wait", "0s")
+	if clierr.ExitCode(err) != 1 || !strings.Contains(err.Error(), "JSON array of actions") {
+		t.Errorf("err = %v", err)
+	}
+}
+
+func TestAccessPlan_WaitPrintsResults(t *testing.T) {
+	old := requestPollInterval
+	requestPollInterval = time.Millisecond
+	defer func() { requestPollInterval = old }()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "POST" {
+			w.Write([]byte(`{"requestId":"r1","url":"https://tv.example/requests/r1","status":"pending"}`))
+			return
+		}
+		w.Write([]byte(`{"requestId":"r1","status":"approved","kind":"changes","results":[
+			{"id":"a1","type":"create_agent","status":"done","agentId":"ag1"},
+			{"id":"a2","type":"grant","status":"skipped","message":"not approved"}]}`))
+	}))
+	defer srv.Close()
+	setupContext(t, &config.Context{Type: "agent", APIURL: srv.URL, Identity: "bot", AgentKey: "tvagent_abc"})
+	plan := writePlan(t, `[{"id":"a1","type":"create_agent","name":"ci-bot"}]`)
+	_, errOut, err := runCLI(t, "access", "plan", plan, "--reason", "x", "--wait", "1m")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"1 of 2 actions done", "a2 grant: skipped (not approved)",
+		"tvault access claim-key r1 a1"} {
+		if !strings.Contains(errOut, want) {
+			t.Errorf("stderr missing %q:\n%s", want, errOut)
+		}
+	}
+}
+
+func TestAccessClaimKey_PrintsOnlyTheKey(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "POST" || r.URL.Path != "/api/grant-requests/r1/actions/a1/claim-key" {
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+		w.Write([]byte(`{"agentId":"ag1","apiKey":"tvagent_newkey"}`))
+	}))
+	defer srv.Close()
+	setupContext(t, &config.Context{Type: "agent", APIURL: srv.URL, Identity: "bot", AgentKey: "tvagent_abc"})
+	out, _, err := runCLI(t, "access", "claim-key", "r1", "a1", "--format", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "tvagent_newkey\n" {
+		t.Errorf("stdout = %q, want only the key", out)
+	}
+}
+
+func TestAccessClaimKey_RefusesANonKey(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"agentId":"ag1","apiKey":"\u001b[2Jgotcha"}`))
+	}))
+	defer srv.Close()
+	setupContext(t, &config.Context{Type: "agent", APIURL: srv.URL, Identity: "bot", AgentKey: "tvagent_abc"})
+	out, _, err := runCLI(t, "access", "claim-key", "r1", "a1", "--format", "")
+	if err == nil || out != "" {
+		t.Errorf("err = %v, stdout = %q; want an error and nothing printed", err, out)
 	}
 }
 
