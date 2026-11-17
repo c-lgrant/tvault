@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.19.0](https://github.com/c-lgrant/tvault/compare/v0.18.0...v0.19.0) (2026-11-17)
+
+
+### Features
+
+* access request --servers asks for MCP on named servers only ([#88](https://github.com/c-lgrant/tvault/issues/88)) ([b40f2b5](https://github.com/c-lgrant/tvault/commit/b40f2b5dbec859e35f2c898b256f847ad42acd36))
+* access request reads the tvault grant form; dry run says nothing was sent ([#89](https://github.com/c-lgrant/tvault/issues/89)) ([c8be483](https://github.com/c-lgrant/tvault/commit/c8be48347182a001fff0e5e7652d68303ee7abbb))
+
+
+### Documentation
+
+* **access:** plan help and README list the MCP server actions ([#87](https://github.com/c-lgrant/tvault/issues/87)) ([34f248b](https://github.com/c-lgrant/tvault/commit/34f248b04285ed474804e29c97ee9c2bbe918aeb))
+
 ## [0.18.0](https://github.com/c-lgrant/tvault/compare/v0.17.0...v0.18.0) (2026-11-17)
 
 
