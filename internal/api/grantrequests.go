@@ -23,6 +23,20 @@ type GrantRequest struct {
 	URL            string           `json:"url"`
 	Uses           []string         `json:"uses,omitempty"`
 	ExpiresInHours int              `json:"expiresInHours,omitempty"`
+	// Change requests: Kind is "changes" and Results holds one entry per
+	// action once the owner approved.
+	Kind    string         `json:"kind,omitempty"`
+	Results []ChangeResult `json:"results,omitempty"`
+}
+
+// ChangeResult is what happened to one action of an approved change request.
+type ChangeResult struct {
+	ID           string `json:"id"`
+	Type         string `json:"type"`
+	Status       string `json:"status"` // done | skipped | failed
+	Message      string `json:"message,omitempty"`
+	AgentID      string `json:"agentId,omitempty"`
+	KeyClaimedAt string `json:"keyClaimedAt,omitempty"`
 }
 
 // sanitize makes every server-provided string safe to print: control and
@@ -43,6 +57,13 @@ func (r *GrantRequest) sanitize() {
 		r.Skipped[i].Service = textsafe.Safe(r.Skipped[i].Service)
 		r.Skipped[i].Reason = textsafe.Safe(r.Skipped[i].Reason)
 	}
+	r.Kind = textsafe.Safe(r.Kind)
+	for i := range r.Results {
+		res := &r.Results[i]
+		res.ID, res.Type, res.Status = textsafe.Safe(res.ID), textsafe.Safe(res.Type), textsafe.Safe(res.Status)
+		res.Message, res.AgentID = textsafe.Safe(res.Message), textsafe.Safe(res.AgentID)
+		res.KeyClaimedAt = textsafe.Safe(res.KeyClaimedAt)
+	}
 	if u, err := url.Parse(r.URL); err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" ||
 		textsafe.Safe(r.URL) != r.URL {
 		r.URL = ""
@@ -61,12 +82,36 @@ type SkippedService struct {
 	Reason  string `json:"reason"`
 }
 
-// NewGrantRequest is the body of POST /api/grant-requests.
+// NewGrantRequest is the body of POST /api/grant-requests: either Services
+// (grants for the caller) or Actions (a change request, sent as given).
 type NewGrantRequest struct {
-	Services       []string `json:"services"`
-	Reason         string   `json:"reason"`
-	Uses           []string `json:"uses,omitempty"`
-	ExpiresInHours int      `json:"expiresInHours,omitempty"`
+	Services       []string        `json:"services,omitempty"`
+	Actions        json.RawMessage `json:"actions,omitempty"`
+	Reason         string          `json:"reason"`
+	Uses           []string        `json:"uses,omitempty"`
+	ExpiresInHours int             `json:"expiresInHours,omitempty"`
+}
+
+// ClaimedKey is the key of an agent a change request created.
+type ClaimedKey struct {
+	AgentID string `json:"agentId"`
+	APIKey  string `json:"apiKey"`
+}
+
+// ClaimAgentKey collects, once, the key of the agent that action actionID of
+// the caller's approved change request created. The server issues a fresh key.
+func (c *Client) ClaimAgentKey(requestID, actionID string) (*ClaimedKey, error) {
+	path := "/api/grant-requests/" + url.PathEscape(requestID) + "/actions/" + url.PathEscape(actionID) + "/claim-key"
+	body, err := c.doRequest("POST", path, nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	var res ClaimedKey
+	if err := json.Unmarshal(body, &res); err != nil {
+		return nil, err
+	}
+	res.AgentID = textsafe.Safe(res.AgentID)
+	return &res, nil
 }
 
 // CreateGrantRequest asks the owner for grants for the calling key or agent.
