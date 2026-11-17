@@ -294,6 +294,9 @@ owner may allow all, some or none. Actions:
   delete_agents       names        (starts unticked for the owner)
   delete_credentials  names        (starts unticked for the owner)
   suspend, resume     to (agent name)
+  add_mcp_server      service, name, url (https), headers ({"Authorization": "Bearer ${TOKEN}"};
+                      each value only a placeholder, never a secret)
+  remove_mcp_server   service, name
 
 Each action has an "id"; "parent" names an earlier action it needs (it runs
 only if the parent ran). Never put a secret value in a plan.
