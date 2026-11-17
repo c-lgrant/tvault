@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -64,6 +65,38 @@ func TestAccessRequest_PrintsLinkOnStdout(t *testing.T) {
 	}
 	if uses, _ := body["uses"].([]any); len(uses) != 1 || uses[0] != "tools" {
 		t.Errorf("uses = %v, want [tools]", body["uses"])
+	}
+}
+
+func TestAccessRequest_ServersAskForMCPOnThoseServers(t *testing.T) {
+	var body map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewDecoder(r.Body).Decode(&body)
+		w.Write([]byte(`{"requestId":"r1","url":"https://tv.example/requests/r1","status":"pending","expiresAt":"soon"}`))
+	}))
+	defer srv.Close()
+	setupContext(t, &config.Context{Type: "agent", APIURL: srv.URL, Identity: "bot", AgentKey: "tvagent_abc"})
+	t.Cleanup(func() { accessRequestCmd.Flags().Set("servers", "") })
+
+	_, errOut, err := runCLI(t, "access", "request", "home-hub", "--reason", "otto tools", "--uses", "",
+		"--servers", "otto", "--expires", "never", "--wait", "0s")
+	if err != nil {
+		t.Fatalf("err = %v (%s)", err, errOut)
+	}
+	if fmt.Sprint(body["uses"]) != "[tools]" || fmt.Sprint(body["servers"]) != "[otto]" {
+		t.Errorf("body = %v, want uses [tools] and servers [otto]", body)
+	}
+	if _, ok := body["expiresInHours"]; ok {
+		t.Errorf("never should send no expiresInHours, got %v", body["expiresInHours"])
+	}
+}
+
+func TestAccessRequest_RefusesOptionsPackedIntoTheName(t *testing.T) {
+	setupContext(t, &config.Context{Type: "agent", APIURL: "http://127.0.0.1:1", Identity: "bot", AgentKey: "tvagent_abc"})
+	_, _, err := runCLI(t, "access", "request", "home-hub=mcp:otto", "--reason", "x", "--uses", "",
+		"--expires", "never", "--wait", "0s")
+	if err == nil || !strings.Contains(err.Error(), "--servers") {
+		t.Errorf("err = %v, want a hint to use --servers", err)
 	}
 }
 
