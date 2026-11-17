@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.18.0](https://github.com/c-lgrant/tvault/compare/v0.17.0...v0.18.0) (2026-11-17)
+
+
+### Features
+
+* **access:** plan and claim-key for change requests ([#83](https://github.com/c-lgrant/tvault/issues/83)) ([5513680](https://github.com/c-lgrant/tvault/commit/551368020f8265d792018bd133a508b4cb132893))
+
 ## [0.17.0](https://github.com/c-lgrant/tvault/compare/v0.16.0...v0.17.0) (2026-11-16)
 
 
