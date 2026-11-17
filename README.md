@@ -367,9 +367,19 @@ tvault access claim-key <request-id> a1 | tvault add ci-bot --value-stdin   # th
 ```
 
 Action types: `grant`, `revoke`, `create_agent`, `delete_agents`,
-`delete_credentials`, `suspend`, `resume`. A plan never carries a secret
-value. `claim-key` works once, within one hour of the approval, and the server
-issues a fresh key at that moment.
+`delete_credentials`, `suspend`, `resume`, `add_mcp_server`,
+`remove_mcp_server`. A plan never carries a secret value. `claim-key` works
+once, within one hour of the approval, and the server issues a fresh key at
+that moment.
+
+An agent can't add an MCP server itself (`tvault mcp-servers add` is the
+owner's). It asks instead; each header value is a placeholder only:
+
+```json
+{ "id": "m1", "type": "add_mcp_server", "service": "home-hub", "name": "otto",
+  "url": "https://mcp.example.com/mcp/otto",
+  "headers": { "Authorization": "Bearer ${AGENT_SESSION}" } }
+```
 
 ## Back-compat shim
 
