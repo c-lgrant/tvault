@@ -14,7 +14,7 @@ const grantSpecSyntax = "<service>[=<uses>[:<server>,<server>]]"
 // parseGrantSpec reads one grant argument:
 //
 //	github                     value grant (today's meaning)
-//	github=mcp                 MCP access, every MCP server of the credential
+//	github=mcp                 MCP access, the credential's MCP servers now (the server lists them)
 //	github=value,mcp           both
 //	github=mcp:github,docs     MCP access limited to the named servers
 //
