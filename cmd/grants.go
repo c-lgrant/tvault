@@ -97,8 +97,25 @@ A grant adds to what the agent holds and never shortens an entry it has.`,
 			return enrich(cmd, cc, err)
 		}
 		cmd.PrintErrf("Granted %d service(s) to %s.\n", len(res.OK), rs[0].label())
+		printAlreadyHeld(cmd, res)
 		return nil
 	},
+}
+
+// printAlreadyHeld names the entries a grant kept because the agent already
+// held them for as long or longer. A grant adds and never narrows or shortens:
+// to cut access, remove the grant or change an entry.
+func printAlreadyHeld(cmd *cobra.Command, res api.GrantResult) {
+	if len(res.AlreadyHeld) == 0 {
+		return
+	}
+	for _, svc := range res.OK {
+		if kept := res.AlreadyHeld[svc]; len(kept) > 0 {
+			cmd.PrintErrf("  %s: already held for as long or longer: %s\n", svc, strings.Join(kept, ", "))
+		}
+	}
+	cmd.PrintErrln("  A grant never narrows or shortens access. To cut it, remove the grant (tvault ag gr rm) " +
+		"or ask for a change_grant.")
 }
 
 var grantsRmCmd = &cobra.Command{

@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/c-lgrant/tvault/internal/clierr"
+	"github.com/c-lgrant/tvault/internal/textsafe"
 )
 
 // Agent is the list/show shape returned by the agents endpoints.
@@ -205,6 +206,9 @@ type GrantResult struct {
 	OK      []string         // services that succeeded
 	Failed  map[string]error // service -> error for the call that failed
 	Skipped []string         // services not attempted (after a failure)
+	// AlreadyHeld: service -> entries ("value", "tools:<server>") the agent
+	// already held for as long or longer. A grant adds and never shortens.
+	AlreadyHeld map[string][]string
 }
 
 // BriefError is err's one-line summary: a CLIError's message without its
@@ -290,8 +294,28 @@ func (c *Client) AddGrantSpecs(agentID string, specs []GrantSpec) GrantResult {
 			return res
 		}
 		res.OK = append(res.OK, s.Service)
+		if kept := alreadyHeld(resp); len(kept) > 0 {
+			if res.AlreadyHeld == nil {
+				res.AlreadyHeld = map[string][]string{}
+			}
+			res.AlreadyHeld[s.Service] = kept
+		}
 	}
 	return res
+}
+
+// alreadyHeld reads the entries a create-grant response says were kept as held.
+func alreadyHeld(resp []byte) []string {
+	var r struct {
+		AlreadyHeld []string `json:"alreadyHeld"`
+	}
+	if json.Unmarshal(resp, &r) != nil {
+		return nil
+	}
+	for i := range r.AlreadyHeld {
+		r.AlreadyHeld[i] = textsafe.Safe(r.AlreadyHeld[i])
+	}
+	return r.AlreadyHeld
 }
 
 // grantEchoesUses reports whether a create-grant response carries the grant's

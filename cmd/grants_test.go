@@ -39,3 +39,27 @@ func TestGrantsListShowsOneRowPerEntry(t *testing.T) {
 		t.Errorf("want one github row per entry:\n%s", table)
 	}
 }
+
+// A grant adds to what the agent holds and never shortens it: the CLI says what was kept.
+func TestGrantsAddSaysWhatWasAlreadyHeld(t *testing.T) {
+	rec := newRecorder(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method + " " + r.URL.Path {
+		case "GET /api/agents":
+			w.Write([]byte(`[{"id":"` + agentID + `","name":"busy","status":"active"}]`))
+		case "POST /api/agents/" + agentID + "/grants":
+			w.Write([]byte(`{"success":true,"serviceName":"github","uses":["value","tools"],"servers":["main"],` +
+				`"alreadyHeld":["value"]}`))
+		default:
+			w.WriteHeader(500)
+		}
+	})
+	setupContext(t, &config.Context{Type: "key", APIURL: rec.srv.URL, Identity: "k", APIKey: "tvkey_k"})
+
+	_, errOut, err := run(t, "agents", "grants", "add", "busy", "github=value,mcp:main")
+	if err != nil {
+		t.Fatalf("add errored: %v (%s)", err, errOut)
+	}
+	if !strings.Contains(errOut, "github: already held for as long or longer: value") {
+		t.Errorf("stderr = %q, want the kept entry named", errOut)
+	}
+}
