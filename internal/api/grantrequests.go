@@ -37,6 +37,48 @@ type ChangeResult struct {
 	Message      string `json:"message,omitempty"`
 	AgentID      string `json:"agentId,omitempty"`
 	KeyClaimedAt string `json:"keyClaimedAt,omitempty"`
+	// Entries: for a grant or change_grant, what happened to each entry.
+	Entries []EntryResult `json:"entries,omitempty"`
+}
+
+// EntryResult is one grant entry ("value" or "tools:<server>") of an approved action.
+type EntryResult struct {
+	Key       string `json:"key"`
+	Status    string `json:"status"` // done | already held | skipped
+	ExpiresAt string `json:"expiresAt,omitempty"`
+	Removed   bool   `json:"removed,omitempty"`
+}
+
+// ActionType is one kind of change a key or agent can request
+// (GET /api/grant-requests/actions).
+type ActionType struct {
+	Type        string   `json:"type"`
+	Fields      []string `json:"fields"`
+	Required    []string `json:"required"`
+	Destructive bool     `json:"destructive"`
+	NeedsReauth bool     `json:"needsReauth"`
+	Summary     string   `json:"summary"`
+}
+
+// ListRequestActions returns every kind of change a request can hold.
+func (c *Client) ListRequestActions() ([]ActionType, error) {
+	body, err := c.doRequest("GET", "/api/grant-requests/actions", nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	var res struct {
+		Actions []ActionType `json:"actions"`
+	}
+	if err := json.Unmarshal(body, &res); err != nil {
+		return nil, err
+	}
+	for i := range res.Actions {
+		a := &res.Actions[i]
+		a.Type, a.Summary = textsafe.Safe(a.Type), textsafe.Safe(a.Summary)
+		safeAll(a.Fields)
+		safeAll(a.Required)
+	}
+	return res.Actions, nil
 }
 
 // sanitize makes every server-provided string safe to print: control and
@@ -63,6 +105,10 @@ func (r *GrantRequest) sanitize() {
 		res.ID, res.Type, res.Status = textsafe.Safe(res.ID), textsafe.Safe(res.Type), textsafe.Safe(res.Status)
 		res.Message, res.AgentID = textsafe.Safe(res.Message), textsafe.Safe(res.AgentID)
 		res.KeyClaimedAt = textsafe.Safe(res.KeyClaimedAt)
+		for j := range res.Entries {
+			e := &res.Entries[j]
+			e.Key, e.Status, e.ExpiresAt = textsafe.Safe(e.Key), textsafe.Safe(e.Status), textsafe.Safe(e.ExpiresAt)
+		}
 	}
 	if u, err := url.Parse(r.URL); err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" ||
 		textsafe.Safe(r.URL) != r.URL {

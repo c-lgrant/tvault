@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/c-lgrant/tvault/internal/clierr"
+	"github.com/c-lgrant/tvault/internal/textsafe"
 )
 
 // Agent is the list/show shape returned by the agents endpoints.
@@ -65,6 +66,16 @@ type Grant struct {
 	// Uses is what the grant may be used for ("value", "tools"); empty on
 	// servers that predate grant uses.
 	Uses []string `json:"uses,omitempty"`
+	// Entries is each part of the grant with its own expiry: "value" and one
+	// "tools:<server>" per MCP server. Empty on servers that predate them.
+	Entries []GrantEntry `json:"entries,omitempty"`
+}
+
+// GrantEntry is one part of a grant ("value" or "tools:<server>"); an empty
+// ExpiresAt means no end.
+type GrantEntry struct {
+	Key       string `json:"key"`
+	ExpiresAt string `json:"expiresAt,omitempty"`
 }
 
 // CreateAgentResult carries the freshly minted key — shown to the user once.
@@ -165,6 +176,15 @@ func (c *Client) SetAgentMCPEnabled(id string) error {
 
 // ListGrants returns an agent's granted service names. The backend has no
 // dedicated grants-list route; GET /api/agents/{id} embeds a "grants" array.
+// ListGrantDetails returns the agent's grants with their entries.
+func (c *Client) ListGrantDetails(agentID string) ([]Grant, error) {
+	a, err := c.GetAgent(agentID)
+	if err != nil {
+		return nil, err
+	}
+	return a.Grants, nil
+}
+
 func (c *Client) ListGrants(agentID string) ([]string, error) {
 	a, err := c.GetAgent(agentID)
 	if err != nil {
@@ -186,6 +206,9 @@ type GrantResult struct {
 	OK      []string         // services that succeeded
 	Failed  map[string]error // service -> error for the call that failed
 	Skipped []string         // services not attempted (after a failure)
+	// AlreadyHeld: service -> entries ("value", "tools:<server>") the agent
+	// already held for as long or longer. A grant adds and never shortens.
+	AlreadyHeld map[string][]string
 }
 
 // BriefError is err's one-line summary: a CLIError's message without its
@@ -239,7 +262,8 @@ func (c *Client) AddGrants(agentID string, services []string) GrantResult {
 // GrantSpec is one grant to create: a service plus, optionally, what it may
 // be used for. Uses holds "value" and/or "tools"; empty means the server's
 // default (value only). Servers narrows a tools grant to the named MCP
-// servers; empty means every server of the credential. Only these words are
+// servers; empty means the credential's servers as they are now (the server
+// lists them; never ones added later). Only these words are
 // sent, never a credential value.
 type GrantSpec struct {
 	Service string
@@ -270,8 +294,28 @@ func (c *Client) AddGrantSpecs(agentID string, specs []GrantSpec) GrantResult {
 			return res
 		}
 		res.OK = append(res.OK, s.Service)
+		if kept := alreadyHeld(resp); len(kept) > 0 {
+			if res.AlreadyHeld == nil {
+				res.AlreadyHeld = map[string][]string{}
+			}
+			res.AlreadyHeld[s.Service] = kept
+		}
 	}
 	return res
+}
+
+// alreadyHeld reads the entries a create-grant response says were kept as held.
+func alreadyHeld(resp []byte) []string {
+	var r struct {
+		AlreadyHeld []string `json:"alreadyHeld"`
+	}
+	if json.Unmarshal(resp, &r) != nil {
+		return nil
+	}
+	for i := range r.AlreadyHeld {
+		r.AlreadyHeld[i] = textsafe.Safe(r.AlreadyHeld[i])
+	}
+	return r.AlreadyHeld
 }
 
 // grantEchoesUses reports whether a create-grant response carries the grant's

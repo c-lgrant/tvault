@@ -60,11 +60,73 @@ func TestAccessRequest_PrintsLinkOnStdout(t *testing.T) {
 	if strings.TrimSpace(out) != "https://tv.example/requests/r1" {
 		t.Errorf("stdout = %q, want only the link", out)
 	}
-	if body["reason"] != "summarise logs" || body["expiresInHours"] != float64(168) {
-		t.Errorf("body = %v", body)
+	if body["reason"] != "summarise logs" || body["services"] != nil {
+		t.Errorf("body = %v, want a reason and actions, no services", body)
 	}
-	if uses, _ := body["uses"].([]any); len(uses) != 1 || uses[0] != "tools" {
-		t.Errorf("uses = %v, want [tools]", body["uses"])
+	actions := body["actions"].([]any)
+	if len(actions) != 2 {
+		t.Fatalf("actions = %v, want one grant per service", actions)
+	}
+	for i, svc := range []string{"openai", "github"} {
+		a := actions[i].(map[string]any)
+		if a["type"] != "grant" || a["to"] != "self" || a["service"] != svc ||
+			fmt.Sprint(a["uses"]) != "[tools]" || a["expiresInMinutes"] != float64(7*24*60) {
+			t.Errorf("action %d = %v", i, a)
+		}
+	}
+}
+
+func TestAccessRequest_ForAnotherAgent(t *testing.T) {
+	var body map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewDecoder(r.Body).Decode(&body)
+		w.Write([]byte(`{"requestId":"r1","url":"https://tv.example/requests/r1","status":"pending","expiresAt":"soon"}`))
+	}))
+	defer srv.Close()
+	setupContext(t, &config.Context{Type: "agent", APIURL: srv.URL, Identity: "bot", AgentKey: "tvagent_abc"})
+	t.Cleanup(func() { accessRequestCmd.Flags().Set("for", "") })
+
+	_, errOut, err := runCLI(t, "access", "request", "github=value,mcp:main", "linear", "--for", "ci-bot",
+		"--reason", "set up ci", "--uses", "", "--expires", "12h", "--wait", "0s")
+	if err != nil {
+		t.Fatalf("err = %v (%s)", err, errOut)
+	}
+	actions := body["actions"].([]any)
+	first, second := actions[0].(map[string]any), actions[1].(map[string]any)
+	if first["to"] != "ci-bot" || fmt.Sprint(first["uses"]) != "[value tools]" || fmt.Sprint(first["servers"]) != "[main]" ||
+		first["expiresInMinutes"] != float64(720) {
+		t.Errorf("first = %v", first)
+	}
+	if second["to"] != "ci-bot" || second["service"] != "linear" || second["uses"] != nil {
+		t.Errorf("second = %v, want a plain value grant for ci-bot", second)
+	}
+	if !strings.Contains(errOut, "for ci-bot") {
+		t.Errorf("stderr = %q, want it to name the agent", errOut)
+	}
+}
+
+func TestAccessActions_PrintsTheCatalogue(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/grant-requests/actions" {
+			t.Errorf("path = %s", r.URL.Path)
+		}
+		w.Write([]byte(`{"actions":[{"type":"grant","fields":["to","service","value"],"required":["to","service"],` +
+			`"destructive":false,"needsReauth":false,"summary":"Give access."},` +
+			`{"type":"delete_policies","fields":["names"],"required":["names"],"destructive":true,` +
+			`"needsReauth":true,"summary":"Delete policies."}]}`))
+	}))
+	defer srv.Close()
+	setupContext(t, &config.Context{Type: "agent", APIURL: srv.URL, Identity: "bot", AgentKey: "tvagent_abc"})
+
+	out, errOut, err := runCLI(t, "access", "actions")
+	if err != nil {
+		t.Fatalf("err = %v (%s)", err, errOut)
+	}
+	for _, want := range []string{"grant", "to*, service*, value", "Give access.", "delete_policies", "starts unticked",
+		"owner signs in again"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("stdout missing %q:\n%s", want, out)
+		}
 	}
 }
 
@@ -83,11 +145,12 @@ func TestAccessRequest_ServersAskForMCPOnThoseServers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("err = %v (%s)", err, errOut)
 	}
-	if fmt.Sprint(body["uses"]) != "[tools]" || fmt.Sprint(body["servers"]) != "[otto]" {
-		t.Errorf("body = %v, want uses [tools] and servers [otto]", body)
+	a := body["actions"].([]any)[0].(map[string]any)
+	if fmt.Sprint(a["uses"]) != "[tools]" || fmt.Sprint(a["servers"]) != "[otto]" {
+		t.Errorf("action = %v, want uses [tools] and servers [otto]", a)
 	}
-	if _, ok := body["expiresInHours"]; ok {
-		t.Errorf("never should send no expiresInHours, got %v", body["expiresInHours"])
+	if _, ok := a["expiresInMinutes"]; ok {
+		t.Errorf("never should send no expiresInMinutes, got %v", a["expiresInMinutes"])
 	}
 }
 
@@ -105,9 +168,9 @@ func TestAccessRequest_ParsesTheGrantForm(t *testing.T) {
 	if err != nil {
 		t.Fatalf("err = %v (%s)", err, errOut)
 	}
-	if fmt.Sprint(body["services"]) != "[home-hub]" || fmt.Sprint(body["uses"]) != "[tools]" ||
-		fmt.Sprint(body["servers"]) != "[otto]" {
-		t.Errorf("body = %v, want services [home-hub], uses [tools], servers [otto]", body)
+	a := body["actions"].([]any)[0].(map[string]any)
+	if a["service"] != "home-hub" || fmt.Sprint(a["uses"]) != "[tools]" || fmt.Sprint(a["servers"]) != "[otto]" {
+		t.Errorf("action = %v, want home-hub, uses [tools], servers [otto]", a)
 	}
 }
 
@@ -117,20 +180,20 @@ func TestRequestTerms(t *testing.T) {
 		uses, servers string
 		wantErr       string
 	}{
-		{[]string{"a=mcp:x", "b=mcp:y"}, "", "", "same uses and servers"},
 		{[]string{"a=mcp:x"}, "mcp", "", "not both"},
 		{[]string{"a=value:x"}, "", "", "only be named with mcp"},
 		{[]string{"a"}, "value", "x", "--servers needs --uses mcp"},
 	}
 	for _, c := range cases {
-		_, _, _, err := requestTerms(c.args, c.uses, c.servers)
+		_, err := requestTerms(c.args, c.uses, c.servers)
 		if err == nil || !strings.Contains(err.Error(), c.wantErr) {
 			t.Errorf("%v: err = %v, want %q", c.args, err, c.wantErr)
 		}
 	}
-	svcs, uses, servers, err := requestTerms([]string{"a=mcp:x,y", "b=mcp:x,y"}, "", "")
-	if err != nil || fmt.Sprint(svcs, uses, servers) != "[a b] [tools] [x y]" {
-		t.Errorf("got %v %v %v %v", svcs, uses, servers, err)
+	// Each credential is its own grant action now, so they may ask for different access.
+	specs, err := requestTerms([]string{"a=mcp:x,y", "b=value"}, "", "")
+	if err != nil || fmt.Sprint(specs) != "[{a [tools] [x y]} {b [value] []}]" {
+		t.Errorf("got %v %v", specs, err)
 	}
 }
 

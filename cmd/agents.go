@@ -94,7 +94,7 @@ var agentsShowCmd = &cobra.Command{
 		}
 		grants := make([]string, 0, len(a.Grants))
 		for _, g := range a.Grants {
-			grants = append(grants, g.ServiceName)
+			grants = append(grants, grantSummary(g))
 		}
 		row := agentRow(*a, cc.Format)
 		row["grants"] = joinComma(grants)
