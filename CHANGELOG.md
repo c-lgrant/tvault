@@ -5,7 +5,6 @@
 
 ### Features
 
-* per-entry grants, access request --for, access actions ([be46fd6](https://github.com/c-lgrant/tvault/commit/be46fd6374e051f8d0a3e5894afc4c22576252c1))
 * per-entry grants, access request --for, access actions ([e3e1d57](https://github.com/c-lgrant/tvault/commit/e3e1d572c24dffe8bb7c576bd020c43f43225025))
 
 
