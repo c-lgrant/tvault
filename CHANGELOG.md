@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.20.0](https://github.com/c-lgrant/tvault/compare/v0.19.0...v0.20.0) (2026-11-20)
+
+
+### Features
+
+* per-entry grants, access request --for, access actions ([be46fd6](https://github.com/c-lgrant/tvault/commit/be46fd6374e051f8d0a3e5894afc4c22576252c1))
+* per-entry grants, access request --for, access actions ([e3e1d57](https://github.com/c-lgrant/tvault/commit/e3e1d572c24dffe8bb7c576bd020c43f43225025))
+
+
+### Bug Fixes
+
+* say which grant entries were already held ([935dcfe](https://github.com/c-lgrant/tvault/commit/935dcfe31b60d288033c4ad144fe87d59d82387a))
+
 ## [0.19.0](https://github.com/c-lgrant/tvault/compare/v0.18.0...v0.19.0) (2026-11-17)
 
 
