@@ -13,6 +13,7 @@ import (
 	"github.com/c-lgrant/tvault/internal/api"
 	"github.com/c-lgrant/tvault/internal/clierr"
 	"github.com/c-lgrant/tvault/internal/config"
+	"github.com/c-lgrant/tvault/internal/output"
 	"github.com/spf13/cobra"
 )
 
@@ -96,46 +97,67 @@ func splitList(s string) []string {
 	return out
 }
 
-// requestTerms reads the services and the access asked for. A service may
+// requestTerms reads the credentials and the access asked for. A credential may
 // carry its uses and servers as in `tvault grant` (home-hub=mcp:otto), or the
-// --uses / --servers flags set them for all services; not both. One request
-// carries one set of uses and servers, so every service must ask for the same.
-func requestTerms(args []string, usesFlag, serversFlag string) (services, uses, servers []string, err error) {
+// --uses / --servers flags set them for every credential; not both. Each
+// credential becomes its own grant action, so they may ask for different access.
+func requestTerms(args []string, usesFlag, serversFlag string) ([]api.GrantSpec, error) {
 	user := func(msg string) error {
 		return &clierr.CLIError{Kind: clierr.KindUser, Command: "access request", Message: msg}
 	}
 	specs, err := parseGrantSpecs(args, "access request")
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, err
 	}
 	inline := false
 	for _, s := range specs {
-		services = append(services, s.Service)
 		inline = inline || s.Uses != nil
 	}
 	if inline {
 		if strings.TrimSpace(usesFlag) != "" || strings.TrimSpace(serversFlag) != "" {
-			return nil, nil, nil, user("give uses and servers in the name (" + grantSpecSyntax + ") or with --uses/--servers, not both")
+			return nil, user("give uses and servers in the name (" + grantSpecSyntax + ") or with --uses/--servers, not both")
 		}
-		for _, s := range specs[1:] {
-			if !slices.Equal(s.Uses, specs[0].Uses) || !slices.Equal(s.Servers, specs[0].Servers) {
-				return nil, nil, nil, user("every credential in one request must ask for the same uses and servers; send one request per kind of access")
-			}
-		}
-		return services, specs[0].Uses, specs[0].Servers, nil
+		return specs, nil
 	}
-	if uses, err = parseRequestUses(usesFlag); err != nil {
-		return nil, nil, nil, err
+	uses, err := parseRequestUses(usesFlag)
+	if err != nil {
+		return nil, err
 	}
-	servers = splitList(serversFlag)
+	servers := splitList(serversFlag)
 	if len(servers) > 0 {
 		if uses == nil {
 			uses = []string{"tools"} // --servers alone asks for MCP on those servers
 		} else if !slices.Contains(uses, "tools") {
-			return nil, nil, nil, user("--servers needs --uses mcp: servers limit an MCP grant")
+			return nil, user("--servers needs --uses mcp: servers limit an MCP grant")
 		}
 	}
-	return services, uses, servers, nil
+	for i := range specs {
+		specs[i].Uses, specs[i].Servers = uses, servers
+	}
+	return specs, nil
+}
+
+// grantActions turns the specs into one grant action each, for `to` ("self" or
+// an agent's name), each entry lasting `hours` (0 = no end). It uses the grant
+// action's uses/servers/expiresInMinutes fields, which every control plane
+// that takes change requests understands; MCP access with no servers named
+// means the credential's servers as they are now (never ones added later).
+func grantActions(specs []api.GrantSpec, to string, hours int) []map[string]any {
+	out := make([]map[string]any, 0, len(specs))
+	for i, s := range specs {
+		a := map[string]any{"id": fmt.Sprintf("g%d", i+1), "type": "grant", "to": to, "service": s.Service}
+		if len(s.Uses) > 0 {
+			a["uses"] = s.Uses
+		}
+		if len(s.Servers) > 0 {
+			a["servers"] = s.Servers
+		}
+		if hours > 0 {
+			a["expiresInMinutes"] = hours * 60
+		}
+		out = append(out, a)
+	}
+	return out
 }
 
 // resolveSelf resolves the active context and refuses an admin one before any
@@ -218,6 +240,9 @@ func printDecision(cmd *cobra.Command, req *api.GrantRequest) {
 					line += "; collect its key: tvault access claim-key " + req.RequestID + " " + r.ID
 				}
 				cmd.PrintErrln(line)
+				for _, e := range r.Entries {
+					cmd.PrintErrf("      %s: %s%s\n", e.Key, e.Status, entryEnd(e))
+				}
 			}
 			return
 		}
@@ -236,12 +261,71 @@ func printDecision(cmd *cobra.Command, req *api.GrantRequest) {
 	}
 }
 
+// entryEnd is " (removed)", " until <time>", " (no end)" or "" for a skipped entry.
+func entryEnd(e api.EntryResult) string {
+	switch {
+	case e.Removed:
+		return " (removed)"
+	case e.Status == "skipped":
+		return ""
+	case e.ExpiresAt != "":
+		return " until " + e.ExpiresAt
+	default:
+		return " (no end)"
+	}
+}
+
+var accessActionsCmd = &cobra.Command{
+	Use:   "actions",
+	Short: "List every kind of change a request can hold",
+	Long: `Prints each action type a key or agent can put in a request (tvault access
+plan), with its fields (* = required). "starts unticked" means the owner must
+tick it on purpose; "owner signs in again" means approving it needs a recent
+sign-in.`,
+	Args: cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		cc, err := resolve(cmd)
+		if err != nil {
+			return err
+		}
+		types, err := cc.Client.ListRequestActions()
+		if err != nil {
+			return enrich(cmd, cc, err)
+		}
+		rows := make([]map[string]string, len(types))
+		for i, t := range types {
+			fields := make([]string, len(t.Fields))
+			for j, f := range t.Fields {
+				fields[j] = f
+				if slices.Contains(t.Required, f) {
+					fields[j] += "*"
+				}
+			}
+			var notes []string
+			if t.Destructive {
+				notes = append(notes, "starts unticked")
+			}
+			if t.NeedsReauth {
+				notes = append(notes, "owner signs in again")
+			}
+			rows[i] = map[string]string{"type": t.Type, "fields": strings.Join(fields, ", "),
+				"notes": strings.Join(notes, "; "), "summary": t.Summary}
+		}
+		return output.Render(os.Stdout, cc.Format, []string{"type", "fields", "notes", "summary"}, rows)
+	},
+}
+
 var accessRequestCmd = &cobra.Command{
 	Use:   "request <service> [<service>...] --reason \"...\"",
 	Short: "Ask the owner for access to services; prints the approval link",
-	Long: `Sends a grant request for this key or agent. The link printed on stdout opens
-the request in the console, where the owner approves or denies it. The link
-grants nothing by itself. A request expires after one hour.
+	Long: `Sends a grant request for this key or agent, or with --for for another agent.
+The link printed on stdout opens the request in the console, where the owner
+approves or denies it, and can change each entry's expiry. The link grants
+nothing by itself. A request expires after one hour. A grant adds to what the
+agent holds and never shortens an entry it already has.
+
+For other changes (revoke, labels, policies, MCP servers, scopes) write a plan
+for ` + "`tvault access plan`" + `; ` + "`tvault access actions`" + ` lists every kind.
 
 With --wait, the command waits for the decision (bounded) and exits 0 when
 approved, 15 when denied, and 16 when the request expires or the wait runs out.`,
@@ -249,11 +333,13 @@ approved, 15 when denied, and 16 when the request expires or the wait runs out.`
   tvault access request github --uses mcp --expires 7d --reason "triage issues" --wait 10m
   tvault access request home-hub=mcp:otto --reason "use the otto tools only"
   tvault access request home-hub --servers otto --reason "the same, with flags"
+  tvault access request github=mcp:main --for ci-bot --expires 7d --reason "ci reads issues"
 
 A service takes the same form as in tvault grant: <service>[=<uses>[:<servers>]].
-MCP access with no servers named covers every server of the credential,
-including servers added later. Name only credentials and MCP servers that exist (tvault list, tvault
-mcp-servers list <credential>): the request is refused otherwise.`,
+MCP access with no servers named means the credential's servers as they are
+now, never ones added later. --expires applies to every entry the command
+names. Name only credentials, MCP servers and agents that exist (tvault list,
+tvault mcp-servers list <credential>): the request is refused otherwise.`,
 	Args: cobra.MinimumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		reason, _ := cmd.Flags().GetString("reason")
@@ -265,7 +351,8 @@ mcp-servers list <credential>): the request is refused otherwise.`,
 				Message: "--reason is required: the owner reads it before approving"}
 		}
 		serversFlag, _ := cmd.Flags().GetString("servers")
-		services, uses, servers, err := requestTerms(args, usesFlag, serversFlag)
+		forAgent, _ := cmd.Flags().GetString("for")
+		specs, err := requestTerms(args, usesFlag, serversFlag)
 		if err != nil {
 			return err
 		}
@@ -273,14 +360,25 @@ mcp-servers list <credential>): the request is refused otherwise.`,
 		if err != nil {
 			return err
 		}
+		to := "self"
+		if strings.TrimSpace(forAgent) != "" {
+			to = strings.TrimSpace(forAgent)
+		}
 		cc, err := resolveSelf(cmd, "access request")
 		if err != nil {
 			return err
 		}
-		req, err := cc.Client.CreateGrantRequest(api.NewGrantRequest{
-			Services: services, Reason: reason, Uses: uses, Servers: servers, ExpiresInHours: hours})
+		actions, err := json.Marshal(grantActions(specs, to, hours))
+		if err != nil {
+			return err
+		}
+		req, err := cc.Client.CreateGrantRequest(api.NewGrantRequest{Actions: actions, Reason: reason})
 		if err != nil {
 			return enrich(cmd, cc, err)
+		}
+		services := make([]string, len(specs))
+		for i, s := range specs {
+			services[i] = s.Service
 		}
 		if cc.Client.DryRun {
 			cmd.PrintErrln("Dry run: nothing was sent, so there is no request and no approval link.")
@@ -292,8 +390,12 @@ mcp-servers list <credential>): the request is refused otherwise.`,
 				Hint:    "the owner can find it in the console inbox"}
 		}
 		fmt.Fprintln(os.Stdout, req.URL)
-		cmd.PrintErrf("Request %s sent for %s. Open the link above to approve. It expires %s.\n",
-			req.RequestID, strings.Join(services, ", "), req.ExpiresAt)
+		who := ""
+		if to != "self" {
+			who = " for " + to
+		}
+		cmd.PrintErrf("Request %s sent%s: %s. Open the link above to approve. It expires %s.\n",
+			req.RequestID, who, strings.Join(services, ", "), req.ExpiresAt)
 		if wait <= 0 {
 			return nil
 		}
@@ -352,20 +454,28 @@ var accessPlanCmd = &cobra.Command{
 	Use:   "plan <file|->",
 	Short: "Ask the owner to approve a list of changes; prints the approval link",
 	Long: `Sends a change request: a list of actions the owner ticks on one page. The
-owner may allow all, some or none. Actions:
+owner may allow all, some or none, and can change each grant entry's expiry.
+` + "`tvault access actions`" + ` lists every action type the server takes, with its
+fields. The common ones:
 
-  grant               to (agent name or "self"), service, uses?, servers?, expiresInMinutes?
-                      servers: with uses ["tools"], only these MCP servers; each must exist
-                      or be added by an add_mcp_server in the grant's parent chain. No
-                      servers = every server, including ones added later.
-  revoke             to (agent name), services
-  create_agent        name, kind?, scopes?
-  delete_agents       names        (starts unticked for the owner)
-  delete_credentials  names        (starts unticked for the owner)
-  suspend, resume     to (agent name)
-  add_mcp_server      service, name, url (https), headers ({"Authorization": "Bearer ${TOKEN}"};
-                      each value only a placeholder, never a secret)
-  remove_mcp_server   service, name
+  grant          to (agent name or "self"), service, value?, tools?
+                 value: {"expiresInMinutes": 60}; tools: {"<server>": {...}}, each
+                 entry with its own expiry (none = no end). A grant adds entries
+                 and never shortens one the agent holds.
+  change_grant   to, service, value?/tools? with expiresInMinutes or "remove": true
+                 (starts unticked for the owner)
+  revoke         to (agent name), services
+  create_agent   name, kind?, scopes?
+  delete_agents, delete_credentials   names (start unticked)
+  suspend, resume                     to (agent name)
+  add_mcp_server, update_mcp_server   service, name, url (https), headers
+                 ({"Authorization": "Bearer ${TOKEN}"}; each value only a
+                 placeholder, never a secret)
+  remove_mcp_server                   service, name
+  label, unlabel                      labels, targets [{type, name}]
+  change_scopes                       to, kind (agent|api_key), add?, remove?
+  create_policy, update_policy, delete_policies, attach_policy, detach_policy
+                 a policy by name; targets [{type, name}]
 
 Each action has an "id"; "parent" names an earlier action it needs (it runs
 only if the parent ran). Never put a secret value in a plan.
@@ -502,11 +612,13 @@ func init() {
 	accessRequestCmd.Flags().String("reason", "", "why this key or agent needs the access (the owner reads it)")
 	accessRequestCmd.Flags().String("uses", "", "what the grant is for: value, mcp, or value,mcp (agents only)")
 	accessRequestCmd.Flags().String("servers", "", "MCP grant on these servers only, comma-separated (implies --uses mcp)")
-	accessRequestCmd.Flags().String("expires", "never", "when the grant ends: 12h, 7d or never")
+	accessRequestCmd.Flags().String("expires", "never", "when each entry ends: 12h, 7d or never (at most 30d)")
+	accessRequestCmd.Flags().String("for", "", "ask for another agent (by name) instead of this key or agent")
 	accessRequestCmd.Flags().Duration("wait", 0, "wait up to this long for the owner's decision, e.g. 10m (max 1h)")
 	accessDropCmd.Flags().Bool("force", false, "skip the confirmation prompt")
 	accessPlanCmd.Flags().String("reason", "", "why (the owner reads it); overrides \"reason\" in the plan")
 	accessPlanCmd.Flags().Duration("wait", 0, "wait up to this long for the owner's decision, e.g. 10m (max 1h)")
-	accessCmd.AddCommand(accessRequestCmd, accessPlanCmd, accessClaimKeyCmd, accessStatusCmd, accessDropCmd)
+	accessCmd.AddCommand(accessRequestCmd, accessPlanCmd, accessActionsCmd, accessClaimKeyCmd, accessStatusCmd,
+		accessDropCmd)
 	rootCmd.AddCommand(accessCmd)
 }

@@ -209,6 +209,7 @@ func grantSpecs(cmd *cobra.Command, cc *cmdContext, agent resolved, specs []api.
 		return out
 	}
 	cmd.PrintErrf("Granted %s to %s.\n", strings.Join(res.OK, ", "), agent.label())
+	printAlreadyHeld(cmd, res)
 	return nil
 }
 
